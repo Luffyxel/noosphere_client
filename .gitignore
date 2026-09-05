@@ -1,0 +1,24 @@
+# Dependencies and generated files
+/node_modules/
+/coverage/
+/dist-tauri/
+/src-tauri/target/
+/src-tauri/gen/
+/tsconfig.tsbuildinfo
+
+# Local configuration
+.env*
+!.env.example
+*.log
+.DS_Store
+/.idea/
+/.vscode/
+
+# Packaged releases
+/release/*
+!/release/README.md
+!/release/windows/
+/release/windows/*
+!/release/windows/Noosphere_0.1.0_x64-setup.exe
+!/release/windows/Noosphere-portable-x64.exe
+!/release/windows/SHA256SUMS.txt

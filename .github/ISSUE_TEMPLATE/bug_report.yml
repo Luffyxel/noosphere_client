@@ -1,0 +1,46 @@
+name: Bug
+description: Signaler un problème dans Noosphere
+title: '[Bug] '
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: Pensez à retirer les jetons, messages privés et données personnelles.
+  - type: input
+    id: version
+    attributes:
+      label: Version de Noosphere
+      placeholder: 0.1.0
+    validations:
+      required: true
+  - type: input
+    id: system
+    attributes:
+      label: Système
+      placeholder: Windows 11 24H2 ou Ubuntu 24.04
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Étapes pour reproduire
+      description: Que faut-il faire pour voir le problème ?
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Résultat attendu
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Résultat obtenu
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Informations supplémentaires
+      description: Captures, journaux nettoyés ou autres détails utiles.

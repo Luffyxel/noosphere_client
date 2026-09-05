@@ -1,0 +1,23 @@
+name: Amélioration
+description: Proposer une nouvelle fonction ou une amélioration
+title: '[Amélioration] '
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Besoin
+      description: Qu’aimeriez-vous pouvoir faire ?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposition
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Informations utiles
+      description: Ajoutez ici tout détail ou exemple qui peut aider.

@@ -1,0 +1,125 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2025]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Configure Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22.12.0
+          cache: npm
+      - name: Install Linux prerequisites
+        if: runner.os == 'Linux'
+        run: >-
+          sudo apt-get update && sudo apt-get install -y
+          libwebkit2gtk-4.1-dev libayatana-appindicator3-dev
+          librsvg2-dev patchelf protobuf-compiler xvfb
+          gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-nice
+      - name: Install Windows Protocol Buffers compiler
+        if: runner.os == 'Windows'
+        run: choco install protoc --version=35.1.0 --no-progress -y
+      - name: Configure Rust
+        shell: bash
+        run: >-
+          rustup toolchain install 1.98.1 --profile minimal
+          --component clippy --component rustfmt &&
+          rustup default 1.98.1
+      - name: Install dependencies
+        run: npm ci
+      - name: Check formatting
+        run: npm run format:check
+      - name: Lint
+        run: npm run lint
+      - name: Test
+        run: npm test
+      - name: Check frontend and Rust
+        run: npm run check
+
+  package:
+    needs: test
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            bundles: deb,appimage
+            artifact: noosphere-linux
+          - os: windows-2025
+            bundles: nsis
+            artifact: noosphere-windows
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Configure Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22.12.0
+          cache: npm
+      - name: Install Linux prerequisites
+        if: runner.os == 'Linux'
+        run: >-
+          sudo apt-get update && sudo apt-get install -y
+          libwebkit2gtk-4.1-dev libayatana-appindicator3-dev
+          librsvg2-dev patchelf protobuf-compiler xvfb
+          gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-nice
+      - name: Install Windows Protocol Buffers compiler
+        if: runner.os == 'Windows'
+        run: choco install protoc --version=35.1.0 --no-progress -y
+      - name: Configure Rust
+        shell: bash
+        run: rustup toolchain install 1.98.1 --profile minimal && rustup default 1.98.1
+      - name: Install dependencies
+        run: npm ci
+      - name: Build native packages
+        run: npm run build -- --bundles ${{ matrix.bundles }}
+      - name: Smoke test WebView2
+        if: runner.os == 'Windows'
+        run: npm run smoke:tauri
+      - name: Smoke test WebKitGTK
+        if: runner.os == 'Linux'
+        run: xvfb-run -a npm run smoke:tauri
+      - name: Store packages
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ${{ matrix.artifact }}
+          path: src-tauri/target/release/bundle/**
+          if-no-files-found: error
+
+  dependency-review:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Configure Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22.12.0
+          cache: npm
+      - name: Configure Rust
+        shell: bash
+        run: rustup toolchain install 1.98.1 --profile minimal && rustup default 1.98.1
+      - name: Install dependencies
+        run: npm ci
+      - name: Audit npm production dependencies
+        run: npm audit --omit=dev --audit-level=high
+      - name: Install cargo-deny
+        run: cargo install cargo-deny --version 0.20.2 --locked
+      - name: Review Rust advisories, licenses and sources
+        run: cargo deny --manifest-path src-tauri/Cargo.toml check advisories licenses sources
