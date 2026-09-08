@@ -21,9 +21,10 @@ use crate::{
         ApiResponse, GitHubClient, OAuthPoll, OAuthToken, RepositoryIdentity, ViewerIdentity,
     },
     models::{
-        Conversation, FriendRequest, GitHubViewer, LookupUser, Message, NoosphereUser,
-        NotificationResult, ProvisioningConsent, Published, RealtimeSignal, RepositorySummary,
-        SignedOut, SmokeConfig, SmokeResult, SocialState, UserLookup, WakeSignals,
+        Conversation, FriendRemoved, FriendRequest, GitHubViewer, LookupUser, Message,
+        NoosphereUser, NotificationResult, ProvisioningConsent, Published, RealtimeSignal,
+        RepositorySummary, SignedOut, SmokeConfig, SmokeResult, SocialState, UserLookup,
+        WakeSignals,
     },
     repository_content,
     state::{AppState, ConversationState, LocalMessageState, OutgoingRequestState, PeerState},
@@ -1823,6 +1824,149 @@ async fn remove_temporary_star(
         .temporary_stars
         .retain(|value| *value != peer.repository_id);
     state.persist_social(viewer.repository.id).await
+}
+
+#[tauri::command]
+pub async fn noosphere_remove_friend(
+    state: State<'_, AppState>,
+    conversation_id: String,
+) -> CommandResult<FriendRemoved> {
+    validation::conversation_id(&conversation_id).map_err(command_error)?;
+    let _operation = state.operations.lock().await;
+    remove_friend(&state, &conversation_id)
+        .await
+        .map_err(command_error)
+}
+
+async fn remove_friend(state: &AppState, conversation_id: &str) -> Result<FriendRemoved> {
+    let viewer = session_viewer(state).await?;
+    let peer = {
+        let mut social = state.social.write().await;
+        remove_friend_records(&mut social, conversation_id).ok_or(Error::GitHubNotFound)?
+    };
+    let secret = state
+        .identity
+        .read()
+        .await
+        .as_ref()
+        .ok_or(Error::Crypto)?
+        .secret
+        .clone();
+    let secret = crate::protocol::forget_peer_owned(secret, peer.user.id)?;
+    state
+        .identity
+        .write()
+        .await
+        .as_mut()
+        .ok_or(Error::Crypto)?
+        .secret = secret;
+    state.persist_social(viewer.repository.id).await?;
+    state.persist_identity(viewer.repository.id).await?;
+    Ok(FriendRemoved { removed: true })
+}
+
+fn remove_friend_records(
+    social: &mut crate::state::LocalSocialState,
+    conversation_id: &str,
+) -> Option<PeerState> {
+    let peer = social
+        .conversations
+        .iter()
+        .find(|conversation| conversation.id == conversation_id)?
+        .peer
+        .clone();
+    let removed_message_ids = social
+        .messages
+        .iter()
+        .filter(|record| record.message.conversation_id == conversation_id)
+        .map(|record| record.message.id.clone())
+        .collect::<BTreeSet<_>>();
+    social
+        .conversations
+        .retain(|conversation| conversation.id != conversation_id);
+    social
+        .outgoing
+        .retain(|request| request.peer.user.id != peer.user.id);
+    social
+        .messages
+        .retain(|record| record.message.conversation_id != conversation_id);
+    social
+        .seen_message_ids
+        .retain(|message_id| !removed_message_ids.contains(message_id));
+    social
+        .temporary_stars
+        .retain(|repository_id| *repository_id != peer.repository_id);
+    Some(peer)
+}
+
+#[cfg(test)]
+mod friend_removal_tests {
+    use super::*;
+
+    #[test]
+    fn removing_a_friend_clears_their_conversation_messages_and_request() {
+        let (viewer, _) = crate::protocol::create_identity(42, 420).unwrap();
+        let (_, peer_profile) = crate::protocol::create_identity(99, 990).unwrap();
+        let conversation_id = "dm-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let handshake = crate::protocol::OwnedHandshake {
+            peer_profile: peer_profile.clone(),
+            peer_github_user_id: 99,
+            peer_repository_id: 990,
+            conversation_id: conversation_id.to_owned(),
+            created_at: "2026-09-08T12:00:00Z".to_owned(),
+        };
+        let (_, envelope) = crate::protocol::create_invitation_owned(viewer, handshake).unwrap();
+        let peer = PeerState {
+            user: NoosphereUser {
+                id: 99,
+                login: "friend".to_owned(),
+                name: Some("Friend".to_owned()),
+                avatar_url: "https://avatars.githubusercontent.com/u/99?v=4".to_owned(),
+                repository: "noosphere_user_friend".to_owned(),
+            },
+            repository_id: 990,
+            profile: peer_profile,
+        };
+        let mut social = crate::state::LocalSocialState::default();
+        social.conversations.push(ConversationState {
+            id: conversation_id.to_owned(),
+            created_at: "2026-09-08T12:00:00Z".to_owned(),
+            peer: peer.clone(),
+            handshake_envelope: envelope.clone(),
+        });
+        social.outgoing.push(OutgoingRequestState {
+            id: conversation_id.to_owned(),
+            created_at: "2026-09-08T12:00:00Z".to_owned(),
+            peer: peer.clone(),
+            envelope: envelope.clone(),
+        });
+        social.messages.push(LocalMessageState {
+            message: Message {
+                version: 1,
+                id: "msg-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".to_owned(),
+                conversation_id: conversation_id.to_owned(),
+                sent_at: "2026-09-08T12:01:00Z".to_owned(),
+                text: "hello".to_owned(),
+                sender_id: 99,
+                own: false,
+            },
+            envelope,
+            published: true,
+        });
+        social
+            .seen_message_ids
+            .push("msg-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".to_owned());
+        social.temporary_stars.push(peer.repository_id);
+
+        let removed = remove_friend_records(&mut social, conversation_id).unwrap();
+
+        assert_eq!(removed.user.id, peer.user.id);
+        assert!(social.conversations.is_empty());
+        assert!(social.outgoing.is_empty());
+        assert!(social.messages.is_empty());
+        assert!(social.seen_message_ids.is_empty());
+        assert!(social.temporary_stars.is_empty());
+    }
 }
 
 #[tauri::command]

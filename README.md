@@ -8,8 +8,8 @@ account.
 
 ## Downloads
 
-- [Windows installer](Noosphere_0.1.1_x64-setup.exe)
-- Linux: [AppImage](https://github.com/Luffyxel/noosphere_client/releases/download/v0.1.1/Noosphere_0.1.1_amd64.AppImage), [DEB](https://github.com/Luffyxel/noosphere_client/releases/download/v0.1.1/Noosphere_0.1.1_amd64.deb), [RPM](https://github.com/Luffyxel/noosphere_client/releases/download/v0.1.1/Noosphere_0.1.1_x86_64.rpm), [checksums](https://github.com/Luffyxel/noosphere_client/releases/download/v0.1.1/SHA256SUMS.txt)
+- [Windows installer](Noosphere_0.1.2_x64-setup.exe)
+- Linux: [AppImage](https://github.com/Luffyxel/noosphere_client/releases/download/v0.1.2/Noosphere_0.1.2_amd64.AppImage), [DEB](https://github.com/Luffyxel/noosphere_client/releases/download/v0.1.2/Noosphere_0.1.2_amd64.deb), [RPM](https://github.com/Luffyxel/noosphere_client/releases/download/v0.1.2/Noosphere_0.1.2_x86_64.rpm), [checksums](https://github.com/Luffyxel/noosphere_client/releases/download/v0.1.2/SHA256SUMS.txt)
 
 Installation notes and checksums are kept in [`release/`](release/README.md).
 
@@ -17,6 +17,7 @@ Installation notes and checksums are kept in [`release/`](release/README.md).
 
 - end-to-end encryption with libsignal;
 - contacts linked to GitHub accounts;
+- friend profiles with contact removal;
 - direct WebRTC transport when both users are online;
 - audio calls with an optional camera;
 - microphone, audio output, and camera selection;
@@ -57,7 +58,7 @@ supported directly; Wayland sessions require XWayland.
 On NixOS, run the AppImage through `appimage-run`:
 
 ```bash
-nix-shell -p appimage-run --run 'appimage-run ./Noosphere_0.1.1_amd64.AppImage'
+nix-shell -p appimage-run --run 'appimage-run ./Noosphere_0.1.2_amd64.AppImage'
 ```
 
 For Hyprland managed by NixOS, enable

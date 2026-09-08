@@ -97,6 +97,7 @@ export type NoosphereDesktopApi = {
       login: string,
       conversationId: string,
     ) => Promise<Conversation>;
+    removeFriend: (conversationId: string) => Promise<{ removed: true }>;
     sendMessage: (conversationId: string, text: string) => Promise<Message>;
     signalWake: (conversationId: string) => Promise<{ published: true }>;
     listMessages: (conversationId: string) => Promise<Message[]>;

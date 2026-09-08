@@ -17,6 +17,8 @@ import {
   Search,
   SendHorizontal,
   Settings2,
+  Trash2,
+  UserRound,
   UserPlus,
   Users,
   Video,
@@ -54,6 +56,7 @@ import type {
 } from '@/lib/desktop-bridge';
 import { captureCallMedia } from '@/lib/media-capture';
 import { mergeMessages, type DisplayMessage } from '@/lib/message-list';
+import { startSocialRefreshLoop } from '@/lib/social-refresh';
 import { useDirectPeer } from '@/lib/use-direct-peer';
 import { cn } from '@/lib/utils';
 import {
@@ -493,6 +496,96 @@ function AddFriendDialog({
               </span>
             )}
           </div>
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function FriendProfileDialog({
+  conversation,
+  open,
+  removing,
+  onOpenChange,
+  onMessage,
+  onRemove,
+}: {
+  conversation: Conversation | null;
+  open: boolean;
+  removing: boolean;
+  onOpenChange: (open: boolean) => void;
+  onMessage: () => void;
+  onRemove: () => Promise<void>;
+}) {
+  const [confirming, setConfirming] = useState(false);
+
+  if (!conversation) return null;
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={(nextOpen) => {
+        if (!nextOpen) setConfirming(false);
+        onOpenChange(nextOpen);
+      }}
+    >
+      <DialogContent className="border-white/[.09] bg-[#202022] text-[#f5f5f7] sm:max-w-[400px]">
+        <DialogHeader>
+          <DialogTitle>Profil</DialogTitle>
+        </DialogHeader>
+        <div className="flex flex-col items-center py-3 text-center">
+          <UserAvatar
+            login={conversation.peer.login}
+            name={conversation.peer.name}
+            avatarUrl={conversation.peer.avatarUrl}
+            size="lg"
+          />
+          <p className="mt-4 text-[18px] font-semibold text-white">
+            {conversation.peer.name || conversation.peer.login}
+          </p>
+          <p className="mt-1 text-[12px] text-[#8e8e93]">
+            @{conversation.peer.login}
+          </p>
+        </div>
+        <Button
+          className="h-10 rounded-[11px] bg-[var(--noosphere-accent)] text-[var(--noosphere-on-accent)] hover:bg-[var(--noosphere-accent-hover)]"
+          onClick={onMessage}
+        >
+          <MessageCircle />
+          Envoyer un message
+        </Button>
+        {confirming ? (
+          <div className="rounded-[13px] border border-[#ff453a]/25 bg-[#321f20] p-3">
+            <p className="text-[12px] text-[#ffb3af]">
+              Supprimer @{conversation.peer.login} de tes amis ?
+            </p>
+            <div className="mt-3 flex justify-end gap-2">
+              <Button
+                variant="ghost"
+                className="h-8 text-[#d1d1d6] hover:bg-white/[.06] hover:text-white"
+                disabled={removing}
+                onClick={() => setConfirming(false)}
+              >
+                Annuler
+              </Button>
+              <Button
+                className="h-8 bg-[#ff453a] text-white hover:bg-[#ff6961]"
+                disabled={removing}
+                onClick={() => void onRemove()}
+              >
+                {removing ? <BrandLoader className="size-4" /> : <Trash2 />}
+                Confirmer
+              </Button>
+            </div>
+          </div>
+        ) : (
+          <Button
+            variant="ghost"
+            className="h-10 rounded-[11px] text-[#ff6961] hover:bg-[#ff453a]/10 hover:text-[#ff8a84]"
+            onClick={() => setConfirming(true)}
+          >
+            <Trash2 />
+            Supprimer de mes amis
+          </Button>
         )}
       </DialogContent>
     </Dialog>
@@ -1021,6 +1114,8 @@ function NoosphereApp({
     null,
   );
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [friendProfileId, setFriendProfileId] = useState<string | null>(null);
+  const [removingFriend, setRemovingFriend] = useState(false);
   const [addFriendOpen, setAddFriendOpen] = useState(false);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [mediaSettingsOpen, setMediaSettingsOpen] = useState(false);
@@ -1150,6 +1245,13 @@ function NoosphereApp({
       null,
     [conversations, selectedId],
   );
+  const profileConversation = useMemo(
+    () =>
+      conversations.find(
+        (conversation) => conversation.id === friendProfileId,
+      ) ?? null,
+    [conversations, friendProfileId],
+  );
 
   const addNotification = useCallback((notification: AppNotification) => {
     setNotifications((current) => [
@@ -1175,7 +1277,7 @@ function NoosphereApp({
   const syncSocialState = useCallback(
     async (announceNew: boolean) => {
       const desktop = window.noosphereDesktop;
-      if (!desktop || socialSyncing.current) return;
+      if (!desktop || socialSyncing.current) return false;
       socialSyncing.current = true;
       try {
         const nextState = await desktop.noosphere.syncState();
@@ -1213,8 +1315,10 @@ function NoosphereApp({
         });
         setOutgoingRequests(nextState.outgoing);
         setSyncError('');
+        return true;
       } catch (error) {
         setSyncError(readableError(error));
+        return false;
       } finally {
         socialSyncing.current = false;
         setLoading(false);
@@ -1223,20 +1327,7 @@ function NoosphereApp({
     [notifyUser],
   );
 
-  useEffect(() => {
-    const initialTimer = window.setTimeout(
-      () => void syncSocialState(false),
-      0,
-    );
-    const pollTimer = window.setInterval(
-      () => void syncSocialState(true),
-      jitteredInterval(30_000),
-    );
-    return () => {
-      window.clearTimeout(initialTimer);
-      window.clearInterval(pollTimer);
-    };
-  }, [syncSocialState]);
+  useEffect(() => startSocialRefreshLoop(syncSocialState), [syncSocialState]);
 
   const syncMessages = useCallback(
     async (conversationId: string, announceNew: boolean) => {
@@ -1474,6 +1565,31 @@ function NoosphereApp({
     }
   }
 
+  async function removeFriend(conversation: Conversation) {
+    const desktop = window.noosphereDesktop;
+    if (!desktop) return;
+    setRemovingFriend(true);
+    setSyncError('');
+    try {
+      await desktop.noosphere.removeFriend(conversation.id);
+      if (selectedIdRef.current === conversation.id) {
+        endCall();
+        setSelectedId(null);
+        setMessages([]);
+      }
+      messageCache.current.delete(conversation.id);
+      knownMessageIds.current.delete(conversation.id);
+      setConversations((current) =>
+        current.filter((candidate) => candidate.id !== conversation.id),
+      );
+      setFriendProfileId(null);
+    } catch (error) {
+      setSyncError(readableError(error));
+    } finally {
+      setRemovingFriend(false);
+    }
+  }
+
   function beginCall() {
     if (!selectedConversation || !startCall('audio')) return;
     void window.noosphereDesktop?.noosphere
@@ -1668,7 +1784,12 @@ function NoosphereApp({
         <header className="flex h-[58px] shrink-0 items-center justify-between border-b border-white/[.07] px-5">
           <div className="flex min-w-0 items-center gap-2.5">
             {selectedConversation ? (
-              <>
+              <button
+                type="button"
+                className="flex min-w-0 items-center gap-2.5 rounded-[10px] px-1.5 py-1 text-left transition hover:bg-white/[.05]"
+                aria-label={`Voir le profil de ${selectedConversation.peer.login}`}
+                onClick={() => setFriendProfileId(selectedConversation.id)}
+              >
                 <UserAvatar
                   login={selectedConversation.peer.login}
                   name={selectedConversation.peer.name}
@@ -1679,7 +1800,7 @@ function NoosphereApp({
                   {selectedConversation.peer.name ||
                     selectedConversation.peer.login}
                 </p>
-              </>
+              </button>
             ) : (
               <p className="text-[14px] font-medium text-[#d1d1d6]">Amis</p>
             )}
@@ -1966,7 +2087,7 @@ function NoosphereApp({
                       <button
                         key={conversation.id}
                         type="button"
-                        onClick={() => setSelectedId(conversation.id)}
+                        onClick={() => setFriendProfileId(conversation.id)}
                         className="flex w-full items-center gap-3 rounded-[16px] border border-white/[.07] bg-[#242426] p-3 text-left transition hover:bg-[#2c2c2e]"
                       >
                         <UserAvatar
@@ -1982,7 +2103,7 @@ function NoosphereApp({
                             @{conversation.peer.login}
                           </p>
                         </div>
-                        <MessageCircle className="size-4 text-[var(--noosphere-accent)]" />
+                        <UserRound className="size-4 text-[var(--noosphere-accent)]" />
                       </button>
                     ))}
                   </div>
@@ -2031,6 +2152,23 @@ function NoosphereApp({
         open={addFriendOpen}
         onOpenChange={setAddFriendOpen}
         onRequest={handleFriendRequest}
+      />
+      <FriendProfileDialog
+        key={profileConversation?.id ?? 'closed'}
+        conversation={profileConversation}
+        open={profileConversation !== null}
+        removing={removingFriend}
+        onOpenChange={(open) => {
+          if (!open) setFriendProfileId(null);
+        }}
+        onMessage={() => {
+          if (!profileConversation) return;
+          setSelectedId(profileConversation.id);
+          setFriendProfileId(null);
+        }}
+        onRemove={async () => {
+          if (profileConversation) await removeFriend(profileConversation);
+        }}
       />
       <MediaSettingsDialog
         open={mediaSettingsOpen}

@@ -65,6 +65,10 @@ export function installTauriBridge(): void {
           login,
           conversationId,
         }),
+      removeFriend: (conversationId: string) =>
+        invoke<{ removed: true }>('noosphere_remove_friend', {
+          conversationId,
+        }),
       sendMessage: (conversationId: string, text: string) =>
         invoke<Message>('noosphere_send_message', { conversationId, text }),
       signalWake: (conversationId: string) =>
