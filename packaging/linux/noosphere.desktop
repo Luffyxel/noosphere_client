@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Noosphere
+Comment=Encrypted peer-to-peer messaging
+Exec=noosphere-desktop
+Icon=noosphere
+Categories=Network;InstantMessaging;
+Terminal=false
+StartupWMClass=Noosphere

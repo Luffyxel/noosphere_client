@@ -22,41 +22,17 @@ function waitForIceGathering(peer: RTCPeerConnection): Promise<void> {
   });
 }
 
-async function exercisePeerConnection(): Promise<{
+async function exercisePeerConnection(source: MediaStream): Promise<{
   dataChannel: boolean;
   media: boolean;
 }> {
   const caller = new RTCPeerConnection({ iceServers: [] });
   const receiver = new RTCPeerConnection({ iceServers: [] });
-  const audioContext = new AudioContext();
-  const oscillator = audioContext.createOscillator();
-  const audioDestination = audioContext.createMediaStreamDestination();
-  oscillator.connect(audioDestination);
-  oscillator.start();
-  const canvas = document.createElement('canvas');
-  canvas.width = 16;
-  canvas.height = 16;
-  const canvasContext = canvas.getContext('2d');
-  if (!canvasContext) throw new Error('Synthetic canvas unavailable');
-  let frame = 0;
-  const paintTimer = window.setInterval(() => {
-    canvasContext.fillStyle = frame % 2 === 0 ? '#798f80' : '#263029';
-    canvasContext.fillRect(0, 0, 16, 16);
-    frame += 1;
-  }, 100);
-  canvasContext.fillRect(0, 0, 16, 16);
-  const videoStream = canvas.captureStream(5);
-  const audioTrack = audioDestination.stream.getAudioTracks()[0];
-  const videoTrack = videoStream.getVideoTracks()[0];
-  if (!audioTrack || !videoTrack) throw new Error('Synthetic media missing');
-  const sourceTracks = [audioTrack, videoTrack];
-  const audioSender = caller.addTransceiver('audio', {
-    direction: 'sendrecv',
-  }).sender;
-  const videoSender = caller.addTransceiver('video', {
-    direction: 'sendrecv',
-  }).sender;
-  await audioSender.replaceTrack(audioTrack);
+  const audioTrack = source.getAudioTracks()[0];
+  const videoTrack = source.getVideoTracks()[0];
+  if (!audioTrack || !videoTrack) throw new Error('Captured media missing');
+  caller.addTrack(audioTrack, source);
+  caller.addTrack(videoTrack, source);
   try {
     const received = new Promise<boolean>((resolve, reject) => {
       const timeout = window.setTimeout(
@@ -117,17 +93,13 @@ async function exercisePeerConnection(): Promise<{
       };
     });
     channel.send('noosphere-webrtc-smoke');
-    await videoSender.replaceTrack(videoTrack);
     const [dataChannel, media] = await Promise.all([received, mediaReceived]);
     return {
       dataChannel,
       media,
     };
   } finally {
-    window.clearInterval(paintTimer);
-    oscillator.stop();
-    for (const track of sourceTracks) track.stop();
-    await audioContext.close();
+    for (const track of source.getTracks()) track.stop();
     caller.close();
     receiver.close();
   }
@@ -146,32 +118,13 @@ async function verifyBrandAssets(): Promise<boolean> {
     ),
   );
 
-  const video = document.createElement('video');
-  video.muted = true;
-  video.playsInline = true;
-  video.src = '/brand/loading.mp4';
+  const animation = new Image();
+  animation.src = '/brand/loading.webp';
   try {
-    await new Promise<void>((resolve, reject) => {
-      const timeout = window.setTimeout(
-        () => reject(new Error('Brand animation timeout')),
-        10_000,
-      );
-      video.onloadeddata = () => {
-        window.clearTimeout(timeout);
-        resolve();
-      };
-      video.onerror = () => {
-        window.clearTimeout(timeout);
-        reject(new Error('Brand animation failed to decode'));
-      };
-      video.load();
-    });
-    await video.play();
-    return video.videoWidth === 1920 && video.videoHeight === 1080;
+    await animation.decode();
+    return animation.naturalWidth === 480 && animation.naturalHeight === 270;
   } finally {
-    video.pause();
-    video.removeAttribute('src');
-    video.load();
+    animation.removeAttribute('src');
   }
 }
 
@@ -182,25 +135,33 @@ export async function runTauriSmokeTest(): Promise<void> {
   let webRtcMedia = false;
   let mediaPermission = false;
   let brandAssets = false;
+  const diagnostics: string[] = [];
   try {
     brandAssets = await verifyBrandAssets();
-  } catch {
-    // The native smoke runner records the failed capability and exits cleanly.
+  } catch (error) {
+    diagnostics.push(`brand: ${String(error)}`);
   }
+  let captured: MediaStream | null = null;
   try {
-    const captured = await navigator.mediaDevices.getUserMedia({
+    captured = await navigator.mediaDevices.getUserMedia({
       audio: true,
       video: true,
     });
     mediaPermission =
       captured.getAudioTracks().length > 0 &&
       captured.getVideoTracks().length > 0;
-    for (const track of captured.getTracks()) track.stop();
-    const result = await exercisePeerConnection();
-    webRtcDataChannel = result.dataChannel;
-    webRtcMedia = result.media;
-  } catch {
-    // The native smoke runner records the failed capability and exits cleanly.
+  } catch (error) {
+    diagnostics.push(`capture: ${String(error)}`);
+  }
+  if (captured) {
+    try {
+      const result = await exercisePeerConnection(captured);
+      webRtcDataChannel = result.dataChannel;
+      webRtcMedia = result.media;
+    } catch (error) {
+      diagnostics.push(`webrtc: ${String(error)}`);
+      for (const track of captured.getTracks()) track.stop();
+    }
   }
   await invoke('system_smoke_complete', {
     result: {
@@ -218,6 +179,7 @@ export async function runTauriSmokeTest(): Promise<void> {
       webRtcMedia,
       mediaPermission,
       brandAssets,
+      diagnostics,
       instanceProfileSlot: config.instanceProfileSlot,
     },
   });

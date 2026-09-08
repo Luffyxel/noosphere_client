@@ -10,7 +10,7 @@ void test('les chargements compacts utilisent tous l’animation du logo', async
     readFile(new URL('app/page.tsx', root), 'utf8'),
   ]);
 
-  assert.match(brand, /src="\/brand\/loading\.mp4"/);
+  assert.match(brand, /src="\/brand\/loading\.webp"/);
   assert.match(brand, /motion-reduce:hidden/);
   assert.match(brand, /motion-reduce:block/);
   assert.match(page, /<BrandLoader className="size-4"/);

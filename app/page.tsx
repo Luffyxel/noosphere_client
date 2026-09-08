@@ -89,17 +89,11 @@ function LoadingScreen() {
       className="grid min-h-dvh place-items-center overflow-hidden bg-[#0f0f10]"
       aria-label="Démarrage de Noosphere"
     >
-      <video
+      <img
         className="aspect-video w-[min(80vw,480px)] object-contain"
-        autoPlay
-        muted
-        loop
-        playsInline
-        preload="auto"
-        poster="/brand/logo-white.png"
-      >
-        <source src="/brand/loading.mp4" type="video/mp4" />
-      </video>
+        src="/brand/loading.webp"
+        alt=""
+      />
     </main>
   );
 }
@@ -202,28 +196,20 @@ function LoginScreen({
   const statusCopy =
     setupStatus?.stage === 'repository'
       ? {
-          title: 'Création sur GitHub',
-          detail: setupStatus.repositoryName
-            ? `En attente de ${setupStatus.repositoryName}.`
-            : 'En attente de la création du dépôt public.',
+          title: setupStatus.repositoryName
+            ? `Création de ${setupStatus.repositoryName}`
+            : 'Création du dépôt',
         }
       : setupStatus?.stage === 'installation'
         ? {
-            title: 'Installation GitHub',
-            detail: setupStatus.repositoryName
-              ? `Autorisation limitée à ${setupStatus.repositoryName}.`
-              : 'Autorisation limitée au dépôt Noosphere.',
+            title: 'Autorisation GitHub',
           }
         : setupStatus?.stage === 'initialization'
           ? {
-              title: 'Initialisation',
-              detail: 'Création du profil chiffré et du dossier conv.',
+              title: 'Préparation du profil',
             }
           : {
               title: deviceCode ? 'Validation GitHub' : 'Connexion à GitHub',
-              detail: deviceCode
-                ? 'Le code est prêt dans le presse-papiers.'
-                : 'Ouverture de la page d’autorisation.',
             };
 
   return (
@@ -320,9 +306,6 @@ function LoginScreen({
                 </p>
                 <BrandLoader className="size-4" />
               </div>
-              <p className="mt-1 text-[12px] leading-5 text-[#8e8e93]">
-                {statusCopy.detail}
-              </p>
             </div>
           )}
 
@@ -1106,7 +1089,7 @@ function NoosphereApp({
         if (camera.status === 'fulfilled') previews.push(camera.value);
         if (microphone.status === 'rejected' && camera.status === 'rejected') {
           accessWarning =
-            'Ni le microphone ni la caméra ne sont accessibles. Vérifie les périphériques et les réglages Windows.';
+            'Ni le microphone ni la caméra ne sont accessibles. Vérifie les périphériques et les autorisations système.';
         } else if (microphone.status === 'rejected') {
           accessWarning =
             'Microphone indisponible. La caméra reste utilisable pour les appels vidéo.';
@@ -1360,8 +1343,6 @@ function NoosphereApp({
           ),
         );
       } catch {
-        // The slower repository polls remain available during a transient
-        // GitHub failure; the next star check retries three seconds later.
       } finally {
         wakeSyncing.current = false;
       }
@@ -2111,9 +2092,7 @@ export default function Home() {
                 current ? { ...current, viewer: validated } : current,
               );
             })
-            .catch(() => {
-              // A network outage must not turn a valid local session into a slow login screen.
-            });
+            .catch(() => {});
         }, 1_500);
       })
       .catch(() => {

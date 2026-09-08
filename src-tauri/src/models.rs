@@ -161,5 +161,6 @@ pub struct SmokeResult {
     pub web_rtc_media: bool,
     pub media_permission: bool,
     pub brand_assets: bool,
+    pub diagnostics: Vec<String>,
     pub instance_profile_slot: u8,
 }

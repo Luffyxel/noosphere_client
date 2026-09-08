@@ -6,6 +6,7 @@
   "ignorePatterns": [
     "package-lock.json",
     "src-tauri/gen/**",
+    "vendor/**",
     "pnpm-lock.yaml",
     "yarn.lock",
     "bun.lock",

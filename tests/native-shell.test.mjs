@@ -31,3 +31,12 @@ void test('WebView2 accorde uniquement les permissions micro et caméra', async 
   assert.match(runtime, /COREWEBVIEW2_PERMISSION_STATE_ALLOW/);
   assert.doesNotMatch(runtime, /COREWEBVIEW2_PERMISSION_KIND_GEOLOCATION/);
 });
+
+void test('l’AppImage embarque SQLite pour le stockage NSS de Chromium', async () => {
+  const finalizer = await readFile(
+    new URL('scripts/finalize-linux-appimage.mjs', root),
+    'utf8',
+  );
+  assert.match(finalizer, /libsqlite3\.so\.0/);
+  assert.match(finalizer, /realpath\(sqliteLibrary\)/);
+});

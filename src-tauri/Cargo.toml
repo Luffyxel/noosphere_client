@@ -36,7 +36,7 @@ secrecy = "=0.10.3"
 serde = { version = "=1.0.229", features = ["derive"] }
 serde_json = "=1.0.151"
 sha2 = "=0.11.0"
-tauri = { version = "=2.11.5", features = [] }
+tauri = { version = "=2.11.5", default-features = false, features = [] }
 tauri-plugin-notification = "=2.4.0"
 tauri-plugin-opener = "=2.5.5"
 thiserror = "=2.0.20"
@@ -50,6 +50,7 @@ zeroize = { version = "=1.9.0", features = ["derive"] }
 tempfile = "=3.27.0"
 
 [target.'cfg(windows)'.dependencies]
+tauri = { version = "=2.11.5", features = ["wry"] }
 webview2-com = "=0.38.2"
 windows-sys = { version = "=0.61.2", features = [
   "Win32_Foundation",
@@ -57,9 +58,16 @@ windows-sys = { version = "=0.61.2", features = [
   "Win32_Storage_FileSystem",
 ] }
 
+[target.'cfg(target_os = "linux")'.dependencies]
+tauri-runtime-cef = { path = "../vendor/tauri-runtime-cef" }
+winit = "=0.31.0-beta.2"
+
 [profile.release]
 codegen-units = 1
 lto = true
 opt-level = "s"
 panic = "abort"
 strip = true
+
+[patch.crates-io]
+cef-dll-sys = { path = "../vendor/cef-dll-sys" }

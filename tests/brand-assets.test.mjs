@@ -21,9 +21,10 @@ void test('les deux variantes carrées du logo sont embarquées', async () => {
   assert.deepEqual(pngSize(black), { width: 512, height: 512 });
 });
 
-void test('l’animation de chargement est un MP4 embarqué et borné', async () => {
-  const animation = await readFile(new URL('public/brand/loading.mp4', root));
-  assert.equal(animation.toString('ascii', 4, 8), 'ftyp');
+void test('l’animation de chargement est un WebP embarqué et borné', async () => {
+  const animation = await readFile(new URL('public/brand/loading.webp', root));
+  assert.equal(animation.toString('ascii', 0, 4), 'RIFF');
+  assert.equal(animation.toString('ascii', 8, 12), 'WEBP');
   assert.ok(animation.length > 1_000);
   assert.ok(animation.length < 1_000_000);
 });

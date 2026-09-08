@@ -95,7 +95,7 @@ void test('un appel échoue seulement quand aucun média demandé n’est access
       },
       createStream,
     ),
-    /Aucun microphone ni aucune caméra/,
+    /Aucun microphone ni aucune caméra.*autorisations système/,
   );
 });
 

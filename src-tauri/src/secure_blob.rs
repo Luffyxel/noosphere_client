@@ -1,14 +1,20 @@
-use std::path::{Path, PathBuf};
+use std::path::Path;
+#[cfg(windows)]
+use std::path::PathBuf;
 
-use secrecy::{ExposeSecret as _, SecretString};
+#[cfg(windows)]
+use secrecy::ExposeSecret as _;
+use secrecy::SecretString;
 
 use crate::error::{Error, Result};
 #[cfg(not(windows))]
 use crate::secure_store::{SecretStore as _, SystemSecretStore};
 
+#[cfg(windows)]
 const MAX_PROTECTED_BYTES: usize = 32 * 1024 * 1024;
 
 pub struct SecureBlobStore {
+    #[cfg(windows)]
     directory: PathBuf,
     #[cfg(not(windows))]
     system: SystemSecretStore,
@@ -24,6 +30,7 @@ impl SecureBlobStore {
             std::fs::set_permissions(&directory, std::fs::Permissions::from_mode(0o700))?;
         }
         Ok(Self {
+            #[cfg(windows)]
             directory,
             #[cfg(not(windows))]
             system: SystemSecretStore,
@@ -78,6 +85,7 @@ impl SecureBlobStore {
         self.system.remove(account)
     }
 
+    #[cfg(windows)]
     fn path(&self, account: &str) -> PathBuf {
         self.directory.join(format!("{account}.bin"))
     }

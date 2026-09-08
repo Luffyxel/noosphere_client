@@ -1,0 +1,28 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "bundle": {
+    "linux": {
+      "appimage": {
+        "bundleMediaFramework": false
+      },
+      "deb": {
+        "depends": [
+          "libasound2",
+          "libatk-bridge2.0-0",
+          "libcups2",
+          "libdrm2",
+          "libgbm1",
+          "libgtk-3-0",
+          "libnss3",
+          "libx11-6",
+          "libxcomposite1",
+          "libxdamage1",
+          "libxext6",
+          "libxfixes3",
+          "libxkbcommon0",
+          "libxrandr2"
+        ]
+      }
+    }
+  }
+}

@@ -1,0 +1,26 @@
+[package]
+name = "cef-dll-sys"
+description = "cef-rs sys crate"
+links = "cef_dll_wrapper"
+
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[lib]
+doctest = false
+
+[features]
+dox = []
+sandbox = []
+
+[package.metadata.docs.rs]
+features = ["dox"]
+
+[build-dependencies]
+anyhow.workspace = true
+cmake.workspace = true
+download-cef.workspace = true
+serde_json.workspace = true

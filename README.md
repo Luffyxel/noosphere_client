@@ -2,96 +2,116 @@
 
 **English** | [Français](README.fr.md)
 
-## [Download for Windows](Noosphere_0.1.0_x64-setup.exe)
+Noosphere is a desktop messaging client that exchanges end-to-end encrypted
+messages through GitHub. It runs without a Noosphere server or a separate
+account.
 
-Noosphere is a desktop messaging client that uses GitHub to exchange encrypted
-messages. It does not require a Noosphere server or a separate user account.
+## Downloads
 
-The application is built with Tauri, Rust, React, and Vite.
+- [Windows installer](Noosphere_0.1.0_x64-setup.exe)
+- [Linux packages (AppImage, DEB, and RPM)](https://github.com/Luffyxel/noosphere_client/releases/latest)
+
+Installation notes and checksums are kept in [`release/`](release/README.md).
 
 ## Features
 
-- end-to-end encrypted messages powered by libsignal;
+- end-to-end encryption with libsignal;
 - contacts linked to GitHub accounts;
-- message synchronization through dedicated GitHub repositories;
 - direct WebRTC transport when both users are online;
-- audio calls with optional video during a call;
+- audio calls with an optional camera;
 - microphone, audio output, and camera selection;
 - microphone test, noise suppression, echo cancellation, and gain control;
-- a native Windows client, with Linux supported by the build toolchain.
+- desktop packages for Windows and Linux.
 
 ## How it works
 
-Each user connects Noosphere to GitHub and creates a dedicated public
-repository. The repository only contains encrypted data. Private keys and
-readable messages remain on the user's computer.
+Each user connects Noosphere to GitHub and gives the application access to one
+public repository. The repository stores encrypted protocol data. Private keys
+and readable messages remain on the user's computer.
 
-GitHub star changes act as lightweight signals for friend requests, new
-messages, and calls. Noosphere checks these signals every three seconds and then
-reads only the relevant repository. When a WebRTC connection is available, it
-delivers events without waiting for the next synchronization cycle.
+The client checks GitHub star changes every three seconds for friend requests,
+messages, and calls, then reads the affected repository. An active WebRTC
+connection delivers events directly.
 
-GitHub can still observe normal repository metadata, including commit dates,
-activity volume, and the accounts involved. A WebRTC connection also reveals
-the network information required by ICE to the peers.
+GitHub can observe repository metadata such as commit dates, activity volume,
+and the accounts involved. WebRTC exposes the network information required by
+ICE to both peers.
 
-## Installation
+## Linux
 
-The Windows installer is available at the root of the repository. A portable
-executable and SHA-256 checksums are available in `release/windows/`.
+The Linux release is available for x86_64 in three formats:
 
-The Windows binaries are not signed with an Authenticode certificate yet.
-SmartScreen may display a warning on first launch.
+- AppImage for most distributions;
+- DEB for Debian and Ubuntu;
+- RPM for Fedora and openSUSE.
+
+The packages include the CEF/Chromium runtime used by the client. X11 is
+supported directly; Wayland sessions require XWayland.
+
+On NixOS, run the AppImage through `appimage-run`:
+
+```bash
+nix-shell -p appimage-run --run 'appimage-run ./Noosphere_0.1.0_amd64.AppImage'
+```
+
+For Hyprland managed by NixOS, enable
+`programs.hyprland.xwayland.enable = true` and restart the session. See the
+[Linux package notes](release/linux/README.md) for installation commands.
 
 ## Building from source
 
-Install the following tools:
+Required tools:
 
 - Node.js 22.12 or newer;
-- Rust 1.98.1 through `rustup`;
+- Rust 1.98.0 through `rustup`;
 - Protocol Buffers Compiler (`protoc`) 29 or newer;
-- the system dependencies required by Tauri 2.
+- the system packages required by Tauri 2.
 
 Windows builds require the Visual Studio C++ build tools. On Debian or Ubuntu:
 
 ```bash
 sudo apt update
 sudo apt install libwebkit2gtk-4.1-dev build-essential curl wget file \
-  libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev patchelf \
-  protobuf-compiler
+  libxdo-dev libssl-dev libayatana-appindicator3-dev libxkbcommon-x11-0 \
+  librsvg2-dev patchelf protobuf-compiler rpm
 ```
 
-Install the project dependencies and start the client:
+Install dependencies and start the application:
 
 ```bash
 npm ci
 npm run dev
 ```
 
-To create a native package:
+Build a platform package:
 
 ```bash
 npm run package:windows
-# or
 npm run package:linux
 ```
 
-Packages are written to `src-tauri/target/release/bundle/`.
+Linux packages can also be built in the pinned container environment:
 
-## Development
+```bash
+npm run package:linux:container
+```
 
-The main directories are:
+The container exports the AppImage, DEB, RPM, and `SHA256SUMS.txt` to
+`release/linux/`.
+
+## Repository layout
 
 - `src-tauri/`: Rust core, GitHub access, local storage, and encryption;
 - `app/`, `components/`, and `src/`: React interface;
-- `lib/`: shared frontend logic;
-- `tests/`: client tests;
-- `public/brand/` and `src-tauri/icons/`: bundled assets.
+- `lib/`: frontend protocol and media code;
+- `packaging/` and `scripts/`: release tooling;
+- `tests/`: frontend and packaging tests;
+- `public/brand/` and `src-tauri/icons/`: application assets.
 
-Useful commands:
+## Checks
 
 ```bash
-npm run format
+npm run format:check
 npm run lint
 npm test
 npm run check
@@ -99,20 +119,17 @@ npm run check
 
 ## Permissions
 
-The GitHub App must be installed only on the user's Noosphere repository with
-the `Contents: write` and `Metadata: read` permissions. The `Starring: write`
-account permission is used for synchronization signals.
+The GitHub App needs `Contents: write` and `Metadata: read` on the user's
+Noosphere repository. The `Starring: write` account permission is used for
+synchronization.
 
-Microphone and camera access depends on the permissions granted to desktop
-applications in Windows or Linux. A call can continue with the microphone when
-the camera is unavailable, or with the camera when it has been enabled and the
-microphone is unavailable.
+Microphone and camera access follows the desktop permissions configured by the
+operating system. Calls continue with any available requested device.
 
 ## Security
 
-Noosphere is still a young project and has not undergone an independent security
-audit. Security issues should be reported privately. See
-[SECURITY.md](SECURITY.md) for the security model and known limitations.
+No independent security audit has been completed. Report vulnerabilities
+privately as described in [SECURITY.md](SECURITY.md).
 
 ## License
 

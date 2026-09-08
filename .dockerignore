@@ -1,0 +1,11 @@
+.git
+.github
+.idea
+.vscode
+node_modules
+packaging/linux/Dockerfile
+dist-tauri
+release
+src-tauri/target
+*.exe
+*.log

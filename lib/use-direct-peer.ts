@@ -85,7 +85,6 @@ export function useDirectPeer(
 ) {
   const [status, setStatus] = useState<DirectPeerStatus>('github');
   const [callStatus, setCallStatus] = useState<VoiceCallStatus>('idle');
-  const [callMode, setCallMode] = useState<VoiceCallMedia>('audio');
   const [callError, setCallError] = useState('');
   const [localStream, setLocalStream] = useState<MediaStream | null>(null);
   const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null);
@@ -143,7 +142,6 @@ export function useDirectPeer(
       activeCallIdRef.current = null;
       activeCallModeRef.current = 'audio';
       updateCallStatus('idle');
-      setCallMode('audio');
       setCallError(error);
     },
     [clearCallTimer, stopLocalMedia, updateCallStatus],
@@ -302,7 +300,6 @@ export function useDirectPeer(
         }
         activeCallIdRef.current = packet.callId;
         activeCallModeRef.current = packet.media;
-        setCallMode(packet.media);
         setCallError('');
         updateCallStatus('incoming');
         clearCallTimer();
@@ -593,7 +590,6 @@ export function useDirectPeer(
       }
       activeCallIdRef.current = callId;
       activeCallModeRef.current = media;
-      setCallMode(media);
       setCallError('');
       updateCallStatus('outgoing');
       clearCallTimer();
@@ -715,7 +711,6 @@ export function useDirectPeer(
   return {
     status,
     callStatus,
-    callMode,
     callError,
     localStream,
     remoteStream,

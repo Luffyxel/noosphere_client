@@ -1,6 +1,14 @@
-# Téléchargements
+# Release files
 
-Le dossier `windows/` contient l’installateur NSIS, une version portable et leurs
-sommes SHA-256.
+**English** | [Français](README.fr.md)
 
-Ces exécutables ne sont pas encore signés avec un certificat Authenticode.
+Windows installers, Linux packages, and checksum files are produced for each
+release.
+
+- `windows/` contains the NSIS installer, the portable executable, and
+  `SHA256SUMS.txt`.
+- `linux/` contains the AppImage, DEB, RPM, Linux installation notes, and
+  `SHA256SUMS.txt`.
+
+The Windows executables are not signed with an Authenticode certificate.
+SmartScreen may warn on first launch.

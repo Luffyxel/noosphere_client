@@ -17,8 +17,13 @@
 # Packaged releases
 /release/*
 !/release/README.md
+!/release/README.fr.md
 !/release/windows/
 /release/windows/*
 !/release/windows/Noosphere_0.1.0_x64-setup.exe
 !/release/windows/Noosphere-portable-x64.exe
 !/release/windows/SHA256SUMS.txt
+!/release/linux/
+/release/linux/*
+!/release/linux/README.md
+!/release/linux/README.fr.md

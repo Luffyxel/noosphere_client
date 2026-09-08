@@ -14,7 +14,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-24.04, windows-2025]
+        os: [ubuntu-22.04, windows-2025]
     runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout
@@ -29,17 +29,19 @@ jobs:
         run: >-
           sudo apt-get update && sudo apt-get install -y
           libwebkit2gtk-4.1-dev libayatana-appindicator3-dev
-          librsvg2-dev patchelf protobuf-compiler xvfb
+          librsvg2-dev libxkbcommon-x11-0 patchelf protobuf-compiler xvfb
+          gstreamer1.0-libav gstreamer1.0-plugins-bad
           gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-nice
+          rpm dbus-x11
       - name: Install Windows Protocol Buffers compiler
         if: runner.os == 'Windows'
         run: choco install protoc --version=35.1.0 --no-progress -y
       - name: Configure Rust
         shell: bash
         run: >-
-          rustup toolchain install 1.98.1 --profile minimal
+          rustup toolchain install 1.98.0 --profile minimal
           --component clippy --component rustfmt &&
-          rustup default 1.98.1
+          rustup default 1.98.0
       - name: Install dependencies
         run: npm ci
       - name: Check formatting
@@ -57,8 +59,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-24.04
-            bundles: deb,appimage
+          - os: ubuntu-22.04
+            bundles: deb,rpm,appimage
             artifact: noosphere-linux
           - os: windows-2025
             bundles: nsis
@@ -77,24 +79,40 @@ jobs:
         run: >-
           sudo apt-get update && sudo apt-get install -y
           libwebkit2gtk-4.1-dev libayatana-appindicator3-dev
-          librsvg2-dev patchelf protobuf-compiler xvfb
+          librsvg2-dev libxkbcommon-x11-0 patchelf protobuf-compiler xvfb
+          gstreamer1.0-libav gstreamer1.0-plugins-bad
           gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-nice
+          rpm dbus-x11
       - name: Install Windows Protocol Buffers compiler
         if: runner.os == 'Windows'
         run: choco install protoc --version=35.1.0 --no-progress -y
       - name: Configure Rust
         shell: bash
-        run: rustup toolchain install 1.98.1 --profile minimal && rustup default 1.98.1
+        run: rustup toolchain install 1.98.0 --profile minimal && rustup default 1.98.0
       - name: Install dependencies
         run: npm ci
-      - name: Build native packages
+      - name: Pin AppImage runtime
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          sudo curl --fail --location --retry 5 --retry-all-errors \
+            --output /usr/local/lib/appimage-runtime \
+            https://github.com/AppImage/type2-runtime/releases/download/20251108/runtime-x86_64
+          echo '2fca8b443c92510f1483a883f60061ad09b46b978b2631c807cd873a47ec260d  /usr/local/lib/appimage-runtime' | sha256sum --check
+          echo 'LDAI_RUNTIME_FILE=/usr/local/lib/appimage-runtime' >> "$GITHUB_ENV"
+          echo 'APPIMAGETOOL_RUNTIME_FILE=/usr/local/lib/appimage-runtime' >> "$GITHUB_ENV"
+      - name: Build Windows package
+        if: runner.os == 'Windows'
         run: npm run build -- --bundles ${{ matrix.bundles }}
+      - name: Build Linux packages
+        if: runner.os == 'Linux'
+        run: npm run package:linux
       - name: Smoke test WebView2
         if: runner.os == 'Windows'
         run: npm run smoke:tauri
-      - name: Smoke test WebKitGTK
+      - name: Smoke test Chromium
         if: runner.os == 'Linux'
-        run: xvfb-run -a npm run smoke:tauri
+        run: dbus-run-session -- xvfb-run -a npm run smoke:tauri
       - name: Store packages
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
@@ -114,7 +132,7 @@ jobs:
           cache: npm
       - name: Configure Rust
         shell: bash
-        run: rustup toolchain install 1.98.1 --profile minimal && rustup default 1.98.1
+        run: rustup toolchain install 1.98.0 --profile minimal && rustup default 1.98.0
       - name: Install dependencies
         run: npm ci
       - name: Audit npm production dependencies

@@ -133,8 +133,8 @@ export async function captureCallMedia(
   if (!audio.track && !video.track) {
     throw new Error(
       media === 'video'
-        ? 'Aucun microphone ni aucune caméra ne sont accessibles. Vérifie les périphériques sélectionnés et les réglages Windows.'
-        : 'Aucun microphone n’est accessible. Vérifie le périphérique sélectionné et les réglages Windows.',
+        ? 'Aucun microphone ni aucune caméra ne sont accessibles. Vérifie les périphériques sélectionnés et les autorisations système.'
+        : 'Aucun microphone n’est accessible. Vérifie le périphérique sélectionné et les autorisations système.',
     );
   }
 
@@ -174,7 +174,7 @@ export async function captureCamera(
   );
   if (!capture.track) {
     throw new Error(
-      'Aucune caméra n’est accessible. Vérifie le périphérique sélectionné et les réglages Windows.',
+      'Aucune caméra n’est accessible. Vérifie le périphérique sélectionné et les autorisations système.',
     );
   }
   return {

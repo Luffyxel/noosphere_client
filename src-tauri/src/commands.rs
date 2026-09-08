@@ -8,13 +8,14 @@ use base64::{Engine as _, engine::general_purpose::STANDARD};
 use reqwest::Method;
 use secrecy::ExposeSecret as _;
 use serde_json::Value;
-use tauri::{AppHandle, Emitter as _, State};
+use tauri::{Emitter as _, State};
 use tauri_plugin_notification::NotificationExt as _;
 use tauri_plugin_opener::OpenerExt as _;
 use time::{Duration as TimeDuration, OffsetDateTime, format_description::well_known::Rfc3339};
 use tokio::time::{Instant, sleep};
 
 use crate::{
+    DesktopAppHandle,
     error::{Error, Result},
     github::{
         ApiResponse, GitHubClient, OAuthPoll, OAuthToken, RepositoryIdentity, ViewerIdentity,
@@ -122,7 +123,7 @@ async fn validate_restored_session(state: &AppState, saved: GitHubViewer) -> Res
 
 #[tauri::command]
 pub async fn github_connect(
-    app: AppHandle,
+    app: DesktopAppHandle,
     state: State<'_, AppState>,
     consent: ProvisioningConsent,
 ) -> CommandResult<GitHubViewer> {
@@ -139,7 +140,7 @@ pub async fn github_connect(
     result
 }
 
-async fn connect_github(app: &AppHandle, state: &AppState) -> Result<GitHubViewer> {
+async fn connect_github(app: &DesktopAppHandle, state: &AppState) -> Result<GitHubViewer> {
     emit_setup_status(app, "authorization", None)?;
     let device = state.github.request_device_code().await?;
     app.emit(
@@ -190,7 +191,11 @@ async fn connect_github(app: &AppHandle, state: &AppState) -> Result<GitHubViewe
     state.install_session(token, viewer).await
 }
 
-fn emit_setup_status(app: &AppHandle, stage: &str, repository_name: Option<&str>) -> Result<()> {
+fn emit_setup_status(
+    app: &DesktopAppHandle,
+    stage: &str,
+    repository_name: Option<&str>,
+) -> Result<()> {
     let mut value = serde_json::json!({ "stage": stage });
     if let Some(name) = repository_name {
         value["repositoryName"] = Value::String(name.to_owned());
@@ -415,7 +420,7 @@ async fn initialize_repository(
         repository,
         "conv/.keep",
         b"Conversations Noosphere\n",
-        "Créer le dossier conv",
+        "Créer la structure des conversations",
         false,
     )
     .await?;
@@ -426,7 +431,7 @@ async fn initialize_repository(
         repository,
         "friends/outgoing/.keep",
         "Demandes d’amis Noosphere\n".as_bytes(),
-        "Créer le dossier friends",
+        "Créer la structure des contacts",
         false,
     )
     .await?;
@@ -2294,7 +2299,7 @@ fn parse_realtime_timestamp(value: &str) -> Result<OffsetDateTime> {
 
 #[tauri::command]
 pub fn system_notify(
-    app: AppHandle,
+    app: DesktopAppHandle,
     title: String,
     body: String,
 ) -> CommandResult<NotificationResult> {
@@ -2320,7 +2325,7 @@ pub fn system_smoke_config(state: State<'_, AppState>) -> SmokeConfig {
 
 #[tauri::command]
 pub fn system_smoke_complete(
-    app: AppHandle,
+    app: DesktopAppHandle,
     state: State<'_, AppState>,
     result: SmokeResult,
 ) -> CommandResult<Published> {
@@ -2339,6 +2344,7 @@ pub fn system_smoke_complete(
         "webRtcMedia": result.web_rtc_media,
         "mediaPermission": result.media_permission,
         "brandAssets": result.brand_assets,
+        "diagnostics": result.diagnostics,
         "instanceProfileSlot": result.instance_profile_slot,
     }))
     .map_err(|_| command_error(Error::Local))?;

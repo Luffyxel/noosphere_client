@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { readFile, rm } from 'node:fs/promises';
+import { access, readFile, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -16,23 +16,34 @@ const executable = process.env.NOOSPHERE_SMOKE_EXECUTABLE
         : 'noosphere-desktop',
     );
 const smokeUserDataPath = path.join(releaseRoot, 'smoke-user-data');
+const requireDeviceCapture =
+  process.env.NOOSPHERE_SMOKE_REQUIRE_DEVICE_CAPTURE !== '0';
+const executableArguments = process.env.NOOSPHERE_SMOKE_EXECUTABLE_ARGUMENT
+  ? [process.env.NOOSPHERE_SMOKE_EXECUTABLE_ARGUMENT]
+  : [];
 
 function startInstance(resultPath, holdMilliseconds) {
-  const child = spawn(executable, [], {
-    env: {
-      ...process.env,
-      NOOSPHERE_SMOKE_TEST: '1',
-      NOOSPHERE_SMOKE_HOLD_MS: String(holdMilliseconds),
-      NOOSPHERE_SMOKE_RESULT_PATH: resultPath,
-      NOOSPHERE_SMOKE_USER_DATA: smokeUserDataPath,
-      WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS:
-        '--use-fake-device-for-media-stream',
-      ...(process.platform === 'linux'
-        ? { WEBKIT_DISABLE_COMPOSITING_MODE: '1' }
-        : {}),
+  const child = spawn(
+    process.platform === 'linux' ? 'setsid' : executable,
+    process.platform === 'linux'
+      ? [executable, ...executableArguments]
+      : executableArguments,
+    {
+      env: {
+        ...process.env,
+        NOOSPHERE_SMOKE_TEST: '1',
+        NOOSPHERE_SMOKE_HOLD_MS: String(holdMilliseconds),
+        NOOSPHERE_SMOKE_RESULT_PATH: resultPath,
+        NOOSPHERE_SMOKE_USER_DATA: smokeUserDataPath,
+        WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS:
+          '--use-fake-device-for-media-stream',
+        ...(process.platform === 'linux'
+          ? { WEBKIT_DISABLE_COMPOSITING_MODE: '1' }
+          : {}),
+      },
+      windowsHide: true,
     },
-    windowsHide: true,
-  });
+  );
   let output = '';
   child.stdout.on('data', (chunk) => {
     output += chunk.toString();
@@ -64,13 +75,15 @@ async function waitForResult(instance, resultPath) {
 }
 
 async function stopInstance(instance) {
-  if (!instance || instance.child.exitCode !== null) return;
-  instance.child.kill();
-  await Promise.race([
-    once(instance.child, 'exit'),
-    new Promise((resolve) => setTimeout(resolve, 5_000)),
-  ]);
-  if (instance.child.exitCode === null && process.platform === 'win32') {
+  if (!instance) return;
+  if (process.platform === 'win32') {
+    if (instance.child.exitCode !== null) return;
+    instance.child.kill();
+    await Promise.race([
+      once(instance.child, 'exit'),
+      new Promise((resolve) => setTimeout(resolve, 5_000)),
+    ]);
+    if (instance.child.exitCode !== null) return;
     const terminator = spawn(
       'taskkill.exe',
       ['/pid', String(instance.child.pid), '/t', '/f'],
@@ -78,6 +91,19 @@ async function stopInstance(instance) {
     );
     await Promise.race([
       once(terminator, 'exit'),
+      new Promise((resolve) => setTimeout(resolve, 5_000)),
+    ]);
+    return;
+  }
+  for (const signal of ['SIGTERM', 'SIGKILL']) {
+    try {
+      process.kill(-instance.child.pid, signal);
+    } catch (error) {
+      if (error?.code !== 'ESRCH') throw error;
+    }
+    if (instance.child.exitCode !== null) continue;
+    await Promise.race([
+      once(instance.child, 'exit'),
       new Promise((resolve) => setTimeout(resolve, 5_000)),
     ]);
   }
@@ -90,7 +116,8 @@ function validResult(result) {
     result.socialBridge &&
     result.webRtcDataChannel &&
     result.webRtcMedia &&
-    result.mediaPermission &&
+    typeof result.mediaPermission === 'boolean' &&
+    (!requireDeviceCapture || result.mediaPermission) &&
     result.brandAssets &&
     Number.isSafeInteger(result.instanceProfileSlot),
   );
@@ -98,6 +125,13 @@ function validResult(result) {
 
 const firstResultPath = path.join(releaseRoot, 'smoke-result-first.json');
 const secondResultPath = path.join(releaseRoot, 'smoke-result-second.json');
+try {
+  await access(executable);
+} catch {
+  throw new Error(
+    `Release binary not found at ${executable}. Run "npm run build -- --no-bundle" first.`,
+  );
+}
 await Promise.all([
   rm(firstResultPath, { force: true }),
   rm(secondResultPath, { force: true }),
@@ -127,7 +161,9 @@ try {
       secondProfile: secondResult.instanceProfileSlot,
       webRtcDataChannel: true,
       webRtcMedia: true,
-      mediaPermission: true,
+      mediaPermission:
+        firstResult.mediaPermission && secondResult.mediaPermission,
+      deviceCaptureRequired: requireDeviceCapture,
       brandAssets: true,
       isolated: true,
       firstReadyMilliseconds: firstMeasurement.elapsedMilliseconds,
