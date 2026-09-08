@@ -1441,6 +1441,7 @@ function NoosphereApp({
       title: 'Demande envoyée',
       detail: `@${request.user.login}`,
     });
+    void syncSocialState(true);
   }
 
   async function acceptFriendRequest(request: FriendRequest) {

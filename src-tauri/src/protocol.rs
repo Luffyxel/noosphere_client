@@ -632,6 +632,15 @@ pub fn serialize_identity(secret: &DeviceSecret) -> Result<SecretString> {
     Ok(SecretString::from(serialized))
 }
 
+pub fn forget_peer_owned(mut secret: DeviceSecret, github_user_id: u64) -> Result<DeviceSecret> {
+    let peer = address(github_user_id)?.to_string();
+    secret.sessions.retain(|entry| entry.address != peer);
+    secret
+        .trusted_identities
+        .retain(|entry| entry.address != peer);
+    Ok(secret)
+}
+
 pub fn validate_public_profile(
     profile: &PublicProfile,
     github_user_id: u64,
@@ -1906,6 +1915,140 @@ mod tests {
             alice_repository.get(&format!("conv/{CONVERSATION}/messages/{reply_id}.enc.json")),
             bob_repository.get(&format!("conv/{CONVERSATION}/messages/{reply_id}.enc.json"))
         );
+    }
+
+    #[test]
+    fn crossed_invitations_converge_on_the_selected_conversation() {
+        let (alice, alice_profile) = create_identity(42, 420).unwrap();
+        let (bob, bob_profile) = create_identity(99, 990).unwrap();
+        let alice_conversation = "dm-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let bob_conversation = "dm-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+        let created_at = "2026-09-04T09:00:00.000Z";
+
+        let alice_handshake = OwnedHandshake {
+            peer_profile: bob_profile.clone(),
+            peer_github_user_id: 99,
+            peer_repository_id: 990,
+            conversation_id: alice_conversation.to_owned(),
+            created_at: created_at.to_owned(),
+        };
+        let bob_handshake = OwnedHandshake {
+            peer_profile: alice_profile.clone(),
+            peer_github_user_id: 42,
+            peer_repository_id: 420,
+            conversation_id: bob_conversation.to_owned(),
+            created_at: created_at.to_owned(),
+        };
+
+        let (alice, alice_invitation) =
+            create_invitation_owned(alice, alice_handshake.clone()).unwrap();
+        let (bob, _bob_invitation) = create_invitation_owned(bob, bob_handshake.clone()).unwrap();
+        let bob_acceptance = OwnedHandshake {
+            conversation_id: alice_conversation.to_owned(),
+            ..bob_handshake
+        };
+        let (bob, opened, acceptance) =
+            accept_invitation_owned(bob, bob_acceptance, alice_invitation).unwrap();
+        assert_eq!(opened.created_at, created_at);
+
+        let (alice, confirmed) =
+            decrypt_acceptance_owned(alice, alice_handshake, acceptance).unwrap();
+        assert_eq!(confirmed.created_at, created_at);
+
+        let message = OwnedMessage {
+            peer_profile: bob_profile,
+            peer_github_user_id: 99,
+            peer_repository_id: 990,
+            conversation_id: alice_conversation.to_owned(),
+            message_id: message_id(30),
+            sent_at: "2026-09-04T09:01:00.000Z".to_owned(),
+            text: "demande croisee".to_owned(),
+        };
+        let message_id = message.message_id.clone();
+        let (alice, envelope) = encrypt_message_owned(alice, message).unwrap();
+        let (_, decrypted) = decrypt_message_owned(
+            bob,
+            OwnedDecryptMessage {
+                peer_profile: alice_profile,
+                peer_github_user_id: 42,
+                peer_repository_id: 420,
+                conversation_id: alice_conversation.to_owned(),
+                message_id,
+            },
+            envelope,
+        )
+        .unwrap();
+        let _ = alice;
+        assert_eq!(decrypted.text, "demande croisee");
+    }
+
+    #[test]
+    fn a_new_peer_identity_can_replace_a_pending_session() {
+        let (_, old_alice_profile) = create_identity(42, 420).unwrap();
+        let (bob, bob_profile) = create_identity(99, 990).unwrap();
+        let old_handshake = OwnedHandshake {
+            peer_profile: old_alice_profile,
+            peer_github_user_id: 42,
+            peer_repository_id: 420,
+            conversation_id: "dm-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_owned(),
+            created_at: "2026-09-04T09:00:00.000Z".to_owned(),
+        };
+        let (bob, _) = create_invitation_owned(bob, old_handshake).unwrap();
+
+        let (new_alice, new_alice_profile) = create_identity(42, 420).unwrap();
+        let conversation_id = "dm-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+        let alice_handshake = OwnedHandshake {
+            peer_profile: bob_profile,
+            peer_github_user_id: 99,
+            peer_repository_id: 990,
+            conversation_id: conversation_id.to_owned(),
+            created_at: "2026-09-04T09:01:00.000Z".to_owned(),
+        };
+        let (new_alice, invitation) =
+            create_invitation_owned(new_alice, alice_handshake.clone()).unwrap();
+        let bob = forget_peer_owned(bob, 42).unwrap();
+        let current_handshake = OwnedHandshake {
+            peer_profile: new_alice_profile,
+            peer_github_user_id: 42,
+            peer_repository_id: 420,
+            conversation_id: conversation_id.to_owned(),
+            created_at: "2026-09-04T09:01:00.000Z".to_owned(),
+        };
+
+        let (bob, opened, acceptance) =
+            accept_invitation_owned(bob, current_handshake, invitation).unwrap();
+        assert_eq!(opened.created_at, "2026-09-04T09:01:00.000Z");
+
+        let (new_alice, confirmed) =
+            decrypt_acceptance_owned(new_alice, alice_handshake, acceptance).unwrap();
+        assert_eq!(confirmed.created_at, opened.created_at);
+        let message_id = message_id(31);
+        let (new_alice, message) = encrypt_message_owned(
+            new_alice,
+            OwnedMessage {
+                peer_profile: profile_from_secret(&bob).unwrap(),
+                peer_github_user_id: 99,
+                peer_repository_id: 990,
+                conversation_id: conversation_id.to_owned(),
+                message_id: message_id.clone(),
+                sent_at: "2026-09-04T09:02:00.000Z".to_owned(),
+                text: "session renouvelee".to_owned(),
+            },
+        )
+        .unwrap();
+        let (_, decrypted) = decrypt_message_owned(
+            bob,
+            OwnedDecryptMessage {
+                peer_profile: profile_from_secret(&new_alice).unwrap(),
+                peer_github_user_id: 42,
+                peer_repository_id: 420,
+                conversation_id: conversation_id.to_owned(),
+                message_id,
+            },
+            message,
+        )
+        .unwrap();
+        assert_eq!(decrypted.text, "session renouvelee");
     }
 
     #[test]

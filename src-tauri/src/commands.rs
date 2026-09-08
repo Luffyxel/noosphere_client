@@ -1230,14 +1230,10 @@ async fn sync_social_state(state: &AppState) -> Result<SocialState> {
     incoming.retain(|request| {
         !conversation_ids.contains(request.id.as_str())
             && !conversation_peer_ids.contains(&request.peer.user.id)
-            && !social.outgoing.iter().any(|outgoing| {
-                outgoing.peer.user.id == request.peer.user.id
-                    && request_order(
-                        (&outgoing.id, viewer.id),
-                        (&request.id, request.peer.user.id),
-                    )
-                    .is_lt()
-            })
+            && !social
+                .outgoing
+                .iter()
+                .any(|outgoing| outgoing.peer.user.id == request.peer.user.id)
     });
     let mut conversations = social
         .conversations
@@ -1542,12 +1538,7 @@ async fn reconcile_crossed_requests(
         let Some(peer_incoming) = peer_incoming else {
             continue;
         };
-        if request_order(
-            (&peer_incoming.id, peer_incoming.peer.user.id),
-            (&request.id, viewer.id),
-        )
-        .is_lt()
-        {
+        if should_accept_crossed_request(viewer.id, request, peer_incoming) {
             match accept_friend_request(state, &peer_incoming.peer.user.login, &peer_incoming.id)
                 .await
             {
@@ -1565,6 +1556,81 @@ async fn reconcile_crossed_requests(
 
 fn request_order(left: (&str, u64), right: (&str, u64)) -> std::cmp::Ordering {
     left.0.cmp(right.0).then_with(|| left.1.cmp(&right.1))
+}
+
+fn should_accept_crossed_request(
+    viewer_id: u64,
+    outgoing: &OutgoingRequestState,
+    incoming: &IncomingRequestRecord,
+) -> bool {
+    outgoing.peer.profile != incoming.peer.profile
+        || request_order(
+            (&incoming.id, incoming.peer.user.id),
+            (&outgoing.id, viewer_id),
+        )
+        .is_lt()
+}
+
+#[cfg(test)]
+mod crossed_request_tests {
+    use super::*;
+
+    fn peer(profile: crate::protocol::PublicProfile) -> PeerState {
+        PeerState {
+            user: NoosphereUser {
+                id: 99,
+                login: "peer".to_owned(),
+                name: None,
+                avatar_url: "https://avatars.githubusercontent.com/u/99?v=4".to_owned(),
+                repository: "noosphere_user_peer".to_owned(),
+            },
+            repository_id: 990,
+            profile,
+        }
+    }
+
+    fn outgoing(id: &str, profile: crate::protocol::PublicProfile) -> OutgoingRequestState {
+        let (viewer, _) = crate::protocol::create_identity(42, 420).unwrap();
+        let handshake = crate::protocol::OwnedHandshake {
+            peer_profile: profile.clone(),
+            peer_github_user_id: 99,
+            peer_repository_id: 990,
+            conversation_id: id.to_owned(),
+            created_at: "2026-09-04T09:00:00Z".to_owned(),
+        };
+        let (_, envelope) = crate::protocol::create_invitation_owned(viewer, handshake).unwrap();
+        OutgoingRequestState {
+            id: id.to_owned(),
+            created_at: "2026-09-04T09:00:00Z".to_owned(),
+            peer: peer(profile),
+            envelope,
+        }
+    }
+
+    #[test]
+    fn crossed_requests_use_a_single_stable_conversation() {
+        let (_, profile) = crate::protocol::create_identity(99, 990).unwrap();
+        let outgoing = outgoing("dm-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", profile.clone());
+        let incoming = IncomingRequestRecord {
+            id: "dm-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_owned(),
+            peer: peer(profile),
+        };
+
+        assert!(should_accept_crossed_request(42, &outgoing, &incoming));
+    }
+
+    #[test]
+    fn a_current_peer_identity_takes_precedence_over_request_order() {
+        let (_, old_profile) = crate::protocol::create_identity(99, 990).unwrap();
+        let (_, current_profile) = crate::protocol::create_identity(99, 990).unwrap();
+        let outgoing = outgoing("dm-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", old_profile);
+        let incoming = IncomingRequestRecord {
+            id: "dm-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".to_owned(),
+            peer: peer(current_profile),
+        };
+
+        assert!(should_accept_crossed_request(42, &outgoing, &incoming));
+    }
 }
 
 #[tauri::command]
@@ -1636,7 +1702,10 @@ async fn accept_friend_request(
         repository_id: peer.repository.id,
         profile: peer.profile,
     };
-    let secret = state
+    let peer_identity_changed = state.social.read().await.outgoing.iter().any(|request| {
+        request.peer.user.id == peer_state.user.id && request.peer.profile != peer_state.profile
+    });
+    let mut secret = state
         .identity
         .read()
         .await
@@ -1644,6 +1713,9 @@ async fn accept_friend_request(
         .ok_or(Error::Crypto)?
         .secret
         .clone();
+    if peer_identity_changed {
+        secret = crate::protocol::forget_peer_owned(secret, peer_state.user.id)?;
+    }
     let handshake = crate::protocol::OwnedHandshake {
         peer_profile: peer_state.profile.clone(),
         peer_github_user_id: peer_state.user.id,

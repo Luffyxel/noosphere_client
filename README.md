@@ -9,7 +9,7 @@ account.
 ## Downloads
 
 - [Windows installer](Noosphere_0.1.0_x64-setup.exe)
-- [Linux packages (AppImage, DEB, and RPM)](https://github.com/Luffyxel/noosphere_client/releases/latest)
+- Linux: [AppImage](https://github.com/Luffyxel/noosphere_client/releases/download/v0.1.0/Noosphere_0.1.0_amd64.AppImage), [DEB](https://github.com/Luffyxel/noosphere_client/releases/download/v0.1.0/Noosphere_0.1.0_amd64.deb), [RPM](https://github.com/Luffyxel/noosphere_client/releases/download/v0.1.0/Noosphere_0.1.0_x86_64.rpm), [checksums](https://github.com/Luffyxel/noosphere_client/releases/download/v0.1.0/SHA256SUMS.txt)
 
 Installation notes and checksums are kept in [`release/`](release/README.md).
 

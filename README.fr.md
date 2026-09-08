@@ -9,7 +9,7 @@ compte supplémentaire.
 ## Téléchargements
 
 - [Installateur Windows](Noosphere_0.1.0_x64-setup.exe)
-- [Paquets Linux (AppImage, DEB et RPM)](https://github.com/Luffyxel/noosphere_client/releases/latest)
+- Linux : [AppImage](https://github.com/Luffyxel/noosphere_client/releases/download/v0.1.0/Noosphere_0.1.0_amd64.AppImage), [DEB](https://github.com/Luffyxel/noosphere_client/releases/download/v0.1.0/Noosphere_0.1.0_amd64.deb), [RPM](https://github.com/Luffyxel/noosphere_client/releases/download/v0.1.0/Noosphere_0.1.0_x86_64.rpm), [sommes de contrôle](https://github.com/Luffyxel/noosphere_client/releases/download/v0.1.0/SHA256SUMS.txt)
 
 Les instructions d’installation et les sommes de contrôle se trouvent dans
 [`release/`](release/README.fr.md).
