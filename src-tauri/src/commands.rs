@@ -2391,6 +2391,8 @@ pub fn system_smoke_config(state: State<'_, AppState>) -> SmokeConfig {
     let enabled = std::env::var("NOOSPHERE_SMOKE_TEST").as_deref() == Ok("1");
     SmokeConfig {
         enabled,
+        synthetic_media: enabled
+            && std::env::var("NOOSPHERE_SMOKE_SYNTHETIC_MEDIA").as_deref() == Ok("1"),
         instance_profile_slot: enabled.then(|| state.profile.slot()),
     }
 }

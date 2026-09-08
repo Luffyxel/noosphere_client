@@ -23,6 +23,10 @@ const executableArguments = process.env.NOOSPHERE_SMOKE_EXECUTABLE_ARGUMENT
   : [];
 
 function startInstance(resultPath, holdMilliseconds) {
+  const webviewDataPath = path.join(
+    smokeUserDataPath,
+    path.basename(resultPath, '.json'),
+  );
   const child = spawn(
     process.platform === 'linux' ? 'setsid' : executable,
     process.platform === 'linux'
@@ -35,8 +39,9 @@ function startInstance(resultPath, holdMilliseconds) {
         NOOSPHERE_SMOKE_HOLD_MS: String(holdMilliseconds),
         NOOSPHERE_SMOKE_RESULT_PATH: resultPath,
         NOOSPHERE_SMOKE_USER_DATA: smokeUserDataPath,
+        WEBVIEW2_USER_DATA_FOLDER: webviewDataPath,
         WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS:
-          '--use-fake-device-for-media-stream',
+          '--use-fake-device-for-media-stream --autoplay-policy=no-user-gesture-required',
         ...(process.platform === 'linux'
           ? { WEBKIT_DISABLE_COMPOSITING_MODE: '1' }
           : {}),
@@ -135,7 +140,12 @@ try {
 await Promise.all([
   rm(firstResultPath, { force: true }),
   rm(secondResultPath, { force: true }),
-  rm(smokeUserDataPath, { force: true, recursive: true }),
+  rm(smokeUserDataPath, {
+    force: true,
+    recursive: true,
+    maxRetries: 20,
+    retryDelay: 250,
+  }),
 ]);
 
 const first = startInstance(firstResultPath, 20_000);
@@ -175,6 +185,11 @@ try {
   await Promise.all([
     rm(firstResultPath, { force: true }),
     rm(secondResultPath, { force: true }),
-    rm(smokeUserDataPath, { force: true, recursive: true }),
+    rm(smokeUserDataPath, {
+      force: true,
+      recursive: true,
+      maxRetries: 20,
+      retryDelay: 250,
+    }),
   ]);
 }

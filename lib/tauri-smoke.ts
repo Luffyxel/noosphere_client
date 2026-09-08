@@ -2,7 +2,13 @@ import { invoke } from '@tauri-apps/api/core';
 
 type SmokeConfig = {
   enabled: boolean;
+  syntheticMedia: boolean;
   instanceProfileSlot: number | null;
+};
+
+type SmokeMedia = {
+  stream: MediaStream;
+  release: () => Promise<void>;
 };
 
 function waitForIceGathering(peer: RTCPeerConnection): Promise<void> {
@@ -105,6 +111,69 @@ async function exercisePeerConnection(source: MediaStream): Promise<{
   }
 }
 
+async function createSyntheticMedia(): Promise<SmokeMedia> {
+  const canvas = document.createElement('canvas');
+  canvas.width = 64;
+  canvas.height = 64;
+  const context = canvas.getContext('2d');
+  if (!context || typeof canvas.captureStream !== 'function') {
+    throw new Error('Synthetic video unavailable');
+  }
+
+  let frame = 0;
+  const draw = () => {
+    context.fillStyle = frame % 2 === 0 ? '#76bf98' : '#1d1d1f';
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    frame += 1;
+  };
+  draw();
+  const timer = window.setInterval(draw, 100);
+  const video = canvas.captureStream(10);
+  const audioContext = new AudioContext();
+  const oscillator = audioContext.createOscillator();
+  const gain = audioContext.createGain();
+  const destination = audioContext.createMediaStreamDestination();
+  gain.gain.value = 0.01;
+  oscillator.connect(gain).connect(destination);
+  oscillator.start();
+  try {
+    await Promise.race([
+      audioContext.resume(),
+      new Promise<never>((_, reject) => {
+        window.setTimeout(
+          () => reject(new Error('Synthetic audio timeout')),
+          2_000,
+        );
+      }),
+    ]);
+    if (audioContext.state !== 'running') {
+      throw new Error('Synthetic audio unavailable');
+    }
+  } catch (error) {
+    window.clearInterval(timer);
+    oscillator.stop();
+    for (const track of video.getTracks()) track.stop();
+    await audioContext.close();
+    throw error;
+  }
+
+  const stream = new MediaStream([
+    ...destination.stream.getAudioTracks(),
+    ...video.getVideoTracks(),
+  ]);
+  return {
+    stream,
+    release: async () => {
+      window.clearInterval(timer);
+      try {
+        oscillator.stop();
+      } catch {}
+      for (const track of stream.getTracks()) track.stop();
+      await audioContext.close();
+    },
+  };
+}
+
 async function verifyBrandAssets(): Promise<boolean> {
   await Promise.all(
     ['/brand/logo-white.png', '/brand/logo-black.png'].map(
@@ -141,26 +210,42 @@ export async function runTauriSmokeTest(): Promise<void> {
   } catch (error) {
     diagnostics.push(`brand: ${String(error)}`);
   }
-  let captured: MediaStream | null = null;
-  try {
-    captured = await navigator.mediaDevices.getUserMedia({
-      audio: true,
-      video: true,
-    });
-    mediaPermission =
-      captured.getAudioTracks().length > 0 &&
-      captured.getVideoTracks().length > 0;
-  } catch (error) {
-    diagnostics.push(`capture: ${String(error)}`);
-  }
-  if (captured) {
+  let media: SmokeMedia | null = null;
+  if (!config.syntheticMedia) {
     try {
-      const result = await exercisePeerConnection(captured);
+      const captured = await navigator.mediaDevices.getUserMedia({
+        audio: true,
+        video: true,
+      });
+      mediaPermission =
+        captured.getAudioTracks().length > 0 &&
+        captured.getVideoTracks().length > 0;
+      media = {
+        stream: captured,
+        release: async () => {
+          for (const track of captured.getTracks()) track.stop();
+        },
+      };
+    } catch (error) {
+      diagnostics.push(`capture: ${String(error)}`);
+    }
+  }
+  if (!media) {
+    try {
+      media = await createSyntheticMedia();
+    } catch (error) {
+      diagnostics.push(`synthetic: ${String(error)}`);
+    }
+  }
+  if (media) {
+    try {
+      const result = await exercisePeerConnection(media.stream);
       webRtcDataChannel = result.dataChannel;
       webRtcMedia = result.media;
     } catch (error) {
       diagnostics.push(`webrtc: ${String(error)}`);
-      for (const track of captured.getTracks()) track.stop();
+    } finally {
+      await media.release();
     }
   }
   await invoke('system_smoke_complete', {

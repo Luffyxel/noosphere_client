@@ -32,6 +32,19 @@ void test('WebView2 accorde uniquement les permissions micro et caméra', async 
   assert.doesNotMatch(runtime, /COREWEBVIEW2_PERMISSION_KIND_GEOLOCATION/);
 });
 
+void test('le test Windows reste exécutable sans périphérique média', async () => {
+  const [smoke, ci, release] = await Promise.all([
+    readFile(new URL('lib/tauri-smoke.ts', root), 'utf8'),
+    readFile(new URL('.github/workflows/ci.yml', root), 'utf8'),
+    readFile(new URL('.github/workflows/release.yml', root), 'utf8'),
+  ]);
+  assert.match(smoke, /createSyntheticMedia/);
+  for (const workflow of [ci, release]) {
+    assert.match(workflow, /NOOSPHERE_SMOKE_SYNTHETIC_MEDIA: '1'/);
+    assert.match(workflow, /NOOSPHERE_SMOKE_REQUIRE_DEVICE_CAPTURE: '0'/);
+  }
+});
+
 void test('l’AppImage embarque SQLite pour le stockage NSS de Chromium', async () => {
   const finalizer = await readFile(
     new URL('scripts/finalize-linux-appimage.mjs', root),

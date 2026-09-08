@@ -148,6 +148,7 @@ pub struct NotificationResult {
 #[serde(rename_all = "camelCase")]
 pub struct SmokeConfig {
     pub enabled: bool,
+    pub synthetic_media: bool,
     pub instance_profile_slot: Option<u8>,
 }
 

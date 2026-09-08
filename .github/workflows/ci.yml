@@ -110,6 +110,9 @@ jobs:
       - name: Smoke test WebView2
         if: runner.os == 'Windows'
         run: npm run smoke:tauri
+        env:
+          NOOSPHERE_SMOKE_REQUIRE_DEVICE_CAPTURE: '0'
+          NOOSPHERE_SMOKE_SYNTHETIC_MEDIA: '1'
       - name: Smoke test Chromium
         if: runner.os == 'Linux'
         run: dbus-run-session -- xvfb-run -a npm run smoke:tauri
