@@ -70,7 +70,7 @@ impl SecureBlobStore {
         self.system.save(account, value)
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, windows))]
     pub fn remove(&self, account: &str) -> Result<()> {
         validate_account(account)?;
         #[cfg(windows)]

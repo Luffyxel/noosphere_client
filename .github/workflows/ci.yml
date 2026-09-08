@@ -103,7 +103,7 @@ jobs:
           echo 'APPIMAGETOOL_RUNTIME_FILE=/usr/local/lib/appimage-runtime' >> "$GITHUB_ENV"
       - name: Build Windows package
         if: runner.os == 'Windows'
-        run: npm run build -- --bundles ${{ matrix.bundles }}
+        run: npm run package:windows
       - name: Build Linux packages
         if: runner.os == 'Linux'
         run: npm run package:linux

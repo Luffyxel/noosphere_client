@@ -55,6 +55,8 @@ ENV LDAI_RUNTIME_FILE=/usr/local/lib/appimage-runtime
 ENV APPIMAGETOOL_RUNTIME_FILE=/usr/local/lib/appimage-runtime
 ENV CEF_PATH=/var/cache/noosphere-cef
 
+RUN rustup component add rustfmt clippy
+
 WORKDIR /workspace
 
 COPY package.json package-lock.json ./
