@@ -11,32 +11,32 @@ nécessaire.
 Utilisez l’AppImage sur les distributions sans paquet DEB ou RPM :
 
 ```bash
-chmod +x Noosphere_0.1.0_amd64.AppImage
-./Noosphere_0.1.0_amd64.AppImage
+chmod +x Noosphere_0.1.1_amd64.AppImage
+./Noosphere_0.1.1_amd64.AppImage
 ```
 
 Sous NixOS :
 
 ```bash
-nix-shell -p appimage-run --run 'appimage-run ./Noosphere_0.1.0_amd64.AppImage'
+nix-shell -p appimage-run --run 'appimage-run ./Noosphere_0.1.1_amd64.AppImage'
 ```
 
 ## Debian et Ubuntu
 
 ```bash
-sudo apt install ./Noosphere_0.1.0_amd64.deb
+sudo apt install ./Noosphere_0.1.1_amd64.deb
 ```
 
 ## Fedora
 
 ```bash
-sudo dnf install ./Noosphere_0.1.0_x86_64.rpm
+sudo dnf install ./Noosphere_0.1.1_x86_64.rpm
 ```
 
 ## openSUSE
 
 ```bash
-sudo zypper install ./Noosphere_0.1.0_x86_64.rpm
+sudo zypper install ./Noosphere_0.1.1_x86_64.rpm
 ```
 
 ## Wayland

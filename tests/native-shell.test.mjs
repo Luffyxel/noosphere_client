@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
+import { access, readFile } from 'node:fs/promises';
 import test from 'node:test';
 
 const root = new URL('../', import.meta.url);
@@ -12,6 +12,15 @@ void test('la version Windows est une application graphique sans console', async
   assert.match(
     entrypoint,
     /cfg_attr\(not\(debug_assertions\), windows_subsystem = "windows"\)/,
+  );
+});
+
+void test('l’installeur Windows courant est disponible à la racine', async () => {
+  const packageMetadata = JSON.parse(
+    await readFile(new URL('package.json', root), 'utf8'),
+  );
+  await access(
+    new URL(`Noosphere_${packageMetadata.version}_x64-setup.exe`, root),
   );
 });
 
