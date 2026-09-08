@@ -33,6 +33,11 @@ The client checks GitHub star changes every three seconds for friend requests,
 messages, and calls, then reads the affected repository. An active WebRTC
 connection delivers events directly.
 
+Messages and call signaling work between networks through GitHub. Calls use a
+direct WebRTC connection with Cloudflare STUN. No TURN relay is configured, so
+calls can fail behind symmetric NAT, carrier-grade NAT, or restrictive
+firewalls.
+
 GitHub can observe repository metadata such as commit dates, activity volume,
 and the accounts involved. WebRTC exposes the network information required by
 ICE to both peers.
@@ -41,9 +46,10 @@ ICE to both peers.
 
 The Linux release is available for x86_64 in three formats:
 
-- AppImage for most distributions;
+- AppImage for Arch Linux, NixOS, and other distributions;
 - DEB for Debian and Ubuntu;
-- RPM for Fedora and openSUSE.
+- RPM for Fedora, Red Hat Enterprise Linux 9 and 10, Rocky Linux 9 and 10,
+  and openSUSE.
 
 The packages include the CEF/Chromium runtime used by the client. X11 is
 supported directly; Wayland sessions require XWayland.

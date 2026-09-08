@@ -20,17 +20,29 @@ On NixOS:
 nix-shell -p appimage-run --run 'appimage-run ./Noosphere_0.1.1_amd64.AppImage'
 ```
 
+## Arch Linux
+
+Install FUSE 2, then run the AppImage:
+
+```bash
+sudo pacman -S --needed fuse2
+chmod +x Noosphere_0.1.1_amd64.AppImage
+./Noosphere_0.1.1_amd64.AppImage
+```
+
 ## Debian and Ubuntu
 
 ```bash
 sudo apt install ./Noosphere_0.1.1_amd64.deb
 ```
 
-## Fedora
+## Fedora, Red Hat Enterprise Linux, and Rocky Linux
 
 ```bash
 sudo dnf install ./Noosphere_0.1.1_x86_64.rpm
 ```
+
+The RPM installs and resolves its runtime libraries on Rocky Linux 9 and 10.
 
 ## openSUSE
 
@@ -45,7 +57,8 @@ enable `programs.hyprland.xwayland.enable = true` and restart the session.
 
 The AppImage passed the two-client smoke test on NixOS 26.05 under Xvfb. A
 Hyprland session still needs XWayland for a visible launch. The same media test
-runs in the Ubuntu 22.04 packaging container.
+runs in the Ubuntu 22.04 packaging container. On Arch Linux, the AppImage
+starts under X11; the media smoke test has not been validated there yet.
 
 ## Checksums
 

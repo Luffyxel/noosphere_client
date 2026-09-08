@@ -34,6 +34,11 @@ Le client vérifie les changements d’étoile GitHub toutes les trois secondes
 pour les demandes d’amis, les messages et les appels, puis lit le dépôt
 concerné. Une connexion WebRTC active transmet les événements directement.
 
+Les messages et la signalisation des appels passent d’un réseau à l’autre par
+GitHub. Les appels utilisent une connexion WebRTC directe avec le serveur STUN
+de Cloudflare. Aucun relais TURN n’est configuré : un appel peut donc échouer
+derrière un NAT symétrique, un CGNAT ou un pare-feu restrictif.
+
 GitHub peut voir les métadonnées du dépôt, notamment les dates de commit, le
 volume d’activité et les comptes impliqués. WebRTC révèle aux deux pairs les
 informations réseau nécessaires à ICE.
@@ -42,9 +47,10 @@ informations réseau nécessaires à ICE.
 
 La version Linux est disponible pour x86_64 dans trois formats :
 
-- AppImage pour la plupart des distributions ;
+- AppImage pour Arch Linux, NixOS et les autres distributions ;
 - DEB pour Debian et Ubuntu ;
-- RPM pour Fedora et openSUSE.
+- RPM pour Fedora, Red Hat Enterprise Linux 9 et 10, Rocky Linux 9 et 10,
+  et openSUSE.
 
 Les paquets incluent le moteur CEF/Chromium utilisé par le client. X11 est pris
 en charge directement ; une session Wayland doit disposer de XWayland.
