@@ -8,8 +8,8 @@ compte supplémentaire.
 
 ## Téléchargements
 
-- [Installateur Windows](Noosphere_0.1.2_x64-setup.exe)
-- Linux : [AppImage](https://github.com/Luffyxel/noosphere_client/releases/download/v0.1.2/Noosphere_0.1.2_amd64.AppImage), [DEB](https://github.com/Luffyxel/noosphere_client/releases/download/v0.1.2/Noosphere_0.1.2_amd64.deb), [RPM](https://github.com/Luffyxel/noosphere_client/releases/download/v0.1.2/Noosphere_0.1.2_x86_64.rpm), [sommes de contrôle](https://github.com/Luffyxel/noosphere_client/releases/download/v0.1.2/SHA256SUMS.txt)
+- [Installateur Windows](Noosphere_0.1.3_x64-setup.exe)
+- Linux : [AppImage](https://github.com/Luffyxel/noosphere_client/releases/download/v0.1.3/Noosphere_0.1.3_amd64.AppImage), [DEB](https://github.com/Luffyxel/noosphere_client/releases/download/v0.1.3/Noosphere_0.1.3_amd64.deb), [RPM](https://github.com/Luffyxel/noosphere_client/releases/download/v0.1.3/Noosphere_0.1.3_x86_64.rpm), [sommes de contrôle](https://github.com/Luffyxel/noosphere_client/releases/download/v0.1.3/SHA256SUMS.txt)
 
 Les instructions d’installation et les sommes de contrôle se trouvent dans
 [`release/`](release/README.fr.md).
@@ -17,7 +17,8 @@ Les instructions d’installation et les sommes de contrôle se trouvent dans
 ## Fonctionnalités
 
 - chiffrement de bout en bout avec libsignal ;
-- contacts liés aux comptes GitHub ;
+- contacts et demandes d’amis liés aux comptes GitHub ;
+- acceptation ou refus des demandes d’amis ;
 - profil des amis avec suppression du contact ;
 - échange direct par WebRTC lorsque les deux personnes sont en ligne ;
 - appels audio avec caméra activable ;
@@ -59,7 +60,7 @@ en charge directement ; une session Wayland doit disposer de XWayland.
 Sous NixOS, lancez l’AppImage avec `appimage-run` :
 
 ```bash
-nix-shell -p appimage-run --run 'appimage-run ./Noosphere_0.1.2_amd64.AppImage'
+nix-shell -p appimage-run --run 'appimage-run ./Noosphere_0.1.3_amd64.AppImage'
 ```
 
 Avec Hyprland géré par NixOS, activez

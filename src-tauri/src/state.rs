@@ -84,6 +84,8 @@ pub struct LocalSocialState {
     pub messages: Vec<LocalMessageState>,
     #[serde(default)]
     pub seen_message_ids: Vec<String>,
+    #[serde(default)]
+    pub declined_request_ids: Vec<String>,
     pub temporary_stars: Vec<u64>,
 }
 
@@ -101,6 +103,7 @@ impl Default for LocalSocialState {
             outgoing: Vec::new(),
             messages: Vec::new(),
             seen_message_ids: Vec::new(),
+            declined_request_ids: Vec::new(),
             temporary_stars: Vec::new(),
         }
     }
@@ -475,6 +478,7 @@ fn validate_social(social: &LocalSocialState, own_id: Option<u64>) -> Result<()>
         || social.outgoing.len() > 500
         || social.messages.len() > 500
         || social.seen_message_ids.len() > 10_000
+        || social.declined_request_ids.len() > 2_000
         || social.temporary_stars.len() > 500
     {
         return Err(Error::SecureStorageUnavailable);
@@ -528,6 +532,13 @@ fn validate_social(social: &LocalSocialState, own_id: Option<u64>) -> Result<()>
     }
     if messages.iter().any(|message_id| !seen.contains(message_id)) {
         return Err(Error::SecureStorageUnavailable);
+    }
+    let mut declined = BTreeSet::new();
+    for request_id in &social.declined_request_ids {
+        validation::conversation_id(request_id).map_err(|_| Error::SecureStorageUnavailable)?;
+        if !declined.insert(request_id.as_str()) {
+            return Err(Error::SecureStorageUnavailable);
+        }
     }
     let mut stars = BTreeSet::new();
     if social

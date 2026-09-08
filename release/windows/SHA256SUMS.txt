@@ -1,2 +1,2 @@
-e7387fc1d586b299f8282c7dfd73146c91e2215098de01cdf36aad63da881d42  Noosphere_0.1.2_x64-setup.exe
-fe88a4f6e631d3c073f594862ab47724cac665f8bca3cd46caad472c56cc63f8  Noosphere-portable-x64.exe
+937ad75154e9b3b5c95354f273f54e00124cccc452a807f9f72985e197a0c020  Noosphere_0.1.3_x64-setup.exe
+0e1cb2ffb886a6c4aac86be0d560b63387ccfd406b00c64e144b1b8f620162f5  Noosphere-portable-x64.exe

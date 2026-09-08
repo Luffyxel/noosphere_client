@@ -21,10 +21,10 @@ use crate::{
         ApiResponse, GitHubClient, OAuthPoll, OAuthToken, RepositoryIdentity, ViewerIdentity,
     },
     models::{
-        Conversation, FriendRemoved, FriendRequest, GitHubViewer, LookupUser, Message,
-        NoosphereUser, NotificationResult, ProvisioningConsent, Published, RealtimeSignal,
-        RepositorySummary, SignedOut, SmokeConfig, SmokeResult, SocialState, UserLookup,
-        WakeSignals,
+        Conversation, FriendRemoved, FriendRequest, FriendRequestDeclined, GitHubViewer,
+        LookupUser, Message, NoosphereUser, NotificationResult, ProvisioningConsent, Published,
+        RealtimeSignal, RepositorySummary, SignedOut, SmokeConfig, SmokeResult, SocialState,
+        UserLookup, WakeSignals,
     },
     repository_content,
     state::{AppState, ConversationState, LocalMessageState, OutgoingRequestState, PeerState},
@@ -1207,12 +1207,21 @@ async fn sync_social_state(state: &AppState) -> Result<SocialState> {
         .iter()
         .map(|conversation| conversation.peer.user.id)
         .collect::<BTreeSet<_>>();
+    let declined_request_ids = state
+        .social
+        .read()
+        .await
+        .declined_request_ids
+        .iter()
+        .cloned()
+        .collect::<BTreeSet<_>>();
     let mut incoming = list_incoming_requests(
         state,
         &token,
         &viewer,
         &conversation_ids,
         &conversation_peer_ids,
+        &declined_request_ids,
     )
     .await?;
 
@@ -1424,6 +1433,7 @@ async fn list_incoming_requests(
     viewer: &GitHubViewer,
     existing_ids: &BTreeSet<String>,
     existing_peer_ids: &BTreeSet<u64>,
+    declined_request_ids: &BTreeSet<String>,
 ) -> Result<Vec<IncomingRequestRecord>> {
     let endpoint = format!(
         "/repos/{}/{}/stargazers?per_page={MAX_FRIENDS}",
@@ -1475,7 +1485,10 @@ async fn list_incoming_requests(
             let Some(id) = name.strip_suffix(".enc.json") else {
                 continue;
             };
-            if validation::conversation_id(id).is_err() || existing_ids.contains(id) {
+            if validation::conversation_id(id).is_err()
+                || existing_ids.contains(id)
+                || declined_request_ids.contains(id)
+            {
                 continue;
             }
             let path = format!("friends/outgoing/{}/{}", viewer.id, name);
@@ -1648,6 +1661,67 @@ pub async fn noosphere_accept_friend_request(
     accept_friend_request(&state, &login, &conversation_id)
         .await
         .map_err(command_error)
+}
+
+#[tauri::command]
+pub async fn noosphere_decline_friend_request(
+    state: State<'_, AppState>,
+    conversation_id: String,
+) -> CommandResult<FriendRequestDeclined> {
+    validation::conversation_id(&conversation_id).map_err(command_error)?;
+    let _operation = state.operations.lock().await;
+    let viewer = session_viewer(&state).await.map_err(command_error)?;
+    {
+        let mut social = state.social.write().await;
+        remember_declined_request(&mut social, conversation_id);
+    }
+    state
+        .persist_social(viewer.repository.id)
+        .await
+        .map_err(command_error)?;
+    Ok(FriendRequestDeclined { declined: true })
+}
+
+fn remember_declined_request(social: &mut crate::state::LocalSocialState, conversation_id: String) {
+    if social
+        .declined_request_ids
+        .iter()
+        .any(|request_id| request_id == &conversation_id)
+    {
+        return;
+    }
+    social.declined_request_ids.push(conversation_id);
+    if social.declined_request_ids.len() > 2_000 {
+        let remove = social.declined_request_ids.len() - 2_000;
+        social.declined_request_ids.drain(..remove);
+    }
+}
+
+#[cfg(test)]
+mod declined_request_tests {
+    use super::*;
+
+    #[test]
+    fn declined_requests_are_kept_once_and_bounded() {
+        let mut social = crate::state::LocalSocialState::default();
+        for index in 0..2_001 {
+            remember_declined_request(&mut social, format!("dm-{index:032x}"));
+        }
+        remember_declined_request(
+            &mut social,
+            "dm-000000000000000000000000000007d0".to_owned(),
+        );
+
+        assert_eq!(social.declined_request_ids.len(), 2_000);
+        assert_eq!(
+            social.declined_request_ids.first().map(String::as_str),
+            Some("dm-00000000000000000000000000000001")
+        );
+        assert_eq!(
+            social.declined_request_ids.last().map(String::as_str),
+            Some("dm-000000000000000000000000000007d0")
+        );
+    }
 }
 
 async fn accept_friend_request(

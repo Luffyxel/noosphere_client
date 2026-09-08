@@ -65,6 +65,10 @@ export function installTauriBridge(): void {
           login,
           conversationId,
         }),
+      declineFriendRequest: (conversationId: string) =>
+        invoke<{ declined: true }>('noosphere_decline_friend_request', {
+          conversationId,
+        }),
       removeFriend: (conversationId: string) =>
         invoke<{ removed: true }>('noosphere_remove_friend', {
           conversationId,

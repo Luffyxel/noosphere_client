@@ -144,6 +144,12 @@ pub struct FriendRemoved {
     pub removed: bool,
 }
 
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct FriendRequestDeclined {
+    pub declined: bool,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NotificationResult {

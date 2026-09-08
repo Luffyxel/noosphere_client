@@ -24,6 +24,7 @@ import {
   Video,
   VideoOff,
   Volume2,
+  X,
 } from 'lucide-react';
 import {
   type SubmitEvent,
@@ -1113,6 +1114,9 @@ function NoosphereApp({
   const [acceptingRequestId, setAcceptingRequestId] = useState<string | null>(
     null,
   );
+  const [decliningRequestId, setDecliningRequestId] = useState<string | null>(
+    null,
+  );
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [friendProfileId, setFriendProfileId] = useState<string | null>(null);
   const [removingFriend, setRemovingFriend] = useState(false);
@@ -1562,6 +1566,23 @@ function NoosphereApp({
       setSyncError(readableError(error));
     } finally {
       setAcceptingRequestId(null);
+    }
+  }
+
+  async function declineFriendRequest(request: FriendRequest) {
+    const desktop = window.noosphereDesktop;
+    if (!desktop) return;
+    setDecliningRequestId(request.id);
+    setSyncError('');
+    try {
+      await desktop.noosphere.declineFriendRequest(request.id);
+      setIncomingRequests((current) =>
+        current.filter((item) => item.id !== request.id),
+      );
+    } catch (error) {
+      setSyncError(readableError(error));
+    } finally {
+      setDecliningRequestId(null);
     }
   }
 
@@ -2052,18 +2073,39 @@ function NoosphereApp({
                             @{request.user.login}
                           </p>
                         </div>
-                        <Button
-                          className="h-9 rounded-[10px] bg-[var(--noosphere-accent)] px-3 text-[12px] text-[var(--noosphere-on-accent)] hover:bg-[var(--noosphere-accent-hover)]"
-                          disabled={acceptingRequestId === request.id}
-                          onClick={() => void acceptFriendRequest(request)}
-                        >
-                          {acceptingRequestId === request.id ? (
-                            <BrandLoader className="size-4" />
-                          ) : (
-                            <Check />
-                          )}
-                          Accepter
-                        </Button>
+                        <div className="flex items-center gap-2">
+                          <Button
+                            variant="ghost"
+                            className="h-9 rounded-[10px] px-3 text-[12px] text-[#ff6961] hover:bg-[#ff453a]/10 hover:text-[#ff8a84]"
+                            disabled={
+                              acceptingRequestId === request.id ||
+                              decliningRequestId === request.id
+                            }
+                            onClick={() => void declineFriendRequest(request)}
+                          >
+                            {decliningRequestId === request.id ? (
+                              <BrandLoader className="size-4" />
+                            ) : (
+                              <X />
+                            )}
+                            Refuser
+                          </Button>
+                          <Button
+                            className="h-9 rounded-[10px] bg-[var(--noosphere-accent)] px-3 text-[12px] text-[var(--noosphere-on-accent)] hover:bg-[var(--noosphere-accent-hover)]"
+                            disabled={
+                              acceptingRequestId === request.id ||
+                              decliningRequestId === request.id
+                            }
+                            onClick={() => void acceptFriendRequest(request)}
+                          >
+                            {acceptingRequestId === request.id ? (
+                              <BrandLoader className="size-4" />
+                            ) : (
+                              <Check />
+                            )}
+                            Accepter
+                          </Button>
+                        </div>
                       </div>
                     ))}
                   </div>

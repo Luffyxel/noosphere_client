@@ -169,6 +169,7 @@ pub fn run() {
             commands::noosphere_sync_state,
             commands::noosphere_poll_wake_signals,
             commands::noosphere_accept_friend_request,
+            commands::noosphere_decline_friend_request,
             commands::noosphere_remove_friend,
             commands::noosphere_send_message,
             commands::noosphere_signal_wake,
