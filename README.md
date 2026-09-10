@@ -8,8 +8,8 @@ account.
 
 ## Downloads
 
-- [Windows installer](Noosphere_0.1.3_x64-setup.exe)
-- Linux: [AppImage](https://github.com/Luffyxel/noosphere_client/releases/download/v0.1.3/Noosphere_0.1.3_amd64.AppImage), [DEB](https://github.com/Luffyxel/noosphere_client/releases/download/v0.1.3/Noosphere_0.1.3_amd64.deb), [RPM](https://github.com/Luffyxel/noosphere_client/releases/download/v0.1.3/Noosphere_0.1.3_x86_64.rpm), [checksums](https://github.com/Luffyxel/noosphere_client/releases/download/v0.1.3/SHA256SUMS.txt)
+- [Windows installer](Noosphere_0.1.4_x64-setup.exe)
+- Linux: [AppImage](https://github.com/Luffyxel/noosphere_client/releases/download/v0.1.4/Noosphere_0.1.4_amd64.AppImage), [DEB](https://github.com/Luffyxel/noosphere_client/releases/download/v0.1.4/Noosphere_0.1.4_amd64.deb), [RPM](https://github.com/Luffyxel/noosphere_client/releases/download/v0.1.4/Noosphere_0.1.4_x86_64.rpm), [checksums](https://github.com/Luffyxel/noosphere_client/releases/download/v0.1.4/SHA256SUMS.txt)
 
 Installation notes and checksums are kept in [`release/`](release/README.md).
 
@@ -17,6 +17,7 @@ Installation notes and checksums are kept in [`release/`](release/README.md).
 
 - end-to-end encryption with libsignal;
 - contacts and friend requests linked to GitHub accounts;
+- automatic acceptance when both users send each other a request;
 - friend requests can be accepted or declined;
 - friend profiles with contact removal;
 - direct WebRTC transport when both users are online;
@@ -29,7 +30,9 @@ Installation notes and checksums are kept in [`release/`](release/README.md).
 
 Each user connects Noosphere to GitHub and gives the application access to one
 public repository. The repository stores encrypted protocol data. Private keys
-and readable messages remain on the user's computer.
+and readable messages remain on the user's computer. Each GitHub account keeps
+its own cryptographic identity regardless of the order in which accounts are
+opened.
 
 The client checks GitHub star changes every three seconds for friend requests,
 messages, and calls, then reads the affected repository. An active WebRTC
@@ -59,7 +62,7 @@ supported directly; Wayland sessions require XWayland.
 On NixOS, run the AppImage through `appimage-run`:
 
 ```bash
-nix-shell -p appimage-run --run 'appimage-run ./Noosphere_0.1.3_amd64.AppImage'
+nix-shell -p appimage-run --run 'appimage-run ./Noosphere_0.1.4_amd64.AppImage'
 ```
 
 For Hyprland managed by NixOS, enable

@@ -8,8 +8,8 @@ compte supplémentaire.
 
 ## Téléchargements
 
-- [Installateur Windows](Noosphere_0.1.3_x64-setup.exe)
-- Linux : [AppImage](https://github.com/Luffyxel/noosphere_client/releases/download/v0.1.3/Noosphere_0.1.3_amd64.AppImage), [DEB](https://github.com/Luffyxel/noosphere_client/releases/download/v0.1.3/Noosphere_0.1.3_amd64.deb), [RPM](https://github.com/Luffyxel/noosphere_client/releases/download/v0.1.3/Noosphere_0.1.3_x86_64.rpm), [sommes de contrôle](https://github.com/Luffyxel/noosphere_client/releases/download/v0.1.3/SHA256SUMS.txt)
+- [Installateur Windows](Noosphere_0.1.4_x64-setup.exe)
+- Linux : [AppImage](https://github.com/Luffyxel/noosphere_client/releases/download/v0.1.4/Noosphere_0.1.4_amd64.AppImage), [DEB](https://github.com/Luffyxel/noosphere_client/releases/download/v0.1.4/Noosphere_0.1.4_amd64.deb), [RPM](https://github.com/Luffyxel/noosphere_client/releases/download/v0.1.4/Noosphere_0.1.4_x86_64.rpm), [sommes de contrôle](https://github.com/Luffyxel/noosphere_client/releases/download/v0.1.4/SHA256SUMS.txt)
 
 Les instructions d’installation et les sommes de contrôle se trouvent dans
 [`release/`](release/README.fr.md).
@@ -18,6 +18,7 @@ Les instructions d’installation et les sommes de contrôle se trouvent dans
 
 - chiffrement de bout en bout avec libsignal ;
 - contacts et demandes d’amis liés aux comptes GitHub ;
+- acceptation automatique lorsque les deux personnes s’envoient une demande ;
 - acceptation ou refus des demandes d’amis ;
 - profil des amis avec suppression du contact ;
 - échange direct par WebRTC lorsque les deux personnes sont en ligne ;
@@ -30,7 +31,9 @@ Les instructions d’installation et les sommes de contrôle se trouvent dans
 
 Chaque utilisateur relie Noosphere à GitHub et autorise l’application sur un
 seul dépôt public. Ce dépôt contient les données chiffrées du protocole. Les
-clés privées et les messages lisibles restent sur l’ordinateur.
+clés privées et les messages lisibles restent sur l’ordinateur. Chaque compte
+GitHub conserve sa propre identité cryptographique, quel que soit l’ordre dans
+lequel les comptes sont ouverts.
 
 Le client vérifie les changements d’étoile GitHub toutes les trois secondes
 pour les demandes d’amis, les messages et les appels, puis lit le dépôt
@@ -60,7 +63,7 @@ en charge directement ; une session Wayland doit disposer de XWayland.
 Sous NixOS, lancez l’AppImage avec `appimage-run` :
 
 ```bash
-nix-shell -p appimage-run --run 'appimage-run ./Noosphere_0.1.3_amd64.AppImage'
+nix-shell -p appimage-run --run 'appimage-run ./Noosphere_0.1.4_amd64.AppImage'
 ```
 
 Avec Hyprland géré par NixOS, activez

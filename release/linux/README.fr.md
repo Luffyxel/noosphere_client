@@ -11,14 +11,14 @@ nécessaire.
 Utilisez l’AppImage sur les distributions sans paquet DEB ou RPM :
 
 ```bash
-chmod +x Noosphere_0.1.3_amd64.AppImage
-./Noosphere_0.1.3_amd64.AppImage
+chmod +x Noosphere_0.1.4_amd64.AppImage
+./Noosphere_0.1.4_amd64.AppImage
 ```
 
 Sous NixOS :
 
 ```bash
-nix-shell -p appimage-run --run 'appimage-run ./Noosphere_0.1.3_amd64.AppImage'
+nix-shell -p appimage-run --run 'appimage-run ./Noosphere_0.1.4_amd64.AppImage'
 ```
 
 ## Arch Linux
@@ -27,20 +27,20 @@ Installez FUSE 2, puis lancez l’AppImage :
 
 ```bash
 sudo pacman -S --needed fuse2
-chmod +x Noosphere_0.1.3_amd64.AppImage
-./Noosphere_0.1.3_amd64.AppImage
+chmod +x Noosphere_0.1.4_amd64.AppImage
+./Noosphere_0.1.4_amd64.AppImage
 ```
 
 ## Debian et Ubuntu
 
 ```bash
-sudo apt install ./Noosphere_0.1.3_amd64.deb
+sudo apt install ./Noosphere_0.1.4_amd64.deb
 ```
 
 ## Fedora, Red Hat Enterprise Linux et Rocky Linux
 
 ```bash
-sudo dnf install ./Noosphere_0.1.3_x86_64.rpm
+sudo dnf install ./Noosphere_0.1.4_x86_64.rpm
 ```
 
 Le RPM s’installe et résout ses bibliothèques d’exécution sous Rocky Linux 9
@@ -49,7 +49,7 @@ et 10.
 ## openSUSE
 
 ```bash
-sudo zypper install ./Noosphere_0.1.3_x86_64.rpm
+sudo zypper install ./Noosphere_0.1.4_x86_64.rpm
 ```
 
 ## Wayland

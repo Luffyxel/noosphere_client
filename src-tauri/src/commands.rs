@@ -106,6 +106,7 @@ async fn validate_restored_session(state: &AppState, saved: GitHubViewer) -> Res
     {
         return Err(Error::InvalidInstallation);
     }
+    initialize_repository(state, &token, &remote_viewer, &repository).await?;
     state
         .update_viewer(GitHubViewer {
             id: remote_viewer.id,
@@ -396,9 +397,25 @@ async fn initialize_repository(
     viewer: &ViewerIdentity,
     repository: &RepositoryIdentity,
 ) -> Result<()> {
-    let profile = state
-        .load_or_create_identity(viewer.id, repository.id)
+    let published_profile = read_repository_json(
+        &state.github,
+        token,
+        &viewer.login,
+        &repository.name,
+        ".noosphere.json",
+        64 * 1024,
+    )
+    .await?
+    .and_then(|value| serde_json::from_value(value).ok())
+    .filter(|profile| {
+        crate::protocol::validate_public_profile(profile, viewer.id, repository.id).is_ok()
+    });
+    let local_profile = state
+        .load_or_create_identity(viewer.id, repository.id, published_profile.as_ref())
         .await?;
+    let profile = published_profile
+        .filter(|published| crate::protocol::same_public_profile(published, &local_profile))
+        .unwrap_or(local_profile);
     let profile = format!(
         "{}\n",
         serde_json::to_string_pretty(&profile).map_err(|_| Error::Local)?
@@ -830,12 +847,16 @@ pub async fn noosphere_send_friend_request(
         .map_err(command_error)?
         .to_owned();
     let _operation = state.operations.lock().await;
-    send_friend_request(&state, &login)
+    send_friend_request(&state, &login, true)
         .await
         .map_err(command_error)
 }
 
-async fn send_friend_request(state: &AppState, login: &str) -> Result<FriendRequest> {
+async fn send_friend_request(
+    state: &AppState,
+    login: &str,
+    repeat_signal: bool,
+) -> Result<FriendRequest> {
     let viewer = session_viewer(state).await?;
     let token = oauth_token(state).await?;
     let peer = resolve_user(&state.github, &token, login)
@@ -860,13 +881,34 @@ async fn send_friend_request(state: &AppState, login: &str) -> Result<FriendRequ
             .find(|request| request.peer.user.id == peer.identity.id)
             .cloned()
     };
-    if let Some(existing) = existing {
-        publish_outgoing_request(state, &token, &viewer, &existing).await?;
-        ensure_temporary_star(state, &token, &viewer, &existing.peer).await?;
-        return Ok(friend_request(&existing));
+    let mut secret = state
+        .identity
+        .read()
+        .await
+        .as_ref()
+        .ok_or(Error::Crypto)?
+        .secret
+        .clone();
+    if let Some(existing) = existing.as_ref() {
+        let own_profile = crate::protocol::profile_from_secret(&secret)?;
+        if outgoing_invitation_is_current(
+            existing,
+            &own_profile,
+            &peer.profile,
+            viewer.id,
+            viewer.repository.id,
+        ) {
+            publish_outgoing_request(state, &token, &viewer, existing).await?;
+            ensure_temporary_star(state, &token, &viewer, &existing.peer, repeat_signal).await?;
+            return Ok(friend_request(existing));
+        }
+        secret = crate::protocol::forget_peer_owned(secret, peer.identity.id)?;
     }
 
-    let id = format!("dm-{}", uuid::Uuid::new_v4().simple());
+    let id = existing
+        .as_ref()
+        .map(|request| request.id.clone())
+        .unwrap_or_else(|| format!("dm-{}", uuid::Uuid::new_v4().simple()));
     let created_at = crate::protocol::current_timestamp()?;
     let peer_state = PeerState {
         user: NoosphereUser {
@@ -879,14 +921,6 @@ async fn send_friend_request(state: &AppState, login: &str) -> Result<FriendRequ
         repository_id: peer.repository.id,
         profile: peer.profile,
     };
-    let secret = state
-        .identity
-        .read()
-        .await
-        .as_ref()
-        .ok_or(Error::Crypto)?
-        .secret
-        .clone();
     let handshake = crate::protocol::OwnedHandshake {
         peer_profile: peer_state.profile.clone(),
         peer_github_user_id: peer_state.user.id,
@@ -915,12 +949,33 @@ async fn send_friend_request(state: &AppState, login: &str) -> Result<FriendRequ
     };
     {
         let mut social = state.social.write().await;
+        social
+            .outgoing
+            .retain(|existing| existing.peer.user.id != request.peer.user.id);
         social.outgoing.push(request.clone());
     }
     state.persist_social(viewer.repository.id).await?;
     publish_outgoing_request(state, &token, &viewer, &request).await?;
-    ensure_temporary_star(state, &token, &viewer, &request.peer).await?;
+    ensure_temporary_star(state, &token, &viewer, &request.peer, true).await?;
     Ok(friend_request(&request))
+}
+
+fn outgoing_invitation_is_current(
+    request: &OutgoingRequestState,
+    own_profile: &crate::protocol::PublicProfile,
+    peer_profile: &crate::protocol::PublicProfile,
+    viewer_id: u64,
+    repository_id: u64,
+) -> bool {
+    crate::protocol::same_public_profile(&request.peer.profile, peer_profile)
+        && crate::protocol::validate_invitation_envelope(
+            own_profile,
+            viewer_id,
+            repository_id,
+            &request.id,
+            &request.envelope,
+        )
+        .is_ok()
 }
 
 fn friend_request(request: &OutgoingRequestState) -> FriendRequest {
@@ -953,7 +1008,7 @@ async fn publish_outgoing_request(
         ),
         content.as_bytes(),
         "Envoyer une demande d’ami chiffrée",
-        false,
+        true,
     )
     .await?;
     Ok(())
@@ -964,6 +1019,7 @@ async fn ensure_temporary_star(
     token: &OAuthToken,
     viewer: &GitHubViewer,
     peer: &PeerState,
+    refresh: bool,
 ) -> Result<()> {
     let endpoint = format!("/user/starred/{}/{}", peer.user.login, peer.user.repository);
     let starred: ApiResponse<Value> = state
@@ -977,8 +1033,22 @@ async fn ensure_temporary_star(
             &[],
         )
         .await?;
-    if starred.status != 404 {
+    if starred.status != 404 && !refresh {
         return Ok(());
+    }
+    if starred.status != 404 {
+        state
+            .github
+            .api_json::<Value>(
+                Method::DELETE,
+                &endpoint,
+                Some(token.access_token.expose_secret()),
+                None,
+                None,
+                &[404],
+            )
+            .await?;
+        sleep(Duration::from_secs(1)).await;
     }
     state
         .github
@@ -991,7 +1061,7 @@ async fn ensure_temporary_star(
             &[],
         )
         .await?;
-    {
+    if starred.status == 404 {
         let mut social = state.social.write().await;
         if !social.temporary_stars.contains(&peer.repository_id) {
             social.temporary_stars.push(peer.repository_id);
@@ -1070,8 +1140,32 @@ pub async fn noosphere_sync_state(state: State<'_, AppState>) -> CommandResult<S
 }
 
 #[tauri::command]
+pub async fn noosphere_sync_requests(state: State<'_, AppState>) -> CommandResult<SocialState> {
+    let _operation = state.operations.lock().await;
+    sync_friend_requests(&state).await.map_err(command_error)
+}
+
+#[tauri::command]
 pub async fn noosphere_poll_wake_signals(state: State<'_, AppState>) -> CommandResult<WakeSignals> {
     poll_wake_signals(&state).await.map_err(command_error)
+}
+
+fn normalize_stargazer(value: &Value) -> Result<(ViewerIdentity, String)> {
+    let object = value.as_object().ok_or(Error::InvalidGitHubResponse)?;
+    let user = object
+        .get("user")
+        .ok_or(Error::InvalidGitHubResponse)
+        .and_then(crate::github::normalize_viewer)?;
+    let starred_at = match object.get("starred_at") {
+        Some(Value::String(value)) => {
+            crate::protocol::validate_public_timestamp(value)
+                .map_err(|_| Error::InvalidGitHubResponse)?;
+            value.clone()
+        }
+        Some(Value::Null) | None => String::new(),
+        _ => return Err(Error::InvalidGitHubResponse),
+    };
+    Ok((user, starred_at))
 }
 
 async fn poll_wake_signals(state: &AppState) -> Result<WakeSignals> {
@@ -1085,12 +1179,10 @@ async fn poll_wake_signals(state: &AppState) -> Result<WakeSignals> {
     let etag = state.etag(&etag_key).await;
     let response: ApiResponse<Value> = state
         .github
-        .api_json(
-            Method::GET,
+        .api_stargazers(
             &endpoint,
-            Some(token.access_token.expose_secret()),
+            token.access_token.expose_secret(),
             etag.as_deref(),
-            None,
             &[403],
         )
         .await?;
@@ -1107,12 +1199,12 @@ async fn poll_wake_signals(state: &AppState) -> Result<WakeSignals> {
     if candidates.len() > MAX_FRIENDS {
         return Err(Error::InvalidGitHubResponse);
     }
-    let mut current = BTreeSet::new();
+    let mut current = BTreeMap::new();
     for candidate in &candidates {
-        if let Ok(candidate) = crate::github::normalize_viewer(candidate)
+        if let Ok((candidate, starred_at)) = normalize_stargazer(candidate)
             && candidate.id != viewer.id
         {
-            current.insert(candidate.id);
+            current.insert(candidate.id, starred_at);
         }
     }
 
@@ -1134,15 +1226,21 @@ async fn poll_wake_signals(state: &AppState) -> Result<WakeSignals> {
 }
 
 fn classify_wake_changes(
-    previous: &BTreeSet<u64>,
-    current: &BTreeSet<u64>,
+    previous: &BTreeMap<u64, String>,
+    current: &BTreeMap<u64, String>,
     conversation_peers: &BTreeMap<u64, String>,
 ) -> WakeSignals {
-    let changed = previous.symmetric_difference(current);
+    let changed = previous
+        .keys()
+        .chain(current.keys())
+        .copied()
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .filter(|user_id| previous.get(user_id) != current.get(user_id));
     let mut conversation_ids = BTreeSet::new();
     let mut social_changed = false;
     for user_id in changed {
-        if let Some(conversation_id) = conversation_peers.get(user_id) {
+        if let Some(conversation_id) = conversation_peers.get(&user_id) {
             conversation_ids.insert(conversation_id.clone());
         } else {
             social_changed = true;
@@ -1159,9 +1257,26 @@ mod wake_signal_tests {
     use super::*;
 
     #[test]
+    fn github_stargazer_timestamps_are_preserved() {
+        let value = serde_json::json!({
+            "starred_at": "2026-09-10T08:00:04Z",
+            "user": {
+                "id": 42,
+                "login": "octocat",
+                "avatar_url": "https://avatars.githubusercontent.com/u/42?v=4",
+                "name": null
+            }
+        });
+
+        let (viewer, starred_at) = normalize_stargazer(&value).unwrap();
+        assert_eq!(viewer.id, 42);
+        assert_eq!(starred_at, "2026-09-10T08:00:04Z");
+    }
+
+    #[test]
     fn star_additions_and_removals_wake_known_conversations() {
-        let previous = BTreeSet::from([42]);
-        let current = BTreeSet::from([99]);
+        let previous = BTreeMap::from([(42, "2026-09-10T08:00:00Z".to_owned())]);
+        let current = BTreeMap::from([(99, "2026-09-10T08:00:03Z".to_owned())]);
         let conversations = BTreeMap::from([
             (42, "dm-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_owned()),
             (99, "dm-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".to_owned()),
@@ -1179,10 +1294,28 @@ mod wake_signal_tests {
 
     #[test]
     fn an_unknown_stargazer_requests_a_social_refresh() {
-        let wake =
-            classify_wake_changes(&BTreeSet::new(), &BTreeSet::from([123]), &BTreeMap::new());
+        let wake = classify_wake_changes(
+            &BTreeMap::new(),
+            &BTreeMap::from([(123, "2026-09-10T08:00:00Z".to_owned())]),
+            &BTreeMap::new(),
+        );
         assert!(wake.conversation_ids.is_empty());
         assert!(wake.social_changed);
+    }
+
+    #[test]
+    fn restarring_a_known_contact_wakes_their_conversation() {
+        let previous = BTreeMap::from([(42, "2026-09-10T08:00:00Z".to_owned())]);
+        let current = BTreeMap::from([(42, "2026-09-10T08:00:04Z".to_owned())]);
+        let conversations =
+            BTreeMap::from([(42, "dm-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_owned())]);
+
+        let wake = classify_wake_changes(&previous, &current, &conversations);
+        assert_eq!(
+            wake.conversation_ids,
+            vec!["dm-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"]
+        );
+        assert!(!wake.social_changed);
     }
 }
 
@@ -1197,7 +1330,25 @@ async fn sync_social_state(state: &AppState) -> Result<SocialState> {
     let token = oauth_token(state).await?;
     recover_local_publications(state, &token, &viewer).await?;
     synchronize_accepted_requests(state, &token, &viewer).await?;
+    collect_social_state(state, &token, &viewer).await
+}
 
+async fn sync_friend_requests(state: &AppState) -> Result<SocialState> {
+    let viewer = session_viewer(state).await?;
+    let token = oauth_token(state).await?;
+    let incoming = collect_social_state(state, &token, &viewer).await?;
+    if !incoming.incoming.is_empty() || incoming.outgoing.is_empty() {
+        return Ok(incoming);
+    }
+    synchronize_accepted_requests(state, &token, &viewer).await?;
+    collect_social_state(state, &token, &viewer).await
+}
+
+async fn collect_social_state(
+    state: &AppState,
+    token: &OAuthToken,
+    viewer: &GitHubViewer,
+) -> Result<SocialState> {
     let conversations = state.social.read().await.conversations.clone();
     let conversation_ids = conversations
         .iter()
@@ -1215,13 +1366,15 @@ async fn sync_social_state(state: &AppState) -> Result<SocialState> {
         .iter()
         .cloned()
         .collect::<BTreeSet<_>>();
+    let outgoing_requests = state.social.read().await.outgoing.clone();
     let mut incoming = list_incoming_requests(
         state,
-        &token,
-        &viewer,
+        token,
+        viewer,
         &conversation_ids,
         &conversation_peer_ids,
         &declined_request_ids,
+        &outgoing_requests,
     )
     .await?;
 
@@ -1306,8 +1459,7 @@ async fn recover_local_publications(
         remove_temporary_star(state, token, viewer, &conversation.peer).await?;
     }
     for request in outgoing {
-        publish_outgoing_request(state, token, viewer, &request).await?;
-        ensure_temporary_star(state, token, viewer, &request.peer).await?;
+        send_friend_request(state, &request.peer.user.login, false).await?;
     }
     for record in pending_messages {
         publish_message(state, token, viewer, &record.message, &record.envelope).await?;
@@ -1434,6 +1586,7 @@ async fn list_incoming_requests(
     existing_ids: &BTreeSet<String>,
     existing_peer_ids: &BTreeSet<u64>,
     declined_request_ids: &BTreeSet<String>,
+    outgoing_requests: &[OutgoingRequestState],
 ) -> Result<Vec<IncomingRequestRecord>> {
     let endpoint = format!(
         "/repos/{}/{}/stargazers?per_page={MAX_FRIENDS}",
@@ -1441,25 +1594,21 @@ async fn list_incoming_requests(
     );
     let response: ApiResponse<Value> = state
         .github
-        .api_json(
-            Method::GET,
-            &endpoint,
-            Some(token.access_token.expose_secret()),
-            None,
-            None,
-            &[403],
-        )
+        .api_stargazers(&endpoint, token.access_token.expose_secret(), None, &[403])
         .await?;
-    let Some(data) = response.data else {
-        return Ok(Vec::new());
+    let mut peers = known_outgoing_candidates(outgoing_requests, existing_peer_ids);
+    let candidates: &[Value] = match response.data.as_ref() {
+        Some(data) => data
+            .as_array()
+            .ok_or(Error::InvalidGitHubResponse)?
+            .as_slice(),
+        None => &[],
     };
-    let candidates = data.as_array().ok_or(Error::InvalidGitHubResponse)?;
     if candidates.len() > MAX_FRIENDS {
         return Err(Error::InvalidGitHubResponse);
     }
-    let mut requests = BTreeMap::new();
     for candidate in candidates {
-        let candidate = match crate::github::normalize_viewer(candidate) {
+        let candidate = match normalize_stargazer(candidate).map(|value| value.0) {
             Ok(value) if value.id != viewer.id && !existing_peer_ids.contains(&value.id) => value,
             _ => continue,
         };
@@ -1471,6 +1620,10 @@ async fn list_incoming_requests(
             Ok(None) | Err(Error::InvalidGitHubResponse | Error::GitHubNotFound) => continue,
             Err(error) => return Err(error),
         };
+        peers.insert(peer.user.id, peer);
+    }
+    let mut requests = BTreeMap::new();
+    for peer in peers.into_values() {
         let path = format!("friends/outgoing/{}", viewer.id);
         let entries = list_repository_directory(
             state,
@@ -1532,6 +1685,17 @@ async fn list_incoming_requests(
     Ok(requests.into_values().take(MAX_FRIENDS).collect())
 }
 
+fn known_outgoing_candidates(
+    outgoing_requests: &[OutgoingRequestState],
+    existing_peer_ids: &BTreeSet<u64>,
+) -> BTreeMap<u64, PeerState> {
+    outgoing_requests
+        .iter()
+        .filter(|request| !existing_peer_ids.contains(&request.peer.user.id))
+        .map(|request| (request.peer.user.id, request.peer.clone()))
+        .collect()
+}
+
 async fn reconcile_crossed_requests(
     state: &AppState,
     incoming: &mut Vec<IncomingRequestRecord>,
@@ -1577,7 +1741,7 @@ fn should_accept_crossed_request(
     outgoing: &OutgoingRequestState,
     incoming: &IncomingRequestRecord,
 ) -> bool {
-    outgoing.peer.profile != incoming.peer.profile
+    !crate::protocol::same_public_profile(&outgoing.peer.profile, &incoming.peer.profile)
         || request_order(
             (&incoming.id, incoming.peer.user.id),
             (&outgoing.id, viewer_id),
@@ -1644,6 +1808,50 @@ mod crossed_request_tests {
         };
 
         assert!(should_accept_crossed_request(42, &outgoing, &incoming));
+    }
+
+    #[test]
+    fn crossed_requests_are_checked_without_a_stargazer_listing() {
+        let (_, profile) = crate::protocol::create_identity(99, 990).unwrap();
+        let outgoing = outgoing("dm-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", profile);
+        let candidates = known_outgoing_candidates(&[outgoing], &BTreeSet::new());
+
+        assert!(candidates.contains_key(&99));
+    }
+
+    #[test]
+    fn stale_outgoing_invitations_are_detected_after_an_identity_change() {
+        let (viewer, viewer_profile) = crate::protocol::create_identity(42, 420).unwrap();
+        let (_, peer_profile) = crate::protocol::create_identity(99, 990).unwrap();
+        let request = outgoing("dm-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", peer_profile.clone());
+        let handshake = crate::protocol::OwnedHandshake {
+            peer_profile: peer_profile.clone(),
+            peer_github_user_id: 99,
+            peer_repository_id: 990,
+            conversation_id: request.id.clone(),
+            created_at: request.created_at.clone(),
+        };
+        let (_, envelope) = crate::protocol::create_invitation_owned(viewer, handshake).unwrap();
+        let current = OutgoingRequestState {
+            envelope,
+            ..request
+        };
+        assert!(outgoing_invitation_is_current(
+            &current,
+            &viewer_profile,
+            &peer_profile,
+            42,
+            420
+        ));
+
+        let (_, replacement_profile) = crate::protocol::create_identity(42, 420).unwrap();
+        assert!(!outgoing_invitation_is_current(
+            &current,
+            &replacement_profile,
+            &peer_profile,
+            42,
+            420
+        ));
     }
 }
 
@@ -1778,7 +1986,8 @@ async fn accept_friend_request(
         profile: peer.profile,
     };
     let peer_identity_changed = state.social.read().await.outgoing.iter().any(|request| {
-        request.peer.user.id == peer_state.user.id && request.peer.profile != peer_state.profile
+        request.peer.user.id == peer_state.user.id
+            && !crate::protocol::same_public_profile(&request.peer.profile, &peer_state.profile)
     });
     let mut secret = state
         .identity
@@ -1827,6 +2036,7 @@ async fn accept_friend_request(
     state.persist_social(viewer.repository.id).await?;
     publish_conversation_marker(state, &token, &viewer, &conversation).await?;
     remove_temporary_star(state, &token, &viewer, &conversation.peer).await?;
+    ensure_temporary_star(state, &token, &viewer, &conversation.peer, true).await?;
     Ok(conversation_model(&conversation))
 }
 

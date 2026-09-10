@@ -28,6 +28,8 @@ pub enum Error {
     SecureStorageUnavailable,
     #[error("Trop d’instances Noosphere sont déjà ouvertes.")]
     TooManyInstances,
+    #[error("Ce compte Noosphere est déjà ouvert dans une autre fenêtre.")]
+    AccountAlreadyOpen,
     #[error("Impossible de contacter GitHub.")]
     Network,
     #[error("Données cryptographiques invalides.")]

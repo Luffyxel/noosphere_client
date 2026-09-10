@@ -92,6 +92,7 @@ export type NoosphereDesktopApi = {
     sendFriendRequest: (login: string) => Promise<FriendRequest>;
     cachedState: () => Promise<SocialState>;
     syncState: () => Promise<SocialState>;
+    syncRequests: () => Promise<SocialState>;
     pollWakeSignals: () => Promise<WakeSignals>;
     acceptFriendRequest: (
       login: string,

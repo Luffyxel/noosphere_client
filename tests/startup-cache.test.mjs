@@ -18,14 +18,18 @@ void test('les contacts locaux sont affichés avant la synchronisation réseau',
 });
 
 void test('la restauration charge aussi le cache social chiffré', async () => {
-  const state = await readFile(new URL('src-tauri/src/state.rs', root), 'utf8');
+  const [state, commands] = await Promise.all([
+    readFile(new URL('src-tauri/src/state.rs', root), 'utf8'),
+    readFile(new URL('src-tauri/src/commands.rs', root), 'utf8'),
+  ]);
 
-  const restore = state.slice(
-    state.indexOf('pub async fn restore_session'),
-    state.indexOf('pub async fn save_session'),
-  );
   assert.match(
-    restore,
-    /load_or_create_identity\(returned\.id, returned\.repository\.id\)/,
+    commands,
+    /initialize_repository\(state, &token, &remote_viewer, &repository\)\.await\?;/,
+  );
+  assert.match(state, /load_social_for_identity/);
+  assert.match(
+    state,
+    /shared_account\(&format!\("social-\{repository_id\}"\)\)/,
   );
 });

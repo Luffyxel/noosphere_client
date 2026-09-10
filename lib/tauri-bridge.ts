@@ -59,6 +59,7 @@ export function installTauriBridge(): void {
         invoke<FriendRequest>('noosphere_send_friend_request', { login }),
       cachedState: () => invoke<SocialState>('noosphere_cached_state'),
       syncState: () => invoke<SocialState>('noosphere_sync_state'),
+      syncRequests: () => invoke<SocialState>('noosphere_sync_requests'),
       pollWakeSignals: () => invoke<WakeSignals>('noosphere_poll_wake_signals'),
       acceptFriendRequest: (login: string, conversationId: string) =>
         invoke<Conversation>('noosphere_accept_friend_request', {

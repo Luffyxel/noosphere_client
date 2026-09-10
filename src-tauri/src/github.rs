@@ -93,6 +93,48 @@ impl GitHubClient {
         body: Option<&serde_json::Value>,
         allowed_statuses: &[u16],
     ) -> Result<ApiResponse<T>> {
+        self.api_json_with_accept(
+            method,
+            endpoint,
+            access_token,
+            etag,
+            body,
+            allowed_statuses,
+            "application/vnd.github+json",
+        )
+        .await
+    }
+
+    pub async fn api_stargazers<T: DeserializeOwned>(
+        &self,
+        endpoint: &str,
+        access_token: &str,
+        etag: Option<&str>,
+        allowed_statuses: &[u16],
+    ) -> Result<ApiResponse<T>> {
+        self.api_json_with_accept(
+            Method::GET,
+            endpoint,
+            Some(access_token),
+            etag,
+            None,
+            allowed_statuses,
+            "application/vnd.github.star+json",
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn api_json_with_accept<T: DeserializeOwned>(
+        &self,
+        method: Method,
+        endpoint: &str,
+        access_token: Option<&str>,
+        etag: Option<&str>,
+        body: Option<&serde_json::Value>,
+        allowed_statuses: &[u16],
+        accept: &'static str,
+    ) -> Result<ApiResponse<T>> {
         let url = fixed_origin_url(API_ORIGIN, endpoint)?;
         if let Some(token) = access_token {
             validate_token(token)?;
@@ -101,7 +143,7 @@ impl GitHubClient {
             let mut request = self
                 .client
                 .request(method.clone(), url.clone())
-                .header(header::ACCEPT, "application/vnd.github+json")
+                .header(header::ACCEPT, accept)
                 .header("X-GitHub-Api-Version", "2022-11-28");
             if let Some(token) = access_token {
                 request = request.bearer_auth(token);

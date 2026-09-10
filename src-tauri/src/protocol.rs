@@ -659,7 +659,7 @@ pub fn current_timestamp() -> Result<String> {
         .map_err(|_| Error::Local)
 }
 
-fn profile_from_secret(secret: &DeviceSecret) -> Result<PublicProfile> {
+pub(crate) fn profile_from_secret(secret: &DeviceSecret) -> Result<PublicProfile> {
     let stores = SignalStores::from_secret(secret)?;
     let signed = &stores.signed_pre_key.record;
     let kyber = &stores.kyber_pre_key.record;
@@ -700,6 +700,15 @@ fn profile_from_secret(secret: &DeviceSecret) -> Result<PublicProfile> {
         },
         signature: encode(&signature),
     })
+}
+
+pub(crate) fn same_public_profile(left: &PublicProfile, right: &PublicProfile) -> bool {
+    left.version == right.version
+        && left.protocol == right.protocol
+        && left.registration_id == right.registration_id
+        && left.identity_key == right.identity_key
+        && left.signed_pre_key == right.signed_pre_key
+        && left.kyber_pre_key == right.kyber_pre_key
 }
 
 pub async fn encrypt_message(
@@ -2118,6 +2127,17 @@ mod tests {
             .unwrap()
             .insert("login".to_owned(), serde_json::json!("forged"));
         assert!(serde_json::from_value::<PublicProfile>(value).is_err());
+    }
+
+    #[test]
+    fn profile_comparison_ignores_only_the_outer_signature() {
+        let (secret, profile) = create_identity(42, 420).unwrap();
+        let serialized = serialize_identity(&secret).unwrap();
+        let (_, restored_profile) = restore_identity(serialized.expose_secret(), 42, 420).unwrap();
+        let (_, different_profile) = create_identity(42, 420).unwrap();
+
+        assert!(same_public_profile(&profile, &restored_profile));
+        assert!(!same_public_profile(&profile, &different_profile));
     }
 
     #[test]

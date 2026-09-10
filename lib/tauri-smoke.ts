@@ -254,6 +254,7 @@ export async function runTauriSmokeTest(): Promise<void> {
       nativeBridge: window.noosphereDesktop?.isDesktop === true,
       socialBridge:
         typeof window.noosphereDesktop?.noosphere.syncState === 'function' &&
+        typeof window.noosphereDesktop?.noosphere.syncRequests === 'function' &&
         typeof window.noosphereDesktop?.noosphere.pollWakeSignals ===
           'function' &&
         typeof window.noosphereDesktop?.noosphere.sendMessage === 'function' &&

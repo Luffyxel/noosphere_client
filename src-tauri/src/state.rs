@@ -1,5 +1,6 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
+    fs::File,
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -39,6 +40,23 @@ pub struct Session {
 
 pub struct IdentityState {
     pub secret: crate::protocol::DeviceSecret,
+}
+
+struct AccountLock {
+    repository_id: u64,
+    _file: File,
+}
+
+enum IdentitySource {
+    Shared,
+    Legacy(u8),
+    New,
+}
+
+struct IdentityCandidate {
+    secret: crate::protocol::DeviceSecret,
+    profile: crate::protocol::PublicProfile,
+    source: IdentitySource,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -119,7 +137,8 @@ pub struct AppState {
     pub social: RwLock<LocalSocialState>,
     pub setup: Mutex<()>,
     pub operations: Mutex<()>,
-    pub wake_stargazers: Mutex<Option<BTreeSet<u64>>>,
+    account_lock: Mutex<Option<AccountLock>>,
+    pub wake_stargazers: Mutex<Option<BTreeMap<u64, String>>>,
     etags: Mutex<BTreeMap<String, String>>,
     directories: Mutex<BTreeMap<String, CachedDirectory>>,
     refresh: Mutex<()>,
@@ -127,7 +146,7 @@ pub struct AppState {
 
 impl AppState {
     pub fn new(profile: InstanceProfile) -> Result<Self> {
-        let blobs = SecureBlobStore::new(profile.directory())?;
+        let blobs = SecureBlobStore::new(profile.base_directory())?;
         Ok(Self {
             github: GitHubClient::new()?,
             profile,
@@ -138,6 +157,7 @@ impl AppState {
             social: RwLock::new(LocalSocialState::default()),
             setup: Mutex::new(()),
             operations: Mutex::new(()),
+            account_lock: Mutex::new(None),
             wake_stargazers: Mutex::new(None),
             etags: Mutex::new(BTreeMap::new()),
             directories: Mutex::new(BTreeMap::new()),
@@ -178,8 +198,6 @@ impl AppState {
             refresh_expires_at: stored.refresh_expires_at,
             viewer,
         });
-        self.load_or_create_identity(returned.id, returned.repository.id)
-            .await?;
         Ok(Some(returned))
     }
 
@@ -299,30 +317,115 @@ impl AppState {
         &self,
         github_user_id: u64,
         repository_id: u64,
+        expected_profile: Option<&crate::protocol::PublicProfile>,
     ) -> Result<crate::protocol::PublicProfile> {
-        let account = self
-            .profile
-            .secret_account(&format!("identity-{repository_id}"))?;
-        let identity = match self.blobs.load(&account)? {
-            Some(serialized) => crate::protocol::restore_identity(
+        self.ensure_account_lock(repository_id).await?;
+        let identity_kind = format!("identity-{repository_id}");
+        let shared_account = self.profile.shared_account(&identity_kind)?;
+        let mut candidates = Vec::new();
+        if let Some(serialized) = self.blobs.load(&shared_account)? {
+            let (secret, profile) = crate::protocol::restore_identity(
                 serialized.expose_secret(),
                 github_user_id,
                 repository_id,
-            )?,
-            None => crate::protocol::create_identity(github_user_id, repository_id)?,
+            )?;
+            candidates.push(IdentityCandidate {
+                secret,
+                profile,
+                source: IdentitySource::Shared,
+            });
+        }
+        for slot in std::iter::once(self.profile.slot()).chain(
+            (0_u8..crate::instance_profile::MAX_INSTANCE_PROFILES)
+                .filter(|candidate| *candidate != self.profile.slot()),
+        ) {
+            let directory = self.profile.directory_for_slot(slot)?;
+            if !directory.exists() {
+                continue;
+            }
+            let store = SecureBlobStore::new(&directory)?;
+            let account = InstanceProfile::secret_account_for_slot(slot, &identity_kind)?;
+            let Some(serialized) = store.load(&account)? else {
+                continue;
+            };
+            let Ok((secret, profile)) = crate::protocol::restore_identity(
+                serialized.expose_secret(),
+                github_user_id,
+                repository_id,
+            ) else {
+                continue;
+            };
+            if candidates
+                .iter()
+                .any(|candidate| crate::protocol::same_public_profile(&candidate.profile, &profile))
+            {
+                continue;
+            }
+            candidates.push(IdentityCandidate {
+                secret,
+                profile,
+                source: IdentitySource::Legacy(slot),
+            });
+        }
+        let selected = expected_profile
+            .and_then(|expected| {
+                candidates.iter().position(|candidate| {
+                    crate::protocol::same_public_profile(&candidate.profile, expected)
+                })
+            })
+            .or_else(|| {
+                candidates
+                    .iter()
+                    .position(|candidate| matches!(candidate.source, IdentitySource::Shared))
+            })
+            .unwrap_or(0);
+        let identity = if candidates.is_empty() {
+            let (secret, profile) =
+                crate::protocol::create_identity(github_user_id, repository_id)?;
+            IdentityCandidate {
+                secret,
+                profile,
+                source: IdentitySource::New,
+            }
+        } else {
+            candidates.swap_remove(selected)
         };
-        let serialized = crate::protocol::serialize_identity(&identity.0)?;
-        self.blobs.save(&account, serialized)?;
-        let profile = identity.1.clone();
-        *self.identity.write().await = Some(IdentityState { secret: identity.0 });
-        self.load_social(github_user_id, repository_id).await?;
+        self.blobs.save(
+            &shared_account,
+            crate::protocol::serialize_identity(&identity.secret)?,
+        )?;
+        let profile = identity.profile.clone();
+        let social =
+            self.load_social_for_identity(github_user_id, repository_id, &identity.source)?;
+        *self.identity.write().await = Some(IdentityState {
+            secret: identity.secret,
+        });
+        *self.social.write().await = social;
+        self.persist_social(repository_id).await?;
         Ok(profile)
+    }
+
+    async fn ensure_account_lock(&self, repository_id: u64) -> Result<()> {
+        let mut account_lock = self.account_lock.lock().await;
+        if account_lock
+            .as_ref()
+            .is_some_and(|lock| lock.repository_id == repository_id)
+        {
+            return Ok(());
+        }
+        *account_lock = None;
+        let file = self.profile.acquire_account_lock(repository_id)?;
+        *account_lock = Some(AccountLock {
+            repository_id,
+            _file: file,
+        });
+        Ok(())
     }
 
     pub async fn persist_identity(&self, repository_id: u64) -> Result<()> {
         let account = self
             .profile
-            .secret_account(&format!("identity-{repository_id}"))?;
+            .shared_account(&format!("identity-{repository_id}"))?;
         let identity = self.identity.read().await;
         let identity = identity.as_ref().ok_or(Error::Crypto)?;
         self.blobs.save(
@@ -334,7 +437,7 @@ impl AppState {
     pub async fn persist_social(&self, repository_id: u64) -> Result<()> {
         let account = self
             .profile
-            .secret_account(&format!("social-{repository_id}"))?;
+            .shared_account(&format!("social-{repository_id}"))?;
         let social = self.social.read().await;
         validate_social(&social, None)?;
         let serialized = serde_json::to_string(&*social).map_err(|_| Error::Local)?;
@@ -380,34 +483,34 @@ impl AppState {
         Ok(())
     }
 
-    async fn load_social(&self, github_user_id: u64, repository_id: u64) -> Result<()> {
-        let account = self
-            .profile
-            .secret_account(&format!("social-{repository_id}"))?;
-        let social = match self.blobs.load(&account)? {
-            Some(serialized) => {
-                let mut value: LocalSocialState = serde_json::from_str(serialized.expose_secret())
-                    .map_err(|_| Error::SecureStorageUnavailable)?;
-                if value.seen_message_ids.is_empty() && !value.messages.is_empty() {
-                    value.seen_message_ids = value
-                        .messages
-                        .iter()
-                        .map(|record| record.message.id.clone())
-                        .collect();
-                }
-                validate_social(&value, Some(github_user_id))?;
-                value
+    fn load_social_for_identity(
+        &self,
+        github_user_id: u64,
+        repository_id: u64,
+        source: &IdentitySource,
+    ) -> Result<LocalSocialState> {
+        let kind = format!("social-{repository_id}");
+        let serialized = match source {
+            IdentitySource::Legacy(slot) => {
+                let directory = self.profile.directory_for_slot(*slot)?;
+                let store = SecureBlobStore::new(&directory)?;
+                let account = InstanceProfile::secret_account_for_slot(*slot, &kind)?;
+                store.load(&account)?
             }
-            None => LocalSocialState::default(),
+            IdentitySource::Shared => self.blobs.load(&self.profile.shared_account(&kind)?)?,
+            IdentitySource::New => None,
         };
-        *self.social.write().await = social;
-        Ok(())
+        let Some(serialized) = serialized else {
+            return Ok(LocalSocialState::default());
+        };
+        deserialize_social(serialized.expose_secret(), github_user_id)
     }
 
     pub async fn clear_session(&self) -> Result<()> {
         *self.session.write().await = None;
         *self.identity.write().await = None;
         *self.social.write().await = LocalSocialState::default();
+        *self.account_lock.lock().await = None;
         *self.wake_stargazers.lock().await = None;
         self.etags.lock().await.clear();
         self.directories.lock().await.clear();
@@ -470,6 +573,20 @@ fn unix_time() -> Result<u64> {
 
 fn valid_stored_token(value: &str) -> bool {
     !value.is_empty() && value.len() <= 4_096 && value.bytes().all(|byte| byte.is_ascii_graphic())
+}
+
+fn deserialize_social(serialized: &str, github_user_id: u64) -> Result<LocalSocialState> {
+    let mut social: LocalSocialState =
+        serde_json::from_str(serialized).map_err(|_| Error::SecureStorageUnavailable)?;
+    if social.seen_message_ids.is_empty() && !social.messages.is_empty() {
+        social.seen_message_ids = social
+            .messages
+            .iter()
+            .map(|record| record.message.id.clone())
+            .collect();
+    }
+    validate_social(&social, Some(github_user_id))?;
+    Ok(social)
 }
 
 fn validate_social(social: &LocalSocialState, own_id: Option<u64>) -> Result<()> {
@@ -577,6 +694,67 @@ fn validate_conversation_record(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn legacy_identity_follows_the_account_when_profile_order_changes() {
+        let temporary = tempfile::tempdir().unwrap();
+        let first = InstanceProfile::acquire(temporary.path()).unwrap();
+        let second = InstanceProfile::acquire(temporary.path()).unwrap();
+        assert_eq!(first.slot(), 0);
+        assert_eq!(second.slot(), 1);
+
+        let legacy_store =
+            SecureBlobStore::new(&second.directory_for_slot(second.slot()).unwrap()).unwrap();
+        let (secret, published_profile) = crate::protocol::create_identity(42, 420).unwrap();
+        legacy_store
+            .save(
+                &InstanceProfile::secret_account_for_slot(1, "identity-420").unwrap(),
+                crate::protocol::serialize_identity(&secret).unwrap(),
+            )
+            .unwrap();
+        let mut legacy_social = LocalSocialState::default();
+        legacy_social
+            .declined_request_ids
+            .push("dm-0123456789abcdef0123456789abcdef".to_owned());
+        legacy_store
+            .save(
+                &InstanceProfile::secret_account_for_slot(1, "social-420").unwrap(),
+                SecretString::from(serde_json::to_string(&legacy_social).unwrap()),
+            )
+            .unwrap();
+
+        let state = AppState::new(first).unwrap();
+        let migrated = state
+            .load_or_create_identity(42, 420, Some(&published_profile))
+            .await
+            .unwrap();
+        assert!(crate::protocol::same_public_profile(
+            &migrated,
+            &published_profile
+        ));
+        assert_eq!(
+            state.social.read().await.declined_request_ids,
+            legacy_social.declined_request_ids
+        );
+        drop(state);
+        drop(second);
+
+        let replacement = InstanceProfile::acquire(temporary.path()).unwrap();
+        let restored = AppState::new(replacement).unwrap();
+        let profile = restored
+            .load_or_create_identity(42, 420, Some(&published_profile))
+            .await
+            .unwrap();
+        assert!(crate::protocol::same_public_profile(
+            &profile,
+            &published_profile
+        ));
+        assert_eq!(
+            restored.social.read().await.declined_request_ids,
+            legacy_social.declined_request_ids
+        );
+    }
 
     #[tokio::test]
     async fn message_cache_is_bounded_without_forgetting_deduplication_ids() {

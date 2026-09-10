@@ -1279,12 +1279,14 @@ function NoosphereApp({
   );
 
   const syncSocialState = useCallback(
-    async (announceNew: boolean) => {
+    async (announceNew: boolean, requestsOnly = false) => {
       const desktop = window.noosphereDesktop;
       if (!desktop || socialSyncing.current) return false;
       socialSyncing.current = true;
       try {
-        const nextState = await desktop.noosphere.syncState();
+        const nextState = requestsOnly
+          ? await desktop.noosphere.syncRequests()
+          : await desktop.noosphere.syncState();
         setConversations((current) => {
           if (announceNew) {
             const knownIds = new Set(
@@ -1424,6 +1426,7 @@ function NoosphereApp({
 
   useEffect(() => {
     let active = true;
+    let socialRefreshPending = false;
     async function pollWakeSignals() {
       const desktop = window.noosphereDesktop;
       if (!desktop || wakeSyncing.current) return;
@@ -1431,7 +1434,10 @@ function NoosphereApp({
       try {
         const wake = await desktop.noosphere.pollWakeSignals();
         if (!active) return;
-        if (wake.socialChanged) void syncSocialState(true);
+        if (wake.socialChanged) socialRefreshPending = true;
+        if (socialRefreshPending) {
+          socialRefreshPending = !(await syncSocialState(true, true));
+        }
         await Promise.all(
           wake.conversationIds.map((conversationId) =>
             syncMessages(conversationId, true),
