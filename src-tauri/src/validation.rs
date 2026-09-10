@@ -35,6 +35,10 @@ pub fn realtime_session_id(value: &str) -> Result<&str> {
     opaque_id(value, "rtc-")
 }
 
+pub fn call_id(value: &str) -> Result<&str> {
+    opaque_id(value, "call-")
+}
+
 fn opaque_id<'a>(value: &'a str, prefix: &str) -> Result<&'a str> {
     let suffix = value.strip_prefix(prefix).ok_or(Error::InvalidData)?;
     if suffix.len() == 32
@@ -107,6 +111,8 @@ mod tests {
         assert!(message_id("msg-0123456789abcdef0123456789abcdeg").is_err());
         assert!(realtime_session_id("rtc-0123456789abcdef0123456789abcdef").is_ok());
         assert!(realtime_session_id("rtc-0123456789abcdef0123456789abcdeg").is_err());
+        assert!(call_id("call-0123456789abcdef0123456789abcdef").is_ok());
+        assert!(call_id("call-0123456789abcdef0123456789abcdeg").is_err());
     }
 
     #[test]

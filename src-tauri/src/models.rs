@@ -126,6 +126,15 @@ pub struct RealtimeSignal {
     pub sdp: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CallSignal {
+    pub version: u8,
+    pub call_id: String,
+    pub created_at: String,
+    pub expires_at: String,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Published {

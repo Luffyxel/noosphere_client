@@ -1184,12 +1184,20 @@ pub fn decrypt_realtime_owned(
 }
 
 pub fn realtime_message_id(conversation_id: &str, sender_id: u64) -> Result<String> {
+    ephemeral_message_id(b"noosphere-realtime-signal", conversation_id, sender_id)
+}
+
+pub fn call_signal_message_id(conversation_id: &str, sender_id: u64) -> Result<String> {
+    ephemeral_message_id(b"noosphere-call-signal", conversation_id, sender_id)
+}
+
+fn ephemeral_message_id(domain: &[u8], conversation_id: &str, sender_id: u64) -> Result<String> {
     validation::conversation_id(conversation_id)?;
     if sender_id == 0 {
         return Err(Error::InvalidData);
     }
     let mut digest = Sha256::new();
-    digest.update(b"noosphere-realtime-signal");
+    digest.update(domain);
     digest.update([0]);
     digest.update(conversation_id.as_bytes());
     digest.update([0]);
@@ -2065,6 +2073,10 @@ mod tests {
         let (alice, alice_profile) = create_identity(42, 420).unwrap();
         let (bob, bob_profile) = create_identity(99, 990).unwrap();
         let message_id = realtime_message_id(CONVERSATION, 42).unwrap();
+        assert_ne!(
+            message_id,
+            call_signal_message_id(CONVERSATION, 42).unwrap()
+        );
         let session = "rtc-0123456789abcdef0123456789abcdef";
         let serialized = format!(
             "{{\"version\":1,\"kind\":\"offer\",\"sessionId\":\"{session}\",\"createdAt\":\"2026-09-04T09:00:00Z\",\"expiresAt\":\"2026-09-04T09:02:00Z\",\"sdp\":\"v=0\\r\\n\"}}"
@@ -2105,6 +2117,66 @@ mod tests {
         assert_eq!(opened.text, serialized);
         assert!(decrypt_realtime_owned(bob, owned, envelope).is_err());
         assert!(serialize_identity(&alice).is_ok());
+    }
+
+    #[test]
+    fn call_and_connection_signals_allow_out_of_order_delivery() {
+        let (alice, alice_profile) = create_identity(42, 420).unwrap();
+        let (bob, bob_profile) = create_identity(99, 990).unwrap();
+        let call_id = call_signal_message_id(CONVERSATION, 42).unwrap();
+        let realtime_id = realtime_message_id(CONVERSATION, 42).unwrap();
+        let (alice, call) = encrypt_realtime_owned(
+            alice,
+            OwnedMessage {
+                peer_profile: bob_profile.clone(),
+                peer_github_user_id: 99,
+                peer_repository_id: 990,
+                conversation_id: CONVERSATION.to_owned(),
+                message_id: call_id.clone(),
+                sent_at: "2026-09-04T09:00:00Z".to_owned(),
+                text: "call-signal".to_owned(),
+            },
+        )
+        .unwrap();
+        let (_, realtime) = encrypt_realtime_owned(
+            alice,
+            OwnedMessage {
+                peer_profile: bob_profile,
+                peer_github_user_id: 99,
+                peer_repository_id: 990,
+                conversation_id: CONVERSATION.to_owned(),
+                message_id: realtime_id.clone(),
+                sent_at: "2026-09-04T09:00:01Z".to_owned(),
+                text: "realtime-offer".to_owned(),
+            },
+        )
+        .unwrap();
+        let (bob, opened_realtime) = decrypt_realtime_owned(
+            bob,
+            OwnedDecryptMessage {
+                peer_profile: alice_profile.clone(),
+                peer_github_user_id: 42,
+                peer_repository_id: 420,
+                conversation_id: CONVERSATION.to_owned(),
+                message_id: realtime_id,
+            },
+            realtime,
+        )
+        .unwrap();
+        let (_, opened_call) = decrypt_realtime_owned(
+            bob,
+            OwnedDecryptMessage {
+                peer_profile: alice_profile,
+                peer_github_user_id: 42,
+                peer_repository_id: 420,
+                conversation_id: CONVERSATION.to_owned(),
+                message_id: call_id,
+            },
+            call,
+        )
+        .unwrap();
+        assert_eq!(opened_realtime.text, "realtime-offer");
+        assert_eq!(opened_call.text, "call-signal");
     }
 
     #[test]

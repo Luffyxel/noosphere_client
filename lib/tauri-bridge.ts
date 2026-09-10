@@ -6,6 +6,7 @@ import {
 } from '@tauri-apps/api/event';
 
 import type {
+  CallSignal,
   Conversation,
   FriendRequest,
   GitHubProvisioningConsent,
@@ -78,6 +79,15 @@ export function installTauriBridge(): void {
         invoke<Message>('noosphere_send_message', { conversationId, text }),
       signalWake: (conversationId: string) =>
         invoke<{ published: true }>('noosphere_signal_wake', {
+          conversationId,
+        }),
+      signalCall: (conversationId: string, callId: string) =>
+        invoke<CallSignal>('noosphere_signal_call', {
+          conversationId,
+          callId,
+        }),
+      readCallSignal: (conversationId: string) =>
+        invoke<CallSignal | null>('noosphere_read_call_signal', {
           conversationId,
         }),
       listMessages: (conversationId: string) =>

@@ -27,18 +27,30 @@ void test('messages et appels produisent un changement d’étoile et une notifi
   assert.match(commands, /Method::PUT/);
   assert.match(commands, /Method::DELETE/);
   assert.match(github, /application\/vnd\.github\.star\+json/);
-  assert.match(page, /signalWake\(selectedConversation\.id\)/);
+  assert.match(page, /signalCall\(conversationId, callId\)/);
+  assert.match(page, /readCallSignal\(conversationId\)/);
   assert.match(page, /Appel entrant/);
   assert.match(page, /startCall\('audio'\)/);
   assert.doesNotMatch(page, /Démarrer un appel vidéo/);
   assert.match(page, /notifyUser/);
-  assert.match(page, /detail: 'Nouvelle activité'/);
+  assert.match(page, /probeIncomingCall\(conversationId, call\.callId\)/);
+  assert.match(page, /activeVoiceConversationId/);
+  assert.match(page, /directConversation/);
   assert.match(page, /conversationId\?: string/);
   assert.match(page, /setSelectedId\(notification\.conversationId\)/);
   assert.match(
     page,
     /if \(!sendMessageSignal\(conversationId, message\.id\)\)/,
   );
+});
+
+void test('un appel entrant prépare sa connexion sans changer la discussion affichée', async () => {
+  const page = await readFile(new URL('app/page.tsx', root), 'utf8');
+  assert.match(page, /useDirectPeer\([\s\S]*?directConversation/);
+  assert.match(page, /peer=\{directConversation\.peer\}/);
+  assert.match(page, /title: 'Appel entrant'/);
+  assert.match(page, /setVoiceConversation\(conversationId\)/);
+  assert.match(page, /setActiveVoiceConversationId\(conversationId\)/);
 });
 
 void test('un appel attend la connexion directe au lieu d’échouer', async () => {

@@ -1119,6 +1119,9 @@ function NoosphereApp({
     null,
   );
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [activeVoiceConversationId, setActiveVoiceConversationId] = useState<
+    string | null
+  >(null);
   const [friendProfileId, setFriendProfileId] = useState<string | null>(null);
   const [removingFriend, setRemovingFriend] = useState(false);
   const [addFriendOpen, setAddFriendOpen] = useState(false);
@@ -1152,8 +1155,11 @@ function NoosphereApp({
   const socialSyncing = useRef(false);
   const wakeSyncing = useRef(false);
   const messagesSyncing = useRef(new Set<string>());
+  const seenCallIds = useRef(new Set<string>());
   const conversationsRef = useRef(conversations);
   const selectedIdRef = useRef(selectedId);
+  const activeVoiceConversationIdRef = useRef<string | null>(null);
+  const callProbeTimer = useRef<number | null>(null);
   const previousCallStatus = useRef<VoiceCallStatus>('idle');
 
   const updateMediaSettings = useCallback(
@@ -1250,6 +1256,13 @@ function NoosphereApp({
       null,
     [conversations, selectedId],
   );
+  const directConversation = useMemo(
+    () =>
+      conversations.find(
+        (conversation) => conversation.id === activeVoiceConversationId,
+      ) ?? selectedConversation,
+    [activeVoiceConversationId, conversations, selectedConversation],
+  );
   const profileConversation = useMemo(
     () =>
       conversations.find(
@@ -1277,6 +1290,61 @@ function NoosphereApp({
       }
     },
     [addNotification],
+  );
+
+  const setVoiceConversation = useCallback((conversationId: string | null) => {
+    activeVoiceConversationIdRef.current = conversationId;
+    setActiveVoiceConversationId(conversationId);
+  }, []);
+
+  const probeIncomingCall = useCallback(
+    (conversationId: string, callId: string) => {
+      const conversation = conversationsRef.current.find(
+        (candidate) => candidate.id === conversationId,
+      );
+      if (!conversation) return;
+      if (
+        activeVoiceConversationIdRef.current &&
+        activeVoiceConversationIdRef.current !== conversationId
+      ) {
+        notifyUser({
+          id: `missed-call-${callId}`,
+          title: 'Appel manqué',
+          detail: `@${conversation.peer.login}`,
+          conversationId,
+        });
+        return;
+      }
+      notifyUser({
+        id: `incoming-call-${callId}`,
+        title: 'Appel entrant',
+        detail: `@${conversation.peer.login}`,
+        conversationId,
+      });
+      setVoiceConversation(conversationId);
+      if (callProbeTimer.current !== null) {
+        window.clearTimeout(callProbeTimer.current);
+      }
+      callProbeTimer.current = window.setTimeout(() => {
+        callProbeTimer.current = null;
+        if (
+          previousCallStatus.current === 'idle' &&
+          activeVoiceConversationIdRef.current === conversationId
+        ) {
+          setVoiceConversation(null);
+        }
+      }, 60_000);
+    },
+    [notifyUser, setVoiceConversation],
+  );
+
+  useEffect(
+    () => () => {
+      if (callProbeTimer.current !== null) {
+        window.clearTimeout(callProbeTimer.current);
+      }
+    },
+    [],
   );
 
   const syncSocialState = useCallback(
@@ -1395,16 +1463,16 @@ function NoosphereApp({
     cameraEnabled,
     startCall,
     acceptCall,
-    declineCall,
-    endCall,
+    declineCall: declineDirectCall,
+    endCall: endDirectCall,
     toggleMicrophone,
     toggleCamera,
     sendMessageSignal,
   } = useDirectPeer(
     viewer,
-    selectedConversation,
+    directConversation,
     () => {
-      const conversationId = selectedIdRef.current;
+      const conversationId = directConversation?.id;
       if (conversationId) void syncMessages(conversationId, true);
     },
     mediaSettings,
@@ -1413,18 +1481,14 @@ function NoosphereApp({
   useEffect(() => {
     const previous = previousCallStatus.current;
     previousCallStatus.current = callStatus;
-    if (
-      callStatus === 'incoming' &&
-      previous !== 'incoming' &&
-      selectedConversation
-    ) {
-      notifyUser({
-        id: `incoming-call-${selectedConversation.id}-${Date.now()}`,
-        title: 'Appel entrant',
-        detail: `@${selectedConversation.peer.login}`,
-      });
+    if (callStatus !== 'idle' && callProbeTimer.current !== null) {
+      window.clearTimeout(callProbeTimer.current);
+      callProbeTimer.current = null;
     }
-  }, [callStatus, notifyUser, selectedConversation]);
+    if (callStatus === 'idle' && previous !== 'idle') {
+      setVoiceConversation(null);
+    }
+  }, [callStatus, setVoiceConversation]);
 
   useEffect(() => {
     let active = true;
@@ -1441,27 +1505,22 @@ function NoosphereApp({
           socialRefreshPending = !(await syncSocialState(true, true));
         }
         const activity = await Promise.all(
-          wake.conversationIds.map((conversationId) =>
-            syncMessages(conversationId, true).then((received) => ({
-              conversationId,
-              received,
-            })),
-          ),
+          wake.conversationIds.map(async (conversationId) => {
+            await syncMessages(conversationId, true);
+            const call = await desktop.noosphere
+              .readCallSignal(conversationId)
+              .catch(() => null);
+            return { conversationId, call };
+          }),
         );
-        for (const { conversationId, received } of activity) {
-          if (received !== 0 || selectedIdRef.current === conversationId) {
-            continue;
+        for (const { conversationId, call } of activity) {
+          if (!call || seenCallIds.current.has(call.callId)) continue;
+          seenCallIds.current.add(call.callId);
+          if (seenCallIds.current.size > 256) {
+            const oldest = seenCallIds.current.values().next().value;
+            if (oldest) seenCallIds.current.delete(oldest);
           }
-          const conversation = conversationsRef.current.find(
-            (candidate) => candidate.id === conversationId,
-          );
-          if (!conversation) continue;
-          notifyUser({
-            id: `activity-${conversationId}`,
-            title: conversation.peer.name || conversation.peer.login,
-            detail: 'Nouvelle activité',
-            conversationId,
-          });
+          probeIncomingCall(conversationId, call.callId);
         }
       } catch {
       } finally {
@@ -1473,7 +1532,7 @@ function NoosphereApp({
       active = false;
       window.clearInterval(pollTimer);
     };
-  }, [notifyUser, syncMessages, syncSocialState]);
+  }, [probeIncomingCall, syncMessages, syncSocialState]);
 
   useEffect(() => {
     const conversationId = selectedId;
@@ -1638,10 +1697,25 @@ function NoosphereApp({
   }
 
   function beginCall() {
-    if (!selectedConversation || !startCall('audio')) return;
-    void window.noosphereDesktop?.noosphere
-      .signalWake(selectedConversation.id)
-      .catch(() => {});
+    if (!selectedConversation) return;
+    const callId = startCall('audio');
+    if (!callId) return;
+    const conversationId = selectedConversation.id;
+    setVoiceConversation(conversationId);
+    const noosphere = window.noosphereDesktop?.noosphere;
+    void noosphere?.signalCall(conversationId, callId).catch(() => {
+      void noosphere.signalWake(conversationId).catch(() => {});
+    });
+  }
+
+  function declineCall() {
+    declineDirectCall();
+    setVoiceConversation(null);
+  }
+
+  function endCall() {
+    endDirectCall();
+    setVoiceConversation(null);
   }
 
   async function submitMessage(event: SubmitEvent<HTMLFormElement>) {
@@ -1857,24 +1931,26 @@ function NoosphereApp({
             )}
           </div>
           <div className="flex items-center gap-2">
-            {selectedConversation && callStatus === 'idle' && (
-              <>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="size-9 rounded-[10px] text-[#a1a1a6] hover:bg-white/[.06] hover:text-white"
-                  aria-label="Démarrer un appel vocal"
-                  title={
-                    directStatus === 'direct'
-                      ? 'Appel vocal'
-                      : 'Connexion avec cet ami en cours'
-                  }
-                  onClick={beginCall}
-                >
-                  <Phone />
-                </Button>
-              </>
-            )}
+            {selectedConversation &&
+              callStatus === 'idle' &&
+              !activeVoiceConversationId && (
+                <>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="size-9 rounded-[10px] text-[#a1a1a6] hover:bg-white/[.06] hover:text-white"
+                    aria-label="Démarrer un appel vocal"
+                    title={
+                      directStatus === 'direct'
+                        ? 'Appel vocal'
+                        : 'Connexion avec cet ami en cours'
+                    }
+                    onClick={beginCall}
+                  >
+                    <Phone />
+                  </Button>
+                </>
+              )}
             {selectedConversation && callStatus !== 'idle' && (
               <Button
                 variant="ghost"
@@ -1951,10 +2027,10 @@ function NoosphereApp({
           </div>
         )}
 
-        {selectedConversation && (
+        {directConversation && (
           <VoiceCallOverlay
             status={callStatus}
-            peer={selectedConversation.peer}
+            peer={directConversation.peer}
             localStream={localStream}
             remoteStream={remoteStream}
             microphoneEnabled={microphoneEnabled}

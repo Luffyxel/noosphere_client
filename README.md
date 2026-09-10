@@ -8,8 +8,8 @@ account.
 
 ## Downloads
 
-- [Windows installer](Noosphere_0.1.5_x64-setup.exe)
-- Linux: [AppImage](https://github.com/Luffyxel/noosphere_client/releases/download/v0.1.5/Noosphere_0.1.5_amd64.AppImage), [DEB](https://github.com/Luffyxel/noosphere_client/releases/download/v0.1.5/Noosphere_0.1.5_amd64.deb), [RPM](https://github.com/Luffyxel/noosphere_client/releases/download/v0.1.5/Noosphere_0.1.5_x86_64.rpm), [checksums](https://github.com/Luffyxel/noosphere_client/releases/download/v0.1.5/SHA256SUMS.txt)
+- [Windows installer](Noosphere_0.1.6_x64-setup.exe)
+- Linux: [AppImage](https://github.com/Luffyxel/noosphere_client/releases/download/v0.1.6/Noosphere_0.1.6_amd64.AppImage), [DEB](https://github.com/Luffyxel/noosphere_client/releases/download/v0.1.6/Noosphere_0.1.6_amd64.deb), [RPM](https://github.com/Luffyxel/noosphere_client/releases/download/v0.1.6/Noosphere_0.1.6_x86_64.rpm), [checksums](https://github.com/Luffyxel/noosphere_client/releases/download/v0.1.6/SHA256SUMS.txt)
 
 Installation notes and checksums are kept in [`release/`](release/README.md).
 
@@ -62,7 +62,7 @@ supported directly; Wayland sessions require XWayland.
 On NixOS, run the AppImage through `appimage-run`:
 
 ```bash
-nix-shell -p appimage-run --run 'appimage-run ./Noosphere_0.1.5_amd64.AppImage'
+nix-shell -p appimage-run --run 'appimage-run ./Noosphere_0.1.6_amd64.AppImage'
 ```
 
 For Hyprland managed by NixOS, enable

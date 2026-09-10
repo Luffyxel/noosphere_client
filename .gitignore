@@ -5,6 +5,7 @@
 /src-tauri/target/
 /src-tauri/gen/
 /tsconfig.tsbuildinfo
+/Noosphere_*_portable_x64.exe
 
 # Local configuration
 .env*

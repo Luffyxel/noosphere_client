@@ -259,6 +259,9 @@ export async function runTauriSmokeTest(): Promise<void> {
           'function' &&
         typeof window.noosphereDesktop?.noosphere.sendMessage === 'function' &&
         typeof window.noosphereDesktop?.noosphere.signalWake === 'function' &&
+        typeof window.noosphereDesktop?.noosphere.signalCall === 'function' &&
+        typeof window.noosphereDesktop?.noosphere.readCallSignal ===
+          'function' &&
         typeof window.noosphereDesktop?.noosphere.publishRealtimeSignal ===
           'function',
       webRtcDataChannel,

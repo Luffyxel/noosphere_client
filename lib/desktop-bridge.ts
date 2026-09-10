@@ -72,6 +72,13 @@ export type RealtimeSignal = {
   sdp: string;
 };
 
+export type CallSignal = {
+  version: 1;
+  callId: string;
+  createdAt: string;
+  expiresAt: string;
+};
+
 export type NoosphereDesktopApi = {
   isDesktop: true;
   platform: string;
@@ -104,6 +111,8 @@ export type NoosphereDesktopApi = {
     removeFriend: (conversationId: string) => Promise<{ removed: true }>;
     sendMessage: (conversationId: string, text: string) => Promise<Message>;
     signalWake: (conversationId: string) => Promise<{ published: true }>;
+    signalCall: (conversationId: string, callId: string) => Promise<CallSignal>;
+    readCallSignal: (conversationId: string) => Promise<CallSignal | null>;
     listMessages: (conversationId: string) => Promise<Message[]>;
     publishRealtimeSignal: (
       conversationId: string,

@@ -590,7 +590,7 @@ export function useDirectPeer(
 
   const startCall = useCallback(
     (media: VoiceCallMedia) => {
-      if (!conversationId || callStatusRef.current !== 'idle') return false;
+      if (!conversationId || callStatusRef.current !== 'idle') return null;
       const callId = createVoiceCallId();
       activeCallIdRef.current = callId;
       activeCallModeRef.current = media;
@@ -602,7 +602,7 @@ export function useDirectPeer(
         sendVoicePacketRef.current('call-end', callId, media);
         resetVoiceCall('Pas de réponse.');
       }, CALL_RESPONSE_TIMEOUT_MS);
-      return true;
+      return callId;
     },
     [clearCallTimer, conversationId, resetVoiceCall, updateCallStatus],
   );
@@ -698,6 +698,7 @@ export function useDirectPeer(
 
   const sendMessageSignal = useCallback(
     (nextConversationId: string, messageId: string) => {
+      if (nextConversationId !== conversationId) return false;
       const channel = channelRef.current;
       if (channel?.readyState !== 'open') return false;
       channel.send(
@@ -710,7 +711,7 @@ export function useDirectPeer(
       );
       return true;
     },
-    [],
+    [conversationId],
   );
 
   return {

@@ -174,6 +174,8 @@ pub fn run() {
             commands::noosphere_remove_friend,
             commands::noosphere_send_message,
             commands::noosphere_signal_wake,
+            commands::noosphere_signal_call,
+            commands::noosphere_read_call_signal,
             commands::noosphere_list_messages,
             commands::noosphere_publish_realtime_signal,
             commands::noosphere_read_realtime_signal,

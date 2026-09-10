@@ -21,10 +21,10 @@ use crate::{
         ApiResponse, GitHubClient, OAuthPoll, OAuthToken, RepositoryIdentity, ViewerIdentity,
     },
     models::{
-        Conversation, FriendRemoved, FriendRequest, FriendRequestDeclined, GitHubViewer,
-        LookupUser, Message, NoosphereUser, NotificationResult, ProvisioningConsent, Published,
-        RealtimeSignal, RepositorySummary, SignedOut, SmokeConfig, SmokeResult, SocialState,
-        UserLookup, WakeSignals,
+        CallSignal, Conversation, FriendRemoved, FriendRequest, FriendRequestDeclined,
+        GitHubViewer, LookupUser, Message, NoosphereUser, NotificationResult, ProvisioningConsent,
+        Published, RealtimeSignal, RepositorySummary, SignedOut, SmokeConfig, SmokeResult,
+        SocialState, UserLookup, WakeSignals,
     },
     repository_content,
     state::{AppState, ConversationState, LocalMessageState, OutgoingRequestState, PeerState},
@@ -1212,15 +1212,29 @@ async fn poll_wake_signals(state: &AppState) -> Result<WakeSignals> {
         let mut snapshot = state.wake_stargazers.lock().await;
         snapshot.replace(current.clone())
     };
-    let Some(previous) = previous else {
-        return Ok(WakeSignals::default());
-    };
     let social = state.social.read().await;
     let conversation_peers = social
         .conversations
         .iter()
         .map(|conversation| (conversation.peer.user.id, conversation.id.clone()))
         .collect::<BTreeMap<_, _>>();
+    let previous = match previous {
+        Some(previous) => previous,
+        None => {
+            let cutoff = OffsetDateTime::now_utc() - TimeDuration::minutes(2);
+            let recent = current
+                .into_iter()
+                .filter(|(_, starred_at)| {
+                    parse_realtime_timestamp(starred_at).is_ok_and(|value| value >= cutoff)
+                })
+                .collect();
+            return Ok(classify_wake_changes(
+                &BTreeMap::new(),
+                &recent,
+                &conversation_peers,
+            ));
+        }
+    };
     Ok(classify_wake_changes(
         &previous,
         &current,
@@ -1319,6 +1333,37 @@ mod wake_signal_tests {
             vec!["dm-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"]
         );
         assert!(!wake.social_changed);
+    }
+
+    #[test]
+    fn call_signals_are_bounded_and_strict() {
+        let signal = CallSignal {
+            version: 1,
+            call_id: "call-0123456789abcdef0123456789abcdef".to_owned(),
+            created_at: "2026-09-10T08:00:00Z".to_owned(),
+            expires_at: "2026-09-10T08:01:00Z".to_owned(),
+        };
+        assert!(validate_call_signal(&signal, false).is_ok());
+        assert!(
+            validate_call_signal(
+                &CallSignal {
+                    expires_at: "2026-09-10T08:03:00Z".to_owned(),
+                    ..signal.clone()
+                },
+                false,
+            )
+            .is_err()
+        );
+        assert!(
+            validate_call_signal(
+                &CallSignal {
+                    call_id: "call-invalid".to_owned(),
+                    ..signal
+                },
+                false,
+            )
+            .is_err()
+        );
     }
 }
 
@@ -2622,6 +2667,92 @@ async fn mark_message_published(
 }
 
 #[tauri::command]
+pub async fn noosphere_signal_call(
+    state: State<'_, AppState>,
+    conversation_id: String,
+    call_id: String,
+) -> CommandResult<CallSignal> {
+    validation::conversation_id(&conversation_id).map_err(command_error)?;
+    validation::call_id(&call_id).map_err(command_error)?;
+    let _operation = state.operations.lock().await;
+    let now = OffsetDateTime::now_utc();
+    let signal = CallSignal {
+        version: 1,
+        call_id,
+        created_at: now
+            .format(&Rfc3339)
+            .map_err(|_| command_error(Error::Local))?,
+        expires_at: (now + TimeDuration::seconds(60))
+            .format(&Rfc3339)
+            .map_err(|_| command_error(Error::Local))?,
+    };
+    publish_call_signal(&state, &conversation_id, &signal)
+        .await
+        .map_err(command_error)?;
+    let token = oauth_token(&state).await.map_err(command_error)?;
+    let conversation = find_conversation(&state, &conversation_id)
+        .await
+        .map_err(command_error)?;
+    refresh_peer_wake_signal(&state, &token, &conversation.peer)
+        .await
+        .map_err(command_error)?;
+    Ok(signal)
+}
+
+#[tauri::command]
+pub async fn noosphere_read_call_signal(
+    state: State<'_, AppState>,
+    conversation_id: String,
+) -> CommandResult<Option<CallSignal>> {
+    validation::conversation_id(&conversation_id).map_err(command_error)?;
+    let _operation = state.operations.lock().await;
+    read_call_signal(&state, &conversation_id)
+        .await
+        .map_err(command_error)
+}
+
+async fn publish_call_signal(
+    state: &AppState,
+    conversation_id: &str,
+    signal: &CallSignal,
+) -> Result<Published> {
+    validate_call_signal(signal, true)?;
+    let viewer = session_viewer(state).await?;
+    let message_id = crate::protocol::call_signal_message_id(conversation_id, viewer.id)?;
+    publish_ephemeral_payload(
+        state,
+        conversation_id,
+        message_id,
+        &format!("conv/{conversation_id}/realtime/call.enc.json"),
+        &signal.created_at,
+        serde_json::to_string(signal).map_err(|_| Error::Local)?,
+        "Signaler un appel",
+    )
+    .await
+}
+
+async fn read_call_signal(state: &AppState, conversation_id: &str) -> Result<Option<CallSignal>> {
+    let conversation = find_conversation(state, conversation_id).await?;
+    let message_id =
+        crate::protocol::call_signal_message_id(conversation_id, conversation.peer.user.id)?;
+    let Some(serialized) = read_ephemeral_payload(
+        state,
+        conversation_id,
+        &conversation,
+        &format!("conv/{conversation_id}/realtime/call.enc.json"),
+        message_id,
+    )
+    .await?
+    else {
+        return Ok(None);
+    };
+    let signal: CallSignal =
+        serde_json::from_str(&serialized).map_err(|_| Error::InvalidGitHubResponse)?;
+    validate_call_signal(&signal, false)?;
+    Ok(is_live_signal(&signal.created_at, &signal.expires_at)?.then_some(signal))
+}
+
+#[tauri::command]
 pub async fn noosphere_publish_realtime_signal(
     state: State<'_, AppState>,
     conversation_id: String,
@@ -2653,10 +2784,55 @@ async fn publish_realtime_signal(
     signal: RealtimeSignal,
 ) -> Result<Published> {
     let viewer = session_viewer(state).await?;
+    let message_id = crate::protocol::realtime_message_id(conversation_id, viewer.id)?;
+    publish_ephemeral_payload(
+        state,
+        conversation_id,
+        message_id,
+        &format!("conv/{conversation_id}/realtime/state.enc.json"),
+        &signal.created_at,
+        serde_json::to_string(&signal).map_err(|_| Error::Local)?,
+        "Actualiser la liaison directe",
+    )
+    .await
+}
+
+async fn read_realtime_signal(
+    state: &AppState,
+    conversation_id: &str,
+) -> Result<Option<RealtimeSignal>> {
+    let conversation = find_conversation(state, conversation_id).await?;
+    let message_id =
+        crate::protocol::realtime_message_id(conversation_id, conversation.peer.user.id)?;
+    let Some(serialized) = read_ephemeral_payload(
+        state,
+        conversation_id,
+        &conversation,
+        &format!("conv/{conversation_id}/realtime/state.enc.json"),
+        message_id,
+    )
+    .await?
+    else {
+        return Ok(None);
+    };
+    let signal: RealtimeSignal =
+        serde_json::from_str(&serialized).map_err(|_| Error::InvalidGitHubResponse)?;
+    validate_realtime_signal(&signal, false)?;
+    Ok(is_live_signal(&signal.created_at, &signal.expires_at)?.then_some(signal))
+}
+
+async fn publish_ephemeral_payload(
+    state: &AppState,
+    conversation_id: &str,
+    message_id: String,
+    path: &str,
+    sent_at: &str,
+    text: String,
+    commit_message: &str,
+) -> Result<Published> {
+    let viewer = session_viewer(state).await?;
     let token = oauth_token(state).await?;
     let conversation = find_conversation(state, conversation_id).await?;
-    let message_id = crate::protocol::realtime_message_id(conversation_id, viewer.id)?;
-    let serialized = serde_json::to_string(&signal).map_err(|_| Error::Local)?;
     let secret = state
         .identity
         .read()
@@ -2666,13 +2842,13 @@ async fn publish_realtime_signal(
         .secret
         .clone();
     let owned = crate::protocol::OwnedMessage {
-        peer_profile: conversation.peer.profile,
+        peer_profile: conversation.peer.profile.clone(),
         peer_github_user_id: conversation.peer.user.id,
         peer_repository_id: conversation.peer.repository_id,
         conversation_id: conversation_id.to_owned(),
         message_id,
-        sent_at: signal.created_at,
-        text: serialized,
+        sent_at: sent_at.to_owned(),
+        text,
     };
     let (secret, envelope) =
         tokio::task::spawn_blocking(move || crate::protocol::encrypt_realtime_owned(secret, owned))
@@ -2695,28 +2871,30 @@ async fn publish_realtime_signal(
         &token,
         &viewer_identity(&viewer),
         &repository_identity(&viewer),
-        &format!("conv/{conversation_id}/realtime/state.enc.json"),
+        path,
         content.as_bytes(),
-        "Actualiser la liaison directe",
+        commit_message,
         true,
     )
     .await?;
     Ok(Published { published: true })
 }
 
-async fn read_realtime_signal(
+async fn read_ephemeral_payload(
     state: &AppState,
     conversation_id: &str,
-) -> Result<Option<RealtimeSignal>> {
+    conversation: &ConversationState,
+    path: &str,
+    message_id: String,
+) -> Result<Option<String>> {
     let viewer = session_viewer(state).await?;
     let token = oauth_token(state).await?;
-    let conversation = find_conversation(state, conversation_id).await?;
     let value = read_repository_json_conditional(
         state,
         &token,
         &conversation.peer.user.login,
         &conversation.peer.user.repository,
-        &format!("conv/{conversation_id}/realtime/state.enc.json"),
+        path,
         512 * 1024,
     )
     .await?;
@@ -2734,14 +2912,11 @@ async fn read_realtime_signal(
         .secret
         .clone();
     let owned = crate::protocol::OwnedDecryptMessage {
-        peer_profile: conversation.peer.profile,
+        peer_profile: conversation.peer.profile.clone(),
         peer_github_user_id: conversation.peer.user.id,
         peer_repository_id: conversation.peer.repository_id,
         conversation_id: conversation_id.to_owned(),
-        message_id: crate::protocol::realtime_message_id(
-            conversation_id,
-            conversation.peer.user.id,
-        )?,
+        message_id,
     };
     let decrypted = tokio::task::spawn_blocking(move || {
         crate::protocol::decrypt_realtime_owned(secret, owned, envelope)
@@ -2761,16 +2936,14 @@ async fn read_realtime_signal(
         .ok_or(Error::Crypto)?
         .secret = secret;
     state.persist_identity(viewer.repository.id).await?;
-    let signal: RealtimeSignal =
-        serde_json::from_str(&decrypted.text).map_err(|_| Error::InvalidGitHubResponse)?;
-    validate_realtime_signal(&signal, false)?;
+    Ok(Some(decrypted.text))
+}
+
+fn is_live_signal(created_at: &str, expires_at: &str) -> Result<bool> {
     let now = OffsetDateTime::now_utc();
-    let created = parse_realtime_timestamp(&signal.created_at)?;
-    let expires = parse_realtime_timestamp(&signal.expires_at)?;
-    if expires <= now || created > now + TimeDuration::seconds(30) {
-        return Ok(None);
-    }
-    Ok(Some(signal))
+    let created = parse_realtime_timestamp(created_at)?;
+    let expires = parse_realtime_timestamp(expires_at)?;
+    Ok(expires > now && created <= now + TimeDuration::seconds(30))
 }
 
 fn validate_realtime_signal(signal: &RealtimeSignal, require_live: bool) -> Result<()> {
@@ -2798,6 +2971,24 @@ fn validate_realtime_signal(signal: &RealtimeSignal, require_live: bool) -> Resu
         {
             return Err(Error::InvalidData);
         }
+    }
+    Ok(())
+}
+
+fn validate_call_signal(signal: &CallSignal, require_live: bool) -> Result<()> {
+    validation::call_id(&signal.call_id)?;
+    crate::protocol::validate_public_timestamp(&signal.created_at)?;
+    crate::protocol::validate_public_timestamp(&signal.expires_at)?;
+    if signal.version != 1 {
+        return Err(Error::InvalidData);
+    }
+    let created = parse_realtime_timestamp(&signal.created_at)?;
+    let expires = parse_realtime_timestamp(&signal.expires_at)?;
+    if expires <= created || expires - created > TimeDuration::minutes(2) {
+        return Err(Error::InvalidData);
+    }
+    if require_live && !is_live_signal(&signal.created_at, &signal.expires_at)? {
+        return Err(Error::InvalidData);
     }
     Ok(())
 }
