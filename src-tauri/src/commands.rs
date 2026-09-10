@@ -1210,7 +1210,10 @@ async fn poll_wake_signals(state: &AppState) -> Result<WakeSignals> {
 
     let previous = {
         let mut snapshot = state.wake_stargazers.lock().await;
-        snapshot.replace(current.clone()).unwrap_or_default()
+        snapshot.replace(current.clone())
+    };
+    let Some(previous) = previous else {
+        return Ok(WakeSignals::default());
     };
     let social = state.social.read().await;
     let conversation_peers = social
@@ -2335,9 +2338,6 @@ async fn send_message(state: &AppState, conversation_id: String, text: String) -
     state.persist_identity(viewer.repository.id).await?;
     publish_message(state, &token, &viewer, &message, &envelope).await?;
     mark_message_published(state, viewer.repository.id, &message.id).await?;
-    // Publication already succeeded. A best-effort wake failure must not make
-    // the UI retry and duplicate a durable message.
-    let _ = toggle_peer_wake_signal(state, &token, &conversation.peer).await;
     Ok(message)
 }
 
@@ -2352,13 +2352,13 @@ pub async fn noosphere_signal_wake(
     let conversation = find_conversation(&state, &conversation_id)
         .await
         .map_err(command_error)?;
-    toggle_peer_wake_signal(&state, &token, &conversation.peer)
+    refresh_peer_wake_signal(&state, &token, &conversation.peer)
         .await
         .map_err(command_error)?;
     Ok(Published { published: true })
 }
 
-async fn toggle_peer_wake_signal(
+async fn refresh_peer_wake_signal(
     state: &AppState,
     token: &OAuthToken,
     peer: &PeerState,
@@ -2375,20 +2375,29 @@ async fn toggle_peer_wake_signal(
             &[404],
         )
         .await?;
-    let method = if starred.status == 404 {
-        Method::PUT
-    } else {
-        Method::DELETE
-    };
+    if starred.status != 404 {
+        state
+            .github
+            .api_json::<Value>(
+                Method::DELETE,
+                &endpoint,
+                Some(token.access_token.expose_secret()),
+                None,
+                None,
+                &[404],
+            )
+            .await?;
+        sleep(Duration::from_secs(1)).await;
+    }
     state
         .github
         .api_json::<Value>(
-            method,
+            Method::PUT,
             &endpoint,
             Some(token.access_token.expose_secret()),
             None,
             None,
-            &[404],
+            &[],
         )
         .await?;
     Ok(())

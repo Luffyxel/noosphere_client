@@ -23,7 +23,7 @@ void test('messages et appels produisent un changement d’étoile et une notifi
     readFile(new URL('src-tauri/src/github.rs', root), 'utf8'),
     readFile(new URL('app/page.tsx', root), 'utf8'),
   ]);
-  assert.match(commands, /toggle_peer_wake_signal/);
+  assert.match(commands, /refresh_peer_wake_signal/);
   assert.match(commands, /Method::PUT/);
   assert.match(commands, /Method::DELETE/);
   assert.match(github, /application\/vnd\.github\.star\+json/);
@@ -32,4 +32,19 @@ void test('messages et appels produisent un changement d’étoile et une notifi
   assert.match(page, /startCall\('audio'\)/);
   assert.doesNotMatch(page, /Démarrer un appel vidéo/);
   assert.match(page, /notifyUser/);
+  assert.match(page, /detail: 'Nouvelle activité'/);
+  assert.match(page, /conversationId\?: string/);
+  assert.match(page, /setSelectedId\(notification\.conversationId\)/);
+  assert.match(
+    page,
+    /if \(!sendMessageSignal\(conversationId, message\.id\)\)/,
+  );
+});
+
+void test('un appel attend la connexion directe au lieu d’échouer', async () => {
+  const peer = await readFile(new URL('lib/use-direct-peer.ts', root), 'utf8');
+  assert.match(peer, /callStatusRef\.current === 'outgoing'/);
+  assert.match(peer, /pendingCallId/);
+  assert.match(peer, /sendVoicePacket\([\s\S]*?'call-offer'/);
+  assert.doesNotMatch(peer, /La connexion avec cet ami n’est pas encore prête/);
 });

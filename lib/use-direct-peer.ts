@@ -342,6 +342,14 @@ export function useDirectPeer(
         if (!active) return;
         channelRef.current = nextChannel;
         setStatus('direct');
+        const pendingCallId = activeCallIdRef.current;
+        if (callStatusRef.current === 'outgoing' && pendingCallId) {
+          sendVoicePacket(
+            'call-offer',
+            pendingCallId,
+            activeCallModeRef.current,
+          );
+        }
       };
       nextChannel.onclose = () => {
         if (!active) return;
@@ -584,14 +592,11 @@ export function useDirectPeer(
     (media: VoiceCallMedia) => {
       if (!conversationId || callStatusRef.current !== 'idle') return false;
       const callId = createVoiceCallId();
-      if (!sendVoicePacketRef.current('call-offer', callId, media)) {
-        setCallError('La connexion avec cet ami n’est pas encore prête.');
-        return false;
-      }
       activeCallIdRef.current = callId;
       activeCallModeRef.current = media;
       setCallError('');
       updateCallStatus('outgoing');
+      sendVoicePacketRef.current('call-offer', callId, media);
       clearCallTimer();
       callTimerRef.current = window.setTimeout(() => {
         sendVoicePacketRef.current('call-end', callId, media);

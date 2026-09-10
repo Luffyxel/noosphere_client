@@ -71,6 +71,7 @@ type AppNotification = {
   id: string;
   title: string;
   detail: string;
+  conversationId?: string;
 };
 
 const EMPTY_SOCIAL_STATE: SocialState = {
@@ -1338,44 +1339,45 @@ function NoosphereApp({
   const syncMessages = useCallback(
     async (conversationId: string, announceNew: boolean) => {
       const desktop = window.noosphereDesktop;
-      if (!desktop || messagesSyncing.current.has(conversationId)) return;
+      if (!desktop || messagesSyncing.current.has(conversationId)) return null;
       messagesSyncing.current.add(conversationId);
       try {
         const nextMessages =
           await desktop.noosphere.listMessages(conversationId);
         const previouslyKnown = knownMessageIds.current.get(conversationId);
+        const cached = messageCache.current.get(conversationId) ?? [];
+        const knownIds =
+          previouslyKnown ?? new Set(cached.map((message) => message.id));
+        const received = announceNew
+          ? nextMessages.filter(
+              (message) => !message.own && !knownIds.has(message.id),
+            )
+          : [];
         knownMessageIds.current.set(
           conversationId,
           new Set(nextMessages.map((message) => message.id)),
         );
-        setMessages((current) => {
-          const cached = messageCache.current.get(conversationId) ?? [];
-          if (announceNew) {
-            const knownIds =
-              previouslyKnown ?? new Set(cached.map((message) => message.id));
-            const received = nextMessages.filter(
-              (message) => !message.own && !knownIds.has(message.id),
-            );
-            if (received.length > 0) {
-              const conversation = conversationsRef.current.find(
-                (candidate) => candidate.id === conversationId,
-              );
-              notifyUser({
-                id: `message-${received.at(-1)?.id}`,
-                title:
-                  conversation?.peer.name ||
-                  conversation?.peer.login ||
-                  'Nouveau message',
-                detail: received.at(-1)?.text || 'Nouveau message',
-              });
-            }
-          }
-          const merged = mergeMessages(cached, nextMessages);
-          messageCache.current.set(conversationId, merged);
-          return selectedIdRef.current === conversationId ? merged : current;
-        });
+        if (received.length > 0) {
+          const conversation = conversationsRef.current.find(
+            (candidate) => candidate.id === conversationId,
+          );
+          notifyUser({
+            id: `message-${received.at(-1)?.id}`,
+            title:
+              conversation?.peer.name ||
+              conversation?.peer.login ||
+              'Nouveau message',
+            detail: received.at(-1)?.text || 'Nouveau message',
+            conversationId,
+          });
+        }
+        const merged = mergeMessages(cached, nextMessages);
+        messageCache.current.set(conversationId, merged);
+        if (selectedIdRef.current === conversationId) setMessages(merged);
+        return received.length;
       } catch (error) {
         setSyncError(readableError(error));
+        return null;
       } finally {
         messagesSyncing.current.delete(conversationId);
       }
@@ -1438,11 +1440,29 @@ function NoosphereApp({
         if (socialRefreshPending) {
           socialRefreshPending = !(await syncSocialState(true, true));
         }
-        await Promise.all(
+        const activity = await Promise.all(
           wake.conversationIds.map((conversationId) =>
-            syncMessages(conversationId, true),
+            syncMessages(conversationId, true).then((received) => ({
+              conversationId,
+              received,
+            })),
           ),
         );
+        for (const { conversationId, received } of activity) {
+          if (received !== 0 || selectedIdRef.current === conversationId) {
+            continue;
+          }
+          const conversation = conversationsRef.current.find(
+            (candidate) => candidate.id === conversationId,
+          );
+          if (!conversation) continue;
+          notifyUser({
+            id: `activity-${conversationId}`,
+            title: conversation.peer.name || conversation.peer.login,
+            detail: 'Nouvelle activité',
+            conversationId,
+          });
+        }
       } catch {
       } finally {
         wakeSyncing.current = false;
@@ -1453,7 +1473,7 @@ function NoosphereApp({
       active = false;
       window.clearInterval(pollTimer);
     };
-  }, [syncMessages, syncSocialState]);
+  }, [notifyUser, syncMessages, syncSocialState]);
 
   useEffect(() => {
     const conversationId = selectedId;
@@ -1673,7 +1693,11 @@ function NoosphereApp({
           message.id,
         ]),
       );
-      sendMessageSignal(conversationId, message.id);
+      if (!sendMessageSignal(conversationId, message.id)) {
+        void window.noosphereDesktop.noosphere
+          .signalWake(conversationId)
+          .catch(() => {});
+      }
     } catch (error) {
       const restoredMessages = (
         messageCache.current.get(conversationId) ?? []
@@ -1845,7 +1869,6 @@ function NoosphereApp({
                       ? 'Appel vocal'
                       : 'Connexion avec cet ami en cours'
                   }
-                  disabled={directStatus !== 'direct'}
                   onClick={beginCall}
                 >
                   <Phone />
@@ -1904,9 +1927,16 @@ function NoosphereApp({
             ) : (
               <div className="max-h-72 overflow-y-auto p-2">
                 {notifications.map((notification) => (
-                  <div
+                  <button
+                    type="button"
                     key={notification.id}
-                    className="rounded-[12px] px-3 py-2.5 hover:bg-white/[.05]"
+                    className="block w-full rounded-[12px] px-3 py-2.5 text-left hover:bg-white/[.05]"
+                    onClick={() => {
+                      if (notification.conversationId) {
+                        setSelectedId(notification.conversationId);
+                      }
+                      setNotificationsOpen(false);
+                    }}
                   >
                     <p className="text-[12px] font-medium">
                       {notification.title}
@@ -1914,7 +1944,7 @@ function NoosphereApp({
                     <p className="mt-0.5 truncate text-[11px] text-[#8e8e93]">
                       {notification.detail}
                     </p>
-                  </div>
+                  </button>
                 ))}
               </div>
             )}
