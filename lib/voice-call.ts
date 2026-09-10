@@ -23,6 +23,19 @@ export type VoiceCallStatus =
   | 'connecting'
   | 'connected';
 
+export type PendingCallAction = 'accept' | 'decline' | null;
+
+export function resolveVoiceCallStatus(
+  status: VoiceCallStatus,
+  hasIncomingSignal: boolean,
+  pendingAction: PendingCallAction,
+): VoiceCallStatus {
+  if (!hasIncomingSignal || status !== 'idle') return status;
+  if (pendingAction === 'accept') return 'connecting';
+  if (pendingAction === 'decline') return 'idle';
+  return 'incoming';
+}
+
 export type MediaDeviceSettings = {
   audioInputId: string;
   audioOutputId: string;

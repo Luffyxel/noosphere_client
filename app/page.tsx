@@ -63,7 +63,9 @@ import { cn } from '@/lib/utils';
 import {
   DEFAULT_MEDIA_DEVICE_SETTINGS,
   normalizeMediaDeviceSettings,
+  resolveVoiceCallStatus,
   type MediaDeviceSettings,
+  type PendingCallAction,
   type VoiceCallStatus,
 } from '@/lib/voice-call';
 
@@ -72,6 +74,11 @@ type AppNotification = {
   title: string;
   detail: string;
   conversationId?: string;
+};
+
+type PendingIncomingCall = {
+  conversationId: string;
+  callId: string;
 };
 
 const EMPTY_SOCIAL_STATE: SocialState = {
@@ -1122,6 +1129,10 @@ function NoosphereApp({
   const [activeVoiceConversationId, setActiveVoiceConversationId] = useState<
     string | null
   >(null);
+  const [pendingIncomingCall, setPendingIncomingCall] =
+    useState<PendingIncomingCall | null>(null);
+  const [pendingCallAction, setPendingCallAction] =
+    useState<PendingCallAction>(null);
   const [friendProfileId, setFriendProfileId] = useState<string | null>(null);
   const [removingFriend, setRemovingFriend] = useState(false);
   const [addFriendOpen, setAddFriendOpen] = useState(false);
@@ -1159,6 +1170,8 @@ function NoosphereApp({
   const conversationsRef = useRef(conversations);
   const selectedIdRef = useRef(selectedId);
   const activeVoiceConversationIdRef = useRef<string | null>(null);
+  const pendingIncomingCallRef = useRef<PendingIncomingCall | null>(null);
+  const pendingCallActionRef = useRef<PendingCallAction>(null);
   const callProbeTimer = useRef<number | null>(null);
   const previousCallStatus = useRef<VoiceCallStatus>('idle');
 
@@ -1297,6 +1310,44 @@ function NoosphereApp({
     setActiveVoiceConversationId(conversationId);
   }, []);
 
+  const stageIncomingCall = useCallback(
+    (conversationId: string, callId: string) => {
+      const call = { conversationId, callId };
+      pendingIncomingCallRef.current = call;
+      pendingCallActionRef.current = null;
+      setPendingIncomingCall(call);
+      setPendingCallAction(null);
+    },
+    [],
+  );
+
+  const clearPendingIncomingCall = useCallback((callId?: string) => {
+    if (callId && pendingIncomingCallRef.current?.callId !== callId) {
+      return false;
+    }
+    pendingIncomingCallRef.current = null;
+    pendingCallActionRef.current = null;
+    setPendingIncomingCall(null);
+    setPendingCallAction(null);
+    return true;
+  }, []);
+
+  const queuePendingCallAction = useCallback((action: PendingCallAction) => {
+    pendingCallActionRef.current = action;
+    setPendingCallAction(action);
+  }, []);
+
+  const consumePendingCallAction = useCallback(
+    (callId: string) => {
+      if (pendingIncomingCallRef.current?.callId !== callId) return null;
+      const action = pendingCallActionRef.current;
+      clearPendingIncomingCall(callId);
+      if (action === 'decline') setVoiceConversation(null);
+      return action;
+    },
+    [clearPendingIncomingCall, setVoiceConversation],
+  );
+
   const probeIncomingCall = useCallback(
     (conversationId: string, callId: string) => {
       const conversation = conversationsRef.current.find(
@@ -1321,6 +1372,7 @@ function NoosphereApp({
         detail: `@${conversation.peer.login}`,
         conversationId,
       });
+      stageIncomingCall(conversationId, callId);
       setVoiceConversation(conversationId);
       if (callProbeTimer.current !== null) {
         window.clearTimeout(callProbeTimer.current);
@@ -1331,11 +1383,17 @@ function NoosphereApp({
           previousCallStatus.current === 'idle' &&
           activeVoiceConversationIdRef.current === conversationId
         ) {
+          clearPendingIncomingCall(callId);
           setVoiceConversation(null);
         }
-      }, 60_000);
+      }, 50_000);
     },
-    [notifyUser, setVoiceConversation],
+    [
+      clearPendingIncomingCall,
+      notifyUser,
+      setVoiceConversation,
+      stageIncomingCall,
+    ],
   );
 
   useEffect(
@@ -1476,6 +1534,13 @@ function NoosphereApp({
       if (conversationId) void syncMessages(conversationId, true);
     },
     mediaSettings,
+    consumePendingCallAction,
+  );
+
+  const displayedCallStatus = resolveVoiceCallStatus(
+    callStatus,
+    pendingIncomingCall !== null,
+    pendingCallAction,
   );
 
   useEffect(() => {
@@ -1698,6 +1763,7 @@ function NoosphereApp({
 
   function beginCall() {
     if (!selectedConversation) return;
+    clearPendingIncomingCall();
     const callId = startCall('audio');
     if (!callId) return;
     const conversationId = selectedConversation.id;
@@ -1709,13 +1775,27 @@ function NoosphereApp({
   }
 
   function declineCall() {
+    if (pendingIncomingCall && callStatus === 'idle') {
+      queuePendingCallAction('decline');
+      return;
+    }
     declineDirectCall();
+    clearPendingIncomingCall();
     setVoiceConversation(null);
   }
 
   function endCall() {
     endDirectCall();
+    clearPendingIncomingCall();
     setVoiceConversation(null);
+  }
+
+  function acceptIncomingCall() {
+    if (pendingIncomingCall && callStatus === 'idle') {
+      queuePendingCallAction('accept');
+      return;
+    }
+    void acceptCall();
   }
 
   async function submitMessage(event: SubmitEvent<HTMLFormElement>) {
@@ -1932,7 +2012,7 @@ function NoosphereApp({
           </div>
           <div className="flex items-center gap-2">
             {selectedConversation &&
-              callStatus === 'idle' &&
+              displayedCallStatus === 'idle' &&
               !activeVoiceConversationId && (
                 <>
                   <Button
@@ -1951,7 +2031,7 @@ function NoosphereApp({
                   </Button>
                 </>
               )}
-            {selectedConversation && callStatus !== 'idle' && (
+            {selectedConversation && displayedCallStatus !== 'idle' && (
               <Button
                 variant="ghost"
                 size="icon"
@@ -2029,13 +2109,13 @@ function NoosphereApp({
 
         {directConversation && (
           <VoiceCallOverlay
-            status={callStatus}
+            status={displayedCallStatus}
             peer={directConversation.peer}
             localStream={localStream}
             remoteStream={remoteStream}
             microphoneEnabled={microphoneEnabled}
             cameraEnabled={cameraEnabled}
-            onAccept={() => void acceptCall()}
+            onAccept={acceptIncomingCall}
             onDecline={declineCall}
             onEnd={endCall}
             onToggleMicrophone={toggleMicrophone}
@@ -2047,7 +2127,7 @@ function NoosphereApp({
           <p
             className={cn(
               'absolute right-5 top-[70px] z-20 max-w-[320px] rounded-[12px] px-3 py-2 text-[11px] shadow-xl',
-              callStatus === 'idle'
+              displayedCallStatus === 'idle'
                 ? 'border border-[#ff453a]/25 bg-[#321f20] text-[#ff9f9a]'
                 : 'border border-[var(--noosphere-accent)]/25 bg-[#1b2b22] text-[#a8d6bb]',
             )}

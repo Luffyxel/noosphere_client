@@ -8,8 +8,8 @@ compte supplémentaire.
 
 ## Téléchargements
 
-- [Installateur Windows](Noosphere_0.1.6_x64-setup.exe)
-- Linux : [AppImage](https://github.com/Luffyxel/noosphere_client/releases/download/v0.1.6/Noosphere_0.1.6_amd64.AppImage), [DEB](https://github.com/Luffyxel/noosphere_client/releases/download/v0.1.6/Noosphere_0.1.6_amd64.deb), [RPM](https://github.com/Luffyxel/noosphere_client/releases/download/v0.1.6/Noosphere_0.1.6_x86_64.rpm), [sommes de contrôle](https://github.com/Luffyxel/noosphere_client/releases/download/v0.1.6/SHA256SUMS.txt)
+- [Installateur Windows](Noosphere_0.1.7_x64-setup.exe)
+- Linux : [AppImage](https://github.com/Luffyxel/noosphere_client/releases/download/v0.1.7/Noosphere_0.1.7_amd64.AppImage), [DEB](https://github.com/Luffyxel/noosphere_client/releases/download/v0.1.7/Noosphere_0.1.7_amd64.deb), [RPM](https://github.com/Luffyxel/noosphere_client/releases/download/v0.1.7/Noosphere_0.1.7_x86_64.rpm), [sommes de contrôle](https://github.com/Luffyxel/noosphere_client/releases/download/v0.1.7/SHA256SUMS.txt)
 
 Les instructions d’installation et les sommes de contrôle se trouvent dans
 [`release/`](release/README.fr.md).
@@ -63,7 +63,7 @@ en charge directement ; une session Wayland doit disposer de XWayland.
 Sous NixOS, lancez l’AppImage avec `appimage-run` :
 
 ```bash
-nix-shell -p appimage-run --run 'appimage-run ./Noosphere_0.1.6_amd64.AppImage'
+nix-shell -p appimage-run --run 'appimage-run ./Noosphere_0.1.7_amd64.AppImage'
 ```
 
 Avec Hyprland géré par NixOS, activez

@@ -49,8 +49,12 @@ void test('un appel entrant prépare sa connexion sans changer la discussion aff
   assert.match(page, /useDirectPeer\([\s\S]*?directConversation/);
   assert.match(page, /peer=\{directConversation\.peer\}/);
   assert.match(page, /title: 'Appel entrant'/);
+  assert.match(page, /stageIncomingCall\(conversationId, callId\)/);
   assert.match(page, /setVoiceConversation\(conversationId\)/);
   assert.match(page, /setActiveVoiceConversationId\(conversationId\)/);
+  assert.match(page, /status=\{displayedCallStatus\}/);
+  assert.match(page, /queuePendingCallAction\('accept'\)/);
+  assert.match(page, /queuePendingCallAction\('decline'\)/);
 });
 
 void test('un appel attend la connexion directe au lieu d’échouer', async () => {

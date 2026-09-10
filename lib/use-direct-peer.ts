@@ -13,6 +13,7 @@ import {
   createVoiceCallPacket,
   parseVoiceCallPacket,
   type MediaDeviceSettings,
+  type PendingCallAction,
   type VoiceCallMedia,
   type VoiceCallPacketType,
   type VoiceCallStatus,
@@ -82,6 +83,7 @@ export function useDirectPeer(
   conversation: Conversation | null,
   onMessageSignal: () => void,
   mediaSettings: MediaDeviceSettings,
+  onIncomingCall: (callId: string) => PendingCallAction = () => null,
 ) {
   const [status, setStatus] = useState<DirectPeerStatus>('github');
   const [callStatus, setCallStatus] = useState<VoiceCallStatus>('idle');
@@ -103,6 +105,7 @@ export function useDirectPeer(
   const callTimerRef = useRef<number | null>(null);
   const mediaSettingsRef = useRef(mediaSettings);
   const onMessageSignalRef = useRef(onMessageSignal);
+  const onIncomingCallRef = useRef(onIncomingCall);
   const sendVoicePacketRef = useRef<
     (
       type: VoiceCallPacketType,
@@ -176,10 +179,41 @@ export function useDirectPeer(
   }, [onMessageSignal]);
 
   useEffect(() => {
+    onIncomingCallRef.current = onIncomingCall;
+  }, [onIncomingCall]);
+
+  useEffect(() => {
     mediaSettingsRef.current = mediaSettings;
     const audio = remoteAudioRef.current;
     if (audio) void selectAudioOutput(audio, mediaSettings.audioOutputId);
   }, [mediaSettings]);
+
+  const acceptCall = useCallback(async () => {
+    const callId = activeCallIdRef.current;
+    const media = activeCallModeRef.current;
+    if (!callId || callStatusRef.current !== 'incoming') return false;
+    clearCallTimer();
+    updateCallStatus('connecting');
+    setCallError('');
+    try {
+      const warning = await enableLocalMedia(media);
+      if (activeCallIdRef.current !== callId) return false;
+      if (!sendVoicePacketRef.current('call-accept', callId, media)) {
+        throw new Error('Connexion interrompue.');
+      }
+      setCallError(warning);
+      updateCallStatus('connected');
+      return true;
+    } catch (error) {
+      sendVoicePacketRef.current('call-decline', callId, media);
+      resetVoiceCall(
+        error instanceof Error
+          ? error.message
+          : 'Aucun périphérique multimédia n’est accessible.',
+      );
+      return false;
+    }
+  }, [clearCallTimer, enableLocalMedia, resetVoiceCall, updateCallStatus]);
 
   useEffect(() => {
     const desktop = window.noosphereDesktop;
@@ -302,6 +336,16 @@ export function useDirectPeer(
         activeCallModeRef.current = packet.media;
         setCallError('');
         updateCallStatus('incoming');
+        const queuedAction = onIncomingCallRef.current(packet.callId);
+        if (queuedAction === 'accept') {
+          void acceptCall();
+          return true;
+        }
+        if (queuedAction === 'decline') {
+          sendVoicePacket('call-decline', packet.callId, packet.media);
+          resetVoiceCall();
+          return true;
+        }
         clearCallTimer();
         callTimerRef.current = window.setTimeout(() => {
           sendVoicePacket('call-decline', packet.callId, packet.media);
@@ -579,6 +623,7 @@ export function useDirectPeer(
     };
   }, [
     clearCallTimer,
+    acceptCall,
     conversationId,
     enableLocalMedia,
     peerId,
@@ -606,33 +651,6 @@ export function useDirectPeer(
     },
     [clearCallTimer, conversationId, resetVoiceCall, updateCallStatus],
   );
-
-  const acceptCall = useCallback(async () => {
-    const callId = activeCallIdRef.current;
-    const media = activeCallModeRef.current;
-    if (!callId || callStatusRef.current !== 'incoming') return false;
-    clearCallTimer();
-    updateCallStatus('connecting');
-    setCallError('');
-    try {
-      const warning = await enableLocalMedia(media);
-      if (activeCallIdRef.current !== callId) return false;
-      if (!sendVoicePacketRef.current('call-accept', callId, media)) {
-        throw new Error('Connexion interrompue.');
-      }
-      setCallError(warning);
-      updateCallStatus('connected');
-      return true;
-    } catch (error) {
-      sendVoicePacketRef.current('call-decline', callId, media);
-      resetVoiceCall(
-        error instanceof Error
-          ? error.message
-          : 'Aucun périphérique multimédia n’est accessible.',
-      );
-      return false;
-    }
-  }, [clearCallTimer, enableLocalMedia, resetVoiceCall, updateCallStatus]);
 
   const declineCall = useCallback(() => {
     const callId = activeCallIdRef.current;

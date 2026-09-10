@@ -5,6 +5,7 @@ import {
   createVoiceCallPacket,
   normalizeMediaDeviceSettings,
   parseVoiceCallPacket,
+  resolveVoiceCallStatus,
 } from '../lib/voice-call.ts';
 
 const conversationId = 'dm-0123456789abcdef0123456789abcdef';
@@ -89,4 +90,12 @@ void test('la configuration média locale est bornée et normalisée', () => {
       .noiseSuppression,
     'strong',
   );
+});
+
+void test('le signal entrant affiche l’appel avant la connexion directe', () => {
+  assert.equal(resolveVoiceCallStatus('idle', true, null), 'incoming');
+  assert.equal(resolveVoiceCallStatus('idle', true, 'accept'), 'connecting');
+  assert.equal(resolveVoiceCallStatus('idle', true, 'decline'), 'idle');
+  assert.equal(resolveVoiceCallStatus('connected', true, null), 'connected');
+  assert.equal(resolveVoiceCallStatus('idle', false, null), 'idle');
 });
