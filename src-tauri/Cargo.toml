@@ -1,6 +1,6 @@
 [package]
 name = "noosphere-desktop"
-version = "0.1.18"
+version = "0.1.19"
 description = "Noosphere desktop application"
 authors = ["Noosphere contributors"]
 edition = "2024"
@@ -22,11 +22,6 @@ base64 = "=0.23.1"
 fs2 = "=0.4.3"
 futures-lite = "=2.6.1"
 hex = "=0.4.3"
-keyring = { version = "=4.2.0", default-features = false, features = [
-  "v1",
-  "windows-native-keyring-store",
-  "zbus-secret-service-keyring-store",
-] }
 libsignal-protocol = { git = "https://github.com/signalapp/libsignal.git", rev = "eb7864c4d15435ee33681ce828930d9a4296f155" }
 rand = "=0.9.4"
 reqwest = { version = "=0.13.4", default-features = false, features = [
@@ -54,6 +49,10 @@ zeroize = { version = "=1.9.0", features = ["derive"] }
 tempfile = "=3.27.0"
 
 [target.'cfg(windows)'.dependencies]
+keyring = { version = "=4.2.0", default-features = false, features = [
+  "v1",
+  "windows-native-keyring-store",
+] }
 tauri = { version = "=2.11.5", features = ["wry"] }
 webview2-com = "=0.38.2"
 windows-sys = { version = "=0.61.2", features = [
@@ -67,8 +66,20 @@ windows-sys = { version = "=0.61.2", features = [
 ] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
+aes-gcm-siv = "=0.12.1"
+ashpd = { version = "=0.13.13", default-features = false, features = [
+  "open_uri",
+  "tokio",
+] }
+secret-service = { version = "=5.2.0", default-features = false, features = [
+  "crypto-rust",
+] }
 tauri-runtime-cef = { path = "../vendor/tauri-runtime-cef" }
 winit = "=0.31.0-beta.2"
+zbus = { version = "=5.19.0", default-features = false, features = [
+  "async-io",
+  "blocking-api",
+] }
 
 [profile.release]
 codegen-units = 1

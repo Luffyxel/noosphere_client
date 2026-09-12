@@ -3909,8 +3909,10 @@ dependencies = [
 
 [[package]]
 name = "noosphere-desktop"
-version = "0.1.18"
+version = "0.1.19"
 dependencies = [
+ "aes-gcm-siv",
+ "ashpd",
  "async-trait",
  "base64 0.23.1",
  "fs2",
@@ -3922,6 +3924,7 @@ dependencies = [
  "rand 0.9.4",
  "reqwest",
  "secrecy",
+ "secret-service",
  "serde",
  "serde_json",
  "sha2 0.11.0",
@@ -3941,6 +3944,7 @@ dependencies = [
  "webview2-com",
  "windows-sys 0.61.2",
  "winit",
+ "zbus",
  "zeroize",
 ]
 

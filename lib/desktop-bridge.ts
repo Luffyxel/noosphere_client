@@ -89,8 +89,11 @@ export type NoosphereDesktopApi = {
     restore: () => Promise<GitHubViewer | null>;
     validateSession: () => Promise<GitHubViewer | null>;
     connect: (consent: GitHubProvisioningConsent) => Promise<GitHubViewer>;
+    openDevicePage: () => Promise<void>;
     onDeviceCode: (
-      callback: (value: { userCode: string } | null) => void,
+      callback: (
+        value: { userCode: string; verificationUrl: string } | null,
+      ) => void,
     ) => () => void;
     onSetupStatus: (
       callback: (value: GitHubSetupStatus | null) => void,

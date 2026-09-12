@@ -9,13 +9,14 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::{Mutex, RwLock};
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
+#[cfg(windows)]
+use crate::secure_store::{SecretStore, SystemSecretStore};
 use crate::{
     error::{Error, Result},
     github::GitHubClient,
     instance_profile::InstanceProfile,
     models::{GitHubViewer, Message, NoosphereUser},
     secure_blob::SecureBlobStore,
-    secure_store::{SecretStore, SystemSecretStore},
     validation,
 };
 
@@ -165,7 +166,11 @@ impl AppState {
 
     pub async fn restore_session(&self) -> Result<Option<GitHubViewer>> {
         let account = self.profile.secret_account("github-session")?;
-        let Some(secret) = load_system_secret(account).await? else {
+        #[cfg(windows)]
+        let secret = load_system_secret(account).await?;
+        #[cfg(target_os = "linux")]
+        let secret = self.blobs.load(&account)?;
+        let Some(secret) = secret else {
             return Ok(None);
         };
         let stored: StoredSession = serde_json::from_str(secret.expose_secret())
@@ -215,7 +220,10 @@ impl AppState {
             viewer: serde_json::to_string(&session.viewer).map_err(|_| Error::Local)?,
         };
         let serialized = serde_json::to_string(&stored).map_err(|_| Error::Local)?;
-        save_system_secret(account, SecretString::from(serialized)).await
+        #[cfg(windows)]
+        return save_system_secret(account, SecretString::from(serialized)).await;
+        #[cfg(target_os = "linux")]
+        self.blobs.save(&account, SecretString::from(serialized))
     }
 
     pub async fn replace_session(&self, session: Session) -> Result<GitHubViewer> {
@@ -513,7 +521,10 @@ impl AppState {
         self.etags.lock().await.clear();
         self.directories.lock().await.clear();
         let account = self.profile.secret_account("github-session")?;
-        remove_system_secret(account).await
+        #[cfg(windows)]
+        return remove_system_secret(account).await;
+        #[cfg(target_os = "linux")]
+        self.blobs.remove(&account)
     }
 
     pub async fn etag(&self, resource: &str) -> Option<String> {
@@ -562,21 +573,23 @@ impl AppState {
     }
 }
 
+#[cfg(windows)]
 async fn load_system_secret(account: String) -> Result<Option<SecretString>> {
-    // The Linux Secret Service backend exposes a synchronous API backed by
-    // zbus. It creates its own Tokio runtime, so it must never run on Tauri's
+    // The platform keyring API is synchronous and must not block Tauri's
     // async worker threads.
     tokio::task::spawn_blocking(move || SystemSecretStore.load(&account))
         .await
         .map_err(|_| Error::SecureStorageUnavailable)?
 }
 
+#[cfg(windows)]
 async fn save_system_secret(account: String, value: SecretString) -> Result<()> {
     tokio::task::spawn_blocking(move || SystemSecretStore.save(&account, value))
         .await
         .map_err(|_| Error::SecureStorageUnavailable)?
 }
 
+#[cfg(windows)]
 async fn remove_system_secret(account: String) -> Result<()> {
     tokio::task::spawn_blocking(move || SystemSecretStore.remove(&account))
         .await

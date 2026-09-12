@@ -9,6 +9,7 @@ mod remote_access;
 mod remote_directory;
 mod repository_content;
 mod secure_blob;
+#[cfg(windows)]
 mod secure_store;
 mod state;
 mod validation;
@@ -215,6 +216,7 @@ pub fn run() {
             commands::github_restore,
             commands::github_validate_session,
             commands::github_connect,
+            commands::github_open_device_page,
             commands::github_sign_out,
             commands::noosphere_lookup_user,
             commands::noosphere_send_friend_request,

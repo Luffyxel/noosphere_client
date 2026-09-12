@@ -6,6 +6,7 @@ import {
   Check,
   Clipboard,
   Clock3,
+  ExternalLink,
   GitBranch,
   LogOut,
   Mic,
@@ -181,6 +182,16 @@ function LoginScreen({
     await navigator.clipboard.writeText(cleanDeviceCode(deviceCode));
     setCopied(true);
     window.setTimeout(() => setCopied(false), 1_600);
+  }
+
+  async function openGitHubDevicePage() {
+    const desktop = window.noosphereDesktop;
+    if (!desktop) return;
+    try {
+      await desktop.github.openDevicePage();
+    } catch (openError) {
+      setError(readableError(openError));
+    }
   }
 
   async function beginGitHubLogin(event: SubmitEvent<HTMLFormElement>) {
@@ -379,6 +390,15 @@ function LoginScreen({
                   )}
                 </Button>
               </div>
+              <Button
+                type="button"
+                variant="ghost"
+                className="mt-3 h-10 w-full rounded-[12px] border border-white/[.08] bg-[#2c2c2e] text-[12px] text-[#d1d1d6] hover:bg-[#3a3a3c] hover:text-white"
+                onClick={() => void openGitHubDevicePage()}
+              >
+                <ExternalLink className="size-4" />
+                Ouvrir GitHub
+              </Button>
             </div>
           )}
         </div>

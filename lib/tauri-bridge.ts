@@ -88,10 +88,12 @@ export function installTauriBridge(): void {
         invoke<GitHubViewer | null>('github_validate_session'),
       connect: (consent: GitHubProvisioningConsent) =>
         invoke<GitHubViewer>('github_connect', { consent }),
+      openDevicePage: () => invoke<void>('github_open_device_page'),
       onDeviceCode: (callback) =>
-        subscribe<{ userCode: string } | null>('github-device-code', (event) =>
-          callback(event.payload),
-        ),
+        subscribe<{
+          userCode: string;
+          verificationUrl: string;
+        } | null>('github-device-code', (event) => callback(event.payload)),
       onSetupStatus: (callback) =>
         subscribe<GitHubSetupStatus | null>('github-setup-status', (event) =>
           callback(event.payload),

@@ -147,12 +147,13 @@ async fn connect_github(app: &DesktopAppHandle, state: &AppState) -> Result<GitH
     let device = state.github.request_device_code().await?;
     app.emit(
         "github-device-code",
-        serde_json::json!({ "userCode": device.user_code }),
+        serde_json::json!({
+            "userCode": device.user_code,
+            "verificationUrl": device.verification_uri,
+        }),
     )
     .map_err(|_| Error::Local)?;
-    app.opener()
-        .open_url(device.verification_uri.as_str(), None::<&str>)
-        .map_err(|_| Error::Local)?;
+    let _ = open_github_url(app, &device.verification_uri).await;
     let token = wait_for_device_token(&state.github, device).await?;
     let viewer = fetch_viewer(&state.github, &token).await?;
     let selection = select_repository(&state.github, &token, &viewer).await?;
@@ -162,18 +163,14 @@ async fn connect_github(app: &DesktopAppHandle, state: &AppState) -> Result<GitH
         Some(repository) => repository,
         None => {
             let url = crate::github::repository_creation_url(&viewer.login, &selection.0)?;
-            app.opener()
-                .open_url(url.as_str(), None::<&str>)
-                .map_err(|_| Error::Local)?;
+            open_github_url(app, &url).await?;
             wait_for_repository(&state.github, &token, &viewer, &selection.0).await?
         }
     };
     if !installation_is_valid(&state.github, &token, &viewer, &repository).await? {
         emit_setup_status(app, "installation", Some(&repository.name))?;
         let url = crate::github::installation_url(viewer.id, repository.id)?;
-        app.opener()
-            .open_url(url.as_str(), None::<&str>)
-            .map_err(|_| Error::Local)?;
+        open_github_url(app, &url).await?;
         wait_for_installation(&state.github, &token, &viewer, &repository).await?;
     }
     emit_setup_status(app, "initialization", Some(&repository.name))?;
@@ -191,6 +188,70 @@ async fn connect_github(app: &DesktopAppHandle, state: &AppState) -> Result<GitH
         },
     };
     state.install_session(token, viewer).await
+}
+
+#[tauri::command]
+pub async fn github_open_device_page(app: DesktopAppHandle) -> CommandResult<()> {
+    let url = url::Url::parse("https://github.com/login/device")
+        .map_err(|_| command_error(Error::Local))?;
+    open_github_url(&app, &url).await.map_err(command_error)
+}
+
+async fn open_github_url(app: &DesktopAppHandle, url: &url::Url) -> Result<()> {
+    if url.scheme() != "https"
+        || url.host_str() != Some("github.com")
+        || !url.username().is_empty()
+        || url.password().is_some()
+    {
+        return Err(Error::InvalidData);
+    }
+    #[cfg(target_os = "linux")]
+    if linux_open_url(url).await {
+        return Ok(());
+    }
+    app.opener()
+        .open_url(url.as_str(), None::<&str>)
+        .map_err(|_| Error::Local)
+}
+
+#[cfg(target_os = "linux")]
+async fn linux_open_url(url: &url::Url) -> bool {
+    use ashpd::desktop::open_uri::OpenFileRequest;
+
+    if let Ok(uri) = ashpd::Uri::parse(url.as_str())
+        && let Ok(request) = OpenFileRequest::default().send_uri(&uri).await
+        && request.response().is_ok()
+    {
+        return true;
+    }
+    let candidates: [(&str, &[&str]); 3] = [
+        ("xdg-open", &[]),
+        ("gio", &["open"]),
+        ("sensible-browser", &[]),
+    ];
+    for (program, arguments) in candidates {
+        let Ok(mut child) = std::process::Command::new(program)
+            .args(arguments)
+            .arg(url.as_str())
+            .spawn()
+        else {
+            continue;
+        };
+        for _ in 0..10 {
+            match child.try_wait() {
+                Ok(Some(status)) if status.success() => return true,
+                Ok(Some(_)) | Err(_) => break,
+                Ok(None) => sleep(Duration::from_millis(100)).await,
+            }
+        }
+        if child.try_wait().is_ok_and(|status| status.is_none()) {
+            let _ = std::thread::spawn(move || {
+                let _ = child.wait();
+            });
+            return true;
+        }
+    }
+    false
 }
 
 fn emit_setup_status(

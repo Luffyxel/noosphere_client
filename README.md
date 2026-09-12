@@ -105,6 +105,11 @@ For Hyprland managed by NixOS, enable PipeWire, WirePlumber,
 provided in `packaging/nixos/remote-test.nix`. See the
 [Linux package notes](release/linux/README.md) for installation commands.
 
+GitHub sign-in opens through the XDG OpenURI portal, with standard Linux
+launchers as fallbacks and an in-app retry button. Linux credentials are kept
+in encrypted user-private files, so Noosphere does not create or unlock a
+desktop keyring at startup.
+
 ## Building from source
 
 Required tools:
