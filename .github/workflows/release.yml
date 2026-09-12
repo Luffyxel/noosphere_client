@@ -55,7 +55,7 @@ jobs:
         run: npm ci
       - name: Verify tag
         shell: bash
-        run: test "${GITHUB_REF_NAME#v}" = "$(node -p "require('./package.json').version")"
+        run: node scripts/check-release-version.mjs "$GITHUB_REF_NAME"
       - name: Pin AppImage runtime
         if: runner.os == 'Linux'
         shell: bash
@@ -138,6 +138,7 @@ jobs:
         shell: bash
         run: |
           node scripts/generate-latest-json.mjs
+          node scripts/create-release-aliases.mjs
           mapfile -d '' assets < <(find release-assets -type f -print0)
           for asset in "${assets[@]}"; do
             printf '%s  %s\n' "$(sha256sum "$asset" | cut -d ' ' -f 1)" "$(basename "$asset")"

@@ -8,8 +8,8 @@ compte supplémentaire.
 
 ## Téléchargements
 
-- [Windows portable](Noosphere_0.1.17_portable_x64.exe) · [installateur](Noosphere_0.1.17_x64-setup.exe)
-- Linux : [AppImage](https://github.com/Luffyxel/noosphere_client/releases/download/v0.1.17/Noosphere_0.1.17_amd64.AppImage), [DEB](https://github.com/Luffyxel/noosphere_client/releases/download/v0.1.17/Noosphere_0.1.17_amd64.deb), [RPM](https://github.com/Luffyxel/noosphere_client/releases/download/v0.1.17/Noosphere_0.1.17_x86_64.rpm), [sommes de contrôle](https://github.com/Luffyxel/noosphere_client/releases/download/v0.1.17/SHA256SUMS.txt)
+- [Installateur Windows](https://github.com/Luffyxel/noosphere_client/releases/latest/download/Noosphere-Windows-Setup-x64.exe) · [Windows portable](https://github.com/Luffyxel/noosphere_client/releases/latest/download/Noosphere-Windows-Portable-x64.exe)
+- Linux : [AppImage](https://github.com/Luffyxel/noosphere_client/releases/latest/download/Noosphere-Linux-AppImage-x64.AppImage), [DEB](https://github.com/Luffyxel/noosphere_client/releases/latest/download/Noosphere-Linux-DEB-x64.deb), [RPM](https://github.com/Luffyxel/noosphere_client/releases/latest/download/Noosphere-Linux-RPM-x64.rpm), [sommes de contrôle](https://github.com/Luffyxel/noosphere_client/releases/latest/download/SHA256SUMS.txt)
 
 Les instructions d’installation et les sommes de contrôle se trouvent dans
 [`release/`](release/README.fr.md).
@@ -76,7 +76,7 @@ Noosphere ne demande aucune redirection de port sur la box. Windows demande une 
 l’autorisation administrateur d’autoriser l’UDP entrant pour l’exécutable exact ;
 la fenêtre UAC ouvre Noosphere directement, sans fenêtre PowerShell. La version
 portable redemande cette autorisation si elle est déplacée ou remplacée.
-Cette version de validation 0.1.17 n’est pas encore la V0.2.0 multiplateforme.
+Cette version de validation n’est pas encore la V0.2.0 multiplateforme.
 La [documentation du moteur](docs/remote-desktop.md) précise l’état de
 l’implémentation et les benchmarks reproductibles.
 
@@ -103,7 +103,7 @@ fréquence choisie sans bloquer les images suivantes.
 Sous NixOS, lancez l’AppImage avec `appimage-run` :
 
 ```bash
-nix-shell -p appimage-run --run 'appimage-run ./Noosphere_0.1.17_amd64.AppImage'
+nix-shell -p appimage-run --run 'appimage-run ./Noosphere-Linux-AppImage-x64.AppImage'
 ```
 
 Avec Hyprland géré par NixOS, activez PipeWire, WirePlumber,

@@ -11,14 +11,14 @@ when the compositor cannot host CEF directly.
 Use the AppImage on distributions without a DEB or RPM package:
 
 ```bash
-chmod +x Noosphere_0.1.17_amd64.AppImage
-./Noosphere_0.1.17_amd64.AppImage
+chmod +x Noosphere-Linux-AppImage-x64.AppImage
+./Noosphere-Linux-AppImage-x64.AppImage
 ```
 
 On NixOS:
 
 ```bash
-nix-shell -p appimage-run --run 'appimage-run ./Noosphere_0.1.17_amd64.AppImage'
+nix-shell -p appimage-run --run 'appimage-run ./Noosphere-Linux-AppImage-x64.AppImage'
 ```
 
 The AppImage includes the GStreamer, PipeWire and SPA modules required by the
@@ -31,20 +31,20 @@ Install FUSE 2, then run the AppImage:
 
 ```bash
 sudo pacman -S --needed fuse2
-chmod +x Noosphere_0.1.17_amd64.AppImage
-./Noosphere_0.1.17_amd64.AppImage
+chmod +x Noosphere-Linux-AppImage-x64.AppImage
+./Noosphere-Linux-AppImage-x64.AppImage
 ```
 
 ## Debian and Ubuntu
 
 ```bash
-sudo apt install ./Noosphere_0.1.17_amd64.deb
+sudo apt install ./Noosphere-Linux-DEB-x64.deb
 ```
 
 ## Fedora, Red Hat Enterprise Linux, and Rocky Linux
 
 ```bash
-sudo dnf install ./Noosphere_0.1.17_x86_64.rpm
+sudo dnf install ./Noosphere-Linux-RPM-x64.rpm
 ```
 
 The RPM installs and resolves its runtime libraries on Rocky Linux 9 and 10.
@@ -52,7 +52,7 @@ The RPM installs and resolves its runtime libraries on Rocky Linux 9 and 10.
 ## openSUSE
 
 ```bash
-sudo zypper install ./Noosphere_0.1.17_x86_64.rpm
+sudo zypper install ./Noosphere-Linux-RPM-x64.rpm
 ```
 
 ## Wayland and Linux desktops

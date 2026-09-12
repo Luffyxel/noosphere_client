@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { access, readFile } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
 const root = new URL('../', import.meta.url);
@@ -15,12 +15,16 @@ void test('la version Windows est une application graphique sans console', async
   );
 });
 
-void test('l’installeur Windows courant est disponible à la racine', async () => {
-  const packageMetadata = JSON.parse(
-    await readFile(new URL('package.json', root), 'utf8'),
+void test('le workflow publie le setup Windows courant avec un lien stable', async () => {
+  const release = await readFile(
+    new URL('.github/workflows/release.yml', root),
+    'utf8',
   );
-  await access(
-    new URL(`Noosphere_${packageMetadata.version}_x64-setup.exe`, root),
+  const readme = await readFile(new URL('README.fr.md', root), 'utf8');
+  assert.match(release, /create-release-aliases\.mjs/);
+  assert.match(
+    readme,
+    /releases\/latest\/download\/Noosphere-Windows-Setup-x64\.exe/,
   );
 });
 
@@ -63,20 +67,18 @@ void test('l’AppImage embarque SQLite pour le stockage NSS de Chromium', async
   assert.match(finalizer, /realpath\(sqliteLibrary\)/);
 });
 
-void test('les téléchargements Linux pointent vers les fichiers de la version', async () => {
-  const packageMetadata = JSON.parse(
-    await readFile(new URL('package.json', root), 'utf8'),
-  );
+void test('les téléchargements pointent vers les alias de la dernière version', async () => {
   const readmes = await Promise.all(
     ['README.md', 'README.fr.md'].map((path) =>
       readFile(new URL(path, root), 'utf8'),
     ),
   );
-  const version = packageMetadata.version;
   const assets = [
-    `Noosphere_${version}_amd64.AppImage`,
-    `Noosphere_${version}_amd64.deb`,
-    `Noosphere_${version}_x86_64.rpm`,
+    'Noosphere-Windows-Setup-x64.exe',
+    'Noosphere-Windows-Portable-x64.exe',
+    'Noosphere-Linux-AppImage-x64.AppImage',
+    'Noosphere-Linux-DEB-x64.deb',
+    'Noosphere-Linux-RPM-x64.rpm',
     'SHA256SUMS.txt',
   ];
 
@@ -84,7 +86,7 @@ void test('les téléchargements Linux pointent vers les fichiers de la version'
     for (const asset of assets) {
       assert.ok(
         readme.includes(
-          `https://github.com/Luffyxel/noosphere_client/releases/download/v${version}/${asset}`,
+          `https://github.com/Luffyxel/noosphere_client/releases/latest/download/${asset}`,
         ),
       );
     }

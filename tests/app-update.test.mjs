@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
 import { updatePercentage } from '../lib/app-update.ts';
+import { checkReleaseVersion } from '../scripts/check-release-version.mjs';
+import { createReleaseAliases } from '../scripts/create-release-aliases.mjs';
 import { generateLatestJson } from '../scripts/generate-latest-json.mjs';
 
 test('computes bounded updater progress', () => {
@@ -56,6 +58,57 @@ test('creates a signed manifest for every supported desktop package', async () =
       assert.match(platform.signature, /-sig$/);
       assert.ok(target.includes('x86_64'));
     }
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('keeps every application version synchronized', async () => {
+  assert.match(await checkReleaseVersion(), /^\d+\.\d+\.\d+/);
+  await assert.rejects(
+    checkReleaseVersion('v999.999.999'),
+    /must be 999\.999\.999/,
+  );
+});
+
+test('creates stable aliases for the latest release links', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'noosphere-aliases-'));
+  const windowsDirectory = path.join(directory, 'noosphere-windows');
+  const linuxDirectory = path.join(directory, 'noosphere-linux');
+  try {
+    await Promise.all([
+      mkdir(windowsDirectory, { recursive: true }),
+      mkdir(linuxDirectory, { recursive: true }),
+    ]);
+    const assets = [
+      [windowsDirectory, 'Noosphere_0.1.17_x64-setup.exe'],
+      [windowsDirectory, 'Noosphere_0.1.17_portable_x64.exe'],
+      [linuxDirectory, 'Noosphere_0.1.17_amd64.AppImage'],
+      [linuxDirectory, 'Noosphere_0.1.17_amd64.deb'],
+      [linuxDirectory, 'Noosphere_0.1.17_x86_64.rpm'],
+    ];
+    await Promise.all(
+      assets.map(([assetDirectory, name]) =>
+        writeFile(path.join(assetDirectory, name), name),
+      ),
+    );
+
+    const created = await createReleaseAliases(directory);
+    assert.equal(created.length, 5);
+    assert.equal(
+      await readFile(
+        path.join(directory, 'Noosphere-Windows-Setup-x64.exe'),
+        'utf8',
+      ),
+      'Noosphere_0.1.17_x64-setup.exe',
+    );
+    assert.equal(
+      await readFile(
+        path.join(directory, 'Noosphere-Linux-AppImage-x64.AppImage'),
+        'utf8',
+      ),
+      'Noosphere_0.1.17_amd64.AppImage',
+    );
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

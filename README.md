@@ -8,8 +8,8 @@ account.
 
 ## Downloads
 
-- [Windows portable](Noosphere_0.1.17_portable_x64.exe) · [installer](Noosphere_0.1.17_x64-setup.exe)
-- Linux: [AppImage](https://github.com/Luffyxel/noosphere_client/releases/download/v0.1.17/Noosphere_0.1.17_amd64.AppImage), [DEB](https://github.com/Luffyxel/noosphere_client/releases/download/v0.1.17/Noosphere_0.1.17_amd64.deb), [RPM](https://github.com/Luffyxel/noosphere_client/releases/download/v0.1.17/Noosphere_0.1.17_x86_64.rpm), [checksums](https://github.com/Luffyxel/noosphere_client/releases/download/v0.1.17/SHA256SUMS.txt)
+- [Windows installer](https://github.com/Luffyxel/noosphere_client/releases/latest/download/Noosphere-Windows-Setup-x64.exe) · [Windows portable](https://github.com/Luffyxel/noosphere_client/releases/latest/download/Noosphere-Windows-Portable-x64.exe)
+- Linux: [AppImage](https://github.com/Luffyxel/noosphere_client/releases/latest/download/Noosphere-Linux-AppImage-x64.AppImage), [DEB](https://github.com/Luffyxel/noosphere_client/releases/latest/download/Noosphere-Linux-DEB-x64.deb), [RPM](https://github.com/Luffyxel/noosphere_client/releases/latest/download/Noosphere-Linux-RPM-x64.rpm), [checksums](https://github.com/Luffyxel/noosphere_client/releases/latest/download/SHA256SUMS.txt)
 
 Installation notes and checksums are kept in [`release/`](release/README.md).
 
@@ -70,8 +70,8 @@ STUN advertises a public candidate when the router permits it; without a TURN se
 some CGNAT paths remain unreachable. No router port forwarding is required. Windows
 asks once for administrator approval to allow inbound UDP for the exact executable;
 the UAC prompt opens Noosphere directly without a PowerShell window. Moving or
-replacing the portable build triggers that approval again. Version 0.1.17 is a
-validation build rather than the cross-platform V0.2.0. See the [engine documentation](docs/remote-desktop.md)
+replacing the portable build triggers that approval again. This is a validation
+build rather than the cross-platform V0.2.0. See the [engine documentation](docs/remote-desktop.md)
 for implementation status and reproducible benchmarks.
 
 ## Linux
@@ -97,7 +97,7 @@ without blocking newer frames.
 On NixOS, run the AppImage through `appimage-run`:
 
 ```bash
-nix-shell -p appimage-run --run 'appimage-run ./Noosphere_0.1.17_amd64.AppImage'
+nix-shell -p appimage-run --run 'appimage-run ./Noosphere-Linux-AppImage-x64.AppImage'
 ```
 
 For Hyprland managed by NixOS, enable PipeWire, WirePlumber,

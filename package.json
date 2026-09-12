@@ -21,6 +21,8 @@
     "bundle:linux:rpm": "node scripts/native-toolchain.mjs tauri bundle --bundles rpm && node scripts/build-linux-rpm.mjs",
     "build:tauri-ui": "vite build --config vite.tauri.config.ts",
     "generate:latest-json": "node scripts/generate-latest-json.mjs",
+    "check:release-version": "node scripts/check-release-version.mjs",
+    "create:release-aliases": "node scripts/create-release-aliases.mjs",
     "sign:updates:linux": "node scripts/sign-update-artifacts.mjs",
     "smoke:tauri": "node scripts/smoke-tauri.mjs",
     "smoke:remote": "node scripts/smoke-remote.mjs",
