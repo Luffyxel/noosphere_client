@@ -36,7 +36,7 @@ jobs:
       - name: Install Linux prerequisites
         if: runner.os == 'Linux'
         run: >-
-          sudo apt-get update && sudo apt-get install -y
+          sudo apt-get -o Acquire::Retries=5 update && sudo apt-get -o Acquire::Retries=5 install --no-install-recommends -y
           libwebkit2gtk-4.1-dev libayatana-appindicator3-dev
           librsvg2-dev libwayland-dev libxkbcommon-dev libxkbcommon-x11-0
           libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev

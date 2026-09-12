@@ -12,7 +12,7 @@ function cargoPackageVersion(source) {
 
 function cargoLockPackageVersion(source) {
   const packageBlock = source.match(
-    /\[\[package\]\]\nname = "noosphere-desktop"\nversion = "([^"]+)"/,
+    /\[\[package\]\]\r?\nname = "noosphere-desktop"\r?\nversion = "([^"]+)"/,
   );
   if (!packageBlock)
     throw new Error('Unable to read noosphere-desktop version from Cargo.lock');
