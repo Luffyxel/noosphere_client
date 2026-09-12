@@ -9,7 +9,7 @@ import { useEffect, useState } from 'react';
 import { updatePercentage } from '@/lib/app-update';
 
 type Notice = {
-  phase: 'downloading' | 'installing' | 'error';
+  phase: 'downloading' | 'installing' | 'installed' | 'error';
   version: string;
   percentage: number | null;
 };
@@ -30,6 +30,7 @@ export function AppUpdater() {
     let foundUpdate = false;
     const timer = window.setTimeout(() => {
       void (async () => {
+        let installed = false;
         try {
           const target = await invoke<string | null>('system_update_target');
           if (!active || !target) return;
@@ -60,17 +61,21 @@ export function AppUpdater() {
               }
               setNotice({ phase: 'installing', version, percentage: 100 });
             },
-            { timeout: 5 * 60_000, restartAfterInstall: true },
+            { timeout: 30 * 60_000, restartAfterInstall: true },
           );
+          installed = true;
           if (active) {
             setNotice({ phase: 'installing', version, percentage: 100 });
-            await relaunch();
+            const handled = await invoke<boolean>(
+              'system_relaunch_after_update',
+            );
+            if (!handled) await relaunch();
           }
         } catch (error) {
           console.error('Noosphere update failed', error);
           if (active && foundUpdate) {
             setNotice((current) => ({
-              phase: 'error',
+              phase: installed ? 'installed' : 'error',
               version: current?.version ?? '',
               percentage: null,
             }));
@@ -88,7 +93,7 @@ export function AppUpdater() {
 
   if (!notice) return null;
 
-  const busy = notice.phase !== 'error';
+  const busy = notice.phase === 'downloading' || notice.phase === 'installing';
   return (
     <aside
       aria-live="polite"
@@ -106,7 +111,9 @@ export function AppUpdater() {
           <p className="truncate text-[13px] font-medium">
             {notice.phase === 'error'
               ? 'Mise à jour interrompue'
-              : `Mise à jour ${notice.version}`}
+              : notice.phase === 'installed'
+                ? 'Mise à jour installée'
+                : `Mise à jour ${notice.version}`}
           </p>
           <p className="mt-0.5 text-[11px] text-[#a1a1a6]">
             {notice.phase === 'downloading'
@@ -115,7 +122,9 @@ export function AppUpdater() {
                 : `Téléchargement · ${notice.percentage}%`
               : notice.phase === 'installing'
                 ? 'Installation…'
-                : 'Réessayer au prochain lancement'}
+                : notice.phase === 'installed'
+                  ? 'Relancez Noosphere'
+                  : 'Réessayer au prochain lancement'}
           </p>
         </div>
         {notice.phase === 'error' && (
@@ -131,7 +140,7 @@ export function AppUpdater() {
             <RefreshCw className="size-3.5" />
           </button>
         )}
-        {notice.phase === 'error' && (
+        {(notice.phase === 'error' || notice.phase === 'installed') && (
           <button
             type="button"
             aria-label="Fermer"

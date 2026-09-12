@@ -31,6 +31,10 @@ bouton **Ouvrir GitHub**. Les identifiants sont conservés dans des fichiers
 chiffrés réservés à l’utilisateur Unix courant, sans créer de mot de passe de
 trousseau au démarrage.
 
+Sous NixOS, l’actualisation relance automatiquement l’AppImage avec
+`appimage-run`. Le fichier AppImage d’origine doit rester modifiable par
+l’utilisateur courant.
+
 ## Arch Linux
 
 Installez FUSE 2, puis lancez l’AppImage :

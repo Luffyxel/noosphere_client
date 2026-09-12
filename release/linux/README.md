@@ -30,6 +30,9 @@ GitHub authentication uses the XDG OpenURI portal first, then `xdg-open`,
 GitHub** button. Credentials are stored in encrypted files restricted to the
 current Unix user, without creating a desktop keyring password.
 
+On NixOS, updates automatically relaunch the AppImage through `appimage-run`.
+The original AppImage file must remain writable by the current user.
+
 ## Arch Linux
 
 Install FUSE 2, then run the AppImage:
