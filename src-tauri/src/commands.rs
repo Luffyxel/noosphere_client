@@ -333,7 +333,7 @@ fn sanitize_linux_external_command_for_appimage(
         let Some(value) = std::env::var_os(name) else {
             continue;
         };
-        let filtered = filter_appimage_paths(&value, &app_dir);
+        let filtered = filter_appimage_paths(&value, app_dir);
         if filtered.is_empty() {
             command.env_remove(name);
         } else {
