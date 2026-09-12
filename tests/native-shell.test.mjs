@@ -67,6 +67,18 @@ void test('l’AppImage embarque SQLite pour le stockage NSS de Chromium', async
   assert.match(finalizer, /realpath\(sqliteLibrary\)/);
 });
 
+void test('les jobs Linux utilisent des dépendances reproductibles', async () => {
+  const [installer, ci, release] = await Promise.all([
+    readFile(new URL('scripts/install-linux-build-deps.sh', root), 'utf8'),
+    readFile(new URL('.github/workflows/ci.yml', root), 'utf8'),
+    readFile(new URL('.github/workflows/release.yml', root), 'utf8'),
+  ]);
+  assert.match(installer, /archive\.ubuntu\.com/);
+  assert.match(installer, /libunwind-dev/);
+  assert.match(ci, /bash scripts\/install-linux-build-deps\.sh/);
+  assert.match(release, /bash scripts\/install-linux-build-deps\.sh/);
+});
+
 void test('les téléchargements pointent vers les alias de la dernière version', async () => {
   const readmes = await Promise.all(
     ['README.md', 'README.fr.md'].map((path) =>
