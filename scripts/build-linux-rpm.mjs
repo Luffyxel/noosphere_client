@@ -109,6 +109,7 @@ patchelf --set-rpath /usr/lib/Noosphere %{buildroot}/usr/bin/noosphere-desktop
 install -d %{buildroot}/usr/lib/Noosphere
 ${resourceInstallLines}
 cp -a %{_noosphere_release}/locales %{buildroot}/usr/lib/Noosphere/locales
+printf 'rpm\n' > %{buildroot}/usr/lib/Noosphere/noosphere-package-kind
 install -Dm0644 %{_noosphere_desktop} %{buildroot}/usr/share/applications/noosphere.desktop
 install -Dm0644 %{_noosphere_icon} %{buildroot}/usr/share/icons/hicolor/128x128/apps/noosphere.png
 

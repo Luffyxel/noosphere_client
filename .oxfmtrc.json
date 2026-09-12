@@ -5,6 +5,8 @@
   "sortPackageJson": false,
   "ignorePatterns": [
     "package-lock.json",
+    "remote-test-results/**",
+    "src-tauri/remote/target/**",
     "src-tauri/gen/**",
     "vendor/**",
     "pnpm-lock.yaml",

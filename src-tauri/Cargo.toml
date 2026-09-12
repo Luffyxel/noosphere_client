@@ -1,6 +1,6 @@
 [package]
 name = "noosphere-desktop"
-version = "0.1.7"
+version = "0.1.17"
 description = "Noosphere desktop application"
 authors = ["Noosphere contributors"]
 edition = "2024"
@@ -16,9 +16,11 @@ crate-type = ["lib"]
 tauri-build = { version = "=2.6.3", features = [] }
 
 [dependencies]
+noosphere-remote = { path = "remote" }
 async-trait = "=0.1.89"
 base64 = "=0.23.1"
 fs2 = "=0.4.3"
+futures-lite = "=2.6.1"
 hex = "=0.4.3"
 keyring = { version = "=4.2.0", default-features = false, features = [
   "v1",
@@ -39,6 +41,8 @@ sha2 = "=0.11.0"
 tauri = { version = "=2.11.5", default-features = false, features = [] }
 tauri-plugin-notification = "=2.4.0"
 tauri-plugin-opener = "=2.5.5"
+tauri-plugin-process = "=2.3.1"
+tauri-plugin-updater = "=2.11.0"
 thiserror = "=2.0.20"
 time = { version = "=0.3.55", features = ["formatting", "parsing"] }
 tokio = { version = "=1.53.1", features = ["macros", "rt", "sync", "time"] }
@@ -56,6 +60,10 @@ windows-sys = { version = "=0.61.2", features = [
   "Win32_Foundation",
   "Win32_Security_Cryptography",
   "Win32_Storage_FileSystem",
+  "Win32_System_Registry",
+  "Win32_System_SystemInformation",
+  "Win32_System_Threading",
+  "Win32_UI_Shell",
 ] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
@@ -71,3 +79,7 @@ strip = true
 
 [patch.crates-io]
 cef-dll-sys = { path = "../vendor/cef-dll-sys" }
+
+[workspace]
+members = ["remote"]
+resolver = "3"

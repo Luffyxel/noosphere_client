@@ -3,8 +3,8 @@
 // SPDX-License-Identifier: MIT
 
 use std::sync::{
-  Arc,
-  atomic::{AtomicBool, Ordering},
+    Arc,
+    atomic::{AtomicBool, Ordering},
 };
 
 use cef::*;

@@ -1,0 +1,52 @@
+FROM rust:1.98-bookworm
+
+ARG DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update \
+    && apt-get install --no-install-recommends -y \
+      ca-certificates \
+      g++ \
+      gstreamer1.0-libav \
+      gstreamer1.0-plugins-bad \
+      gstreamer1.0-plugins-base \
+      gstreamer1.0-plugins-good \
+      gstreamer1.0-pipewire \
+      gstreamer1.0-tools \
+      gstreamer1.0-vaapi \
+      gstreamer1.0-x \
+      libgstreamer-plugins-base1.0-dev \
+      libgstreamer1.0-dev \
+      libssl-dev \
+      libwayland-dev \
+      libxkbcommon-dev \
+      pkg-config \
+      protobuf-compiler \
+      xvfb \
+    && rm -rf /var/lib/apt/lists/* \
+    && rustup component add clippy
+
+WORKDIR /workspace
+COPY src-tauri ./src-tauri
+COPY vendor ./vendor
+COPY scripts/test-linux-remote.sh ./scripts/test-linux-remote.sh
+COPY scripts/bundle-linux-remote-probe.sh ./scripts/bundle-linux-remote-probe.sh
+COPY scripts/linux-probe-scanner-launcher.c ./scripts/linux-probe-scanner-launcher.c
+
+ENV NOOSPHERE_REMOTE_TEST_SOURCE=1
+ENV NOOSPHERE_REMOTE_TEST_SINK=1
+
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/usr/local/cargo/git \
+    --mount=type=cache,target=/workspace/src-tauri/target \
+    bash scripts/test-linux-remote.sh
+
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/usr/local/cargo/git \
+    --mount=type=cache,target=/workspace/src-tauri/target \
+    cargo build --manifest-path src-tauri/Cargo.toml -p noosphere-remote \
+      --release --bin noosphere-remote-bench \
+    && bash scripts/bundle-linux-remote-probe.sh \
+      /workspace/src-tauri/target/release/noosphere-remote-bench \
+      /opt/noosphere-remote-probe
+
+CMD ["bash", "-lc", "echo 'Noosphere Remote Linux tests passed during image build.'"]

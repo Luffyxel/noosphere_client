@@ -23,11 +23,18 @@ RUN apt-get update \
       gstreamer1.0-plugins-base \
       gstreamer1.0-plugins-good \
       gstreamer1.0-nice \
+      gstreamer1.0-pipewire \
+      gstreamer1.0-vaapi \
+      gstreamer1.0-x \
       libayatana-appindicator3-dev \
       libfuse2 \
       librsvg2-dev \
+      libgstreamer1.0-dev \
+      libgstreamer-plugins-base1.0-dev \
       libssl-dev \
       libwebkit2gtk-4.1-dev \
+      libwayland-dev \
+      libxkbcommon-dev \
       libxkbcommon-x11-0 \
       libxdo-dev \
       patchelf \
@@ -92,7 +99,7 @@ RUN --mount=type=cache,target=/root/.cache/tauri \
 RUN --mount=type=cache,target=/root/.cache/tauri npm run bundle:linux
 
 FROM package AS test
-RUN dbus-run-session -- xvfb-run -a npm run smoke:tauri
+RUN RUST_BACKTRACE=full dbus-run-session -- xvfb-run -a npm run smoke:tauri
 
 FROM package AS export
 CMD ["node", "scripts/export-linux-artifacts.mjs", "/output"]

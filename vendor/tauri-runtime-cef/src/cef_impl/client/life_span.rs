@@ -15,31 +15,31 @@ use crate::runtime::{Message, RuntimeContext};
 // "[85296:47750637:0127/131203.017395:ERROR:content/browser/network_service_instance_impl.cc:610] Network service crashed or was terminated, restarting service."
 // We check the app URL for a while until it actually loads the initial URL.
 fn check_and_reload_if_blank(browser: cef::Browser, initial_url: String) {
-  if initial_url == "about:blank" {
-    return;
-  }
-
-  std::thread::spawn(move || {
-    std::thread::sleep(std::time::Duration::from_secs(1));
-
-    let start_time = std::time::Instant::now();
-    let timeout = std::time::Duration::from_secs(5);
-    let check_interval = std::time::Duration::from_millis(100);
-
-    while start_time.elapsed() < timeout {
-      if let Some(frame) = browser.main_frame() {
-        let url = frame.url();
-        let current_url = cef::CefString::from(&url).to_string();
-        if current_url.is_empty() || current_url == "about:blank" {
-          frame.load_url(Some(&cef::CefString::from(initial_url.as_str())));
-          // Continue checking in case it loads about:blank again.
-        } else {
-          return;
-        }
-      }
-      std::thread::sleep(check_interval);
+    if initial_url == "about:blank" {
+        return;
     }
-  });
+
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_secs(1));
+
+        let start_time = std::time::Instant::now();
+        let timeout = std::time::Duration::from_secs(5);
+        let check_interval = std::time::Duration::from_millis(100);
+
+        while start_time.elapsed() < timeout {
+            if let Some(frame) = browser.main_frame() {
+                let url = frame.url();
+                let current_url = cef::CefString::from(&url).to_string();
+                if current_url.is_empty() || current_url == "about:blank" {
+                    frame.load_url(Some(&cef::CefString::from(initial_url.as_str())));
+                    // Continue checking in case it loads about:blank again.
+                } else {
+                    return;
+                }
+            }
+            std::thread::sleep(check_interval);
+        }
+    });
 }
 
 wrap_life_span_handler! {

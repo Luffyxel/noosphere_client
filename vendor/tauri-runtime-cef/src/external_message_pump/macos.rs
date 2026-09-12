@@ -19,8 +19,8 @@ use std::sync::Weak;
 use objc2::{AnyThread, DefinedClass, define_class, msg_send, rc::Retained, sel};
 use objc2_app_kit::NSEventTrackingRunLoopMode;
 use objc2_foundation::{
-  NSNumber, NSObject, NSObjectNSThreadPerformAdditions, NSObjectProtocol, NSRunLoop,
-  NSRunLoopCommonModes, NSThread, NSTimer,
+    NSNumber, NSObject, NSObjectNSThreadPerformAdditions, NSObjectProtocol, NSRunLoop,
+    NSRunLoopCommonModes, NSThread, NSTimer,
 };
 
 use super::PumpState;
@@ -52,16 +52,16 @@ define_class! {
 }
 
 impl EventHandler {
-  fn new(state: Weak<PumpState>) -> Retained<Self> {
-    let this = Self::alloc().set_ivars(state);
-    unsafe { msg_send![super(this), init] }
-  }
+    fn new(state: Weak<PumpState>) -> Retained<Self> {
+        let this = Self::alloc().set_ivars(state);
+        unsafe { msg_send![super(this), init] }
+    }
 }
 
 pub(super) struct PlatformPump {
-  owner_thread: Retained<NSThread>,
-  event_handler: Retained<EventHandler>,
-  timer: Option<Retained<NSTimer>>,
+    owner_thread: Retained<NSThread>,
+    event_handler: Retained<EventHandler>,
+    timer: Option<Retained<NSTimer>>,
 }
 
 // SAFETY: the owner thread and timer are only touched on the AppKit thread that
@@ -69,59 +69,58 @@ pub(super) struct PlatformPump {
 unsafe impl Send for PlatformPump {}
 
 impl PlatformPump {
-  pub(super) fn new(state: Weak<PumpState>) -> Self {
-    Self {
-      owner_thread: NSThread::currentThread(),
-      event_handler: EventHandler::new(state),
-      timer: None,
-    }
-  }
-
-  pub(super) fn post_schedule_work(&mut self, delay_ms: i64) {
-    let delay_ms = isize::try_from(delay_ms).unwrap_or(isize::MAX);
-    let delay_ms = NSNumber::new_isize(delay_ms);
-    unsafe {
-      self
-        .event_handler
-        .performSelector_onThread_withObject_waitUntilDone(
-          sel!(scheduleWork:),
-          &self.owner_thread,
-          Some(&delay_ms),
-          false,
-        );
-    }
-  }
-
-  pub(super) fn set_timer(&mut self, delay_ms: i64) {
-    debug_assert!(delay_ms > 0);
-    debug_assert!(self.timer.is_none());
-
-    let timer = unsafe {
-      NSTimer::timerWithTimeInterval_target_selector_userInfo_repeats(
-        delay_ms as f64 / 1000.0,
-        &self.event_handler,
-        sel!(timerTimeout:),
-        None,
-        false,
-      )
-    };
-
-    let run_loop = NSRunLoop::currentRunLoop();
-    unsafe {
-      run_loop.addTimer_forMode(&timer, NSRunLoopCommonModes);
-      run_loop.addTimer_forMode(&timer, NSEventTrackingRunLoopMode);
+    pub(super) fn new(state: Weak<PumpState>) -> Self {
+        Self {
+            owner_thread: NSThread::currentThread(),
+            event_handler: EventHandler::new(state),
+            timer: None,
+        }
     }
 
-    self.timer = Some(timer);
-  }
-
-  pub(super) fn kill_timer(&mut self) {
-    if let Some(timer) = self.timer.take() {
-      timer.invalidate();
+    pub(super) fn post_schedule_work(&mut self, delay_ms: i64) {
+        let delay_ms = isize::try_from(delay_ms).unwrap_or(isize::MAX);
+        let delay_ms = NSNumber::new_isize(delay_ms);
+        unsafe {
+            self.event_handler
+                .performSelector_onThread_withObject_waitUntilDone(
+                    sel!(scheduleWork:),
+                    &self.owner_thread,
+                    Some(&delay_ms),
+                    false,
+                );
+        }
     }
-  }
 
-  pub(super) fn is_timer_pending(&self) -> bool {
-    self.timer.is_some()
-  }
+    pub(super) fn set_timer(&mut self, delay_ms: i64) {
+        debug_assert!(delay_ms > 0);
+        debug_assert!(self.timer.is_none());
+
+        let timer = unsafe {
+            NSTimer::timerWithTimeInterval_target_selector_userInfo_repeats(
+                delay_ms as f64 / 1000.0,
+                &self.event_handler,
+                sel!(timerTimeout:),
+                None,
+                false,
+            )
+        };
+
+        let run_loop = NSRunLoop::currentRunLoop();
+        unsafe {
+            run_loop.addTimer_forMode(&timer, NSRunLoopCommonModes);
+            run_loop.addTimer_forMode(&timer, NSEventTrackingRunLoopMode);
+        }
+
+        self.timer = Some(timer);
+    }
+
+    pub(super) fn kill_timer(&mut self) {
+        if let Some(timer) = self.timer.take() {
+            timer.invalidate();
+        }
+    }
+
+    pub(super) fn is_timer_pending(&self) -> bool {
+        self.timer.is_some()
+    }
 }

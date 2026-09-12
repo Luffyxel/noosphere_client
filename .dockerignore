@@ -2,10 +2,13 @@
 .github
 .idea
 .vscode
+.vm-lab
+.next
 node_modules
 packaging/linux/Dockerfile
 dist-tauri
 release
 src-tauri/target
+remote-test-results
 *.exe
 *.log

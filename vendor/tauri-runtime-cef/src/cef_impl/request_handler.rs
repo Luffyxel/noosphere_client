@@ -3,33 +3,33 @@
 // SPDX-License-Identifier: MIT
 
 use std::{
-  borrow::Cow,
-  io::{Cursor, Read},
-  sync::{Arc, Mutex},
+    borrow::Cow,
+    io::{Cursor, Read},
+    sync::{Arc, Mutex},
 };
 
 use cef::{rc::*, *};
 use dioxus_debug_cell::RefCell;
 use html5ever::{LocalName, interface::QualName, namespace_url, ns};
 use http::{
-  HeaderMap, HeaderName, HeaderValue,
-  header::{CONTENT_SECURITY_POLICY, CONTENT_TYPE, ORIGIN},
+    HeaderMap, HeaderName, HeaderValue,
+    header::{CONTENT_SECURITY_POLICY, CONTENT_TYPE, ORIGIN},
 };
 use kuchiki::NodeRef;
 use tauri_runtime::{UserEvent, window::WindowId};
 
 use crate::compat::{NavigationHandler, UriSchemeProtocolHandler};
 use tauri_utils::{
-  config::{Csp, CspDirectiveSources},
-  html::{parse as parse_html, serialize_node},
+    config::{Csp, CspDirectiveSources},
+    html::{parse as parse_html, serialize_node},
 };
 use url::Url;
 
 use crate::{
-  cef_impl::client::{DragDropEventTarget, DragDropState, WebDragDropResourceRequestHandler},
-  runtime::RuntimeContext,
-  streaming::{self, InitiatorOrigin, ReadOutcome, StreamBody},
-  webview::{CefInitScript, INITIAL_LOAD_URL},
+    cef_impl::client::{DragDropEventTarget, DragDropState, WebDragDropResourceRequestHandler},
+    runtime::RuntimeContext,
+    streaming::{self, InitiatorOrigin, ReadOutcome, StreamBody},
+    webview::{CefInitScript, INITIAL_LOAD_URL},
 };
 
 type HttpResponse = Arc<RefCell<Option<http::Response<Cursor<Vec<u8>>>>>>;
@@ -43,79 +43,79 @@ type HttpResponse = Arc<RefCell<Option<http::Response<Cursor<Vec<u8>>>>>>;
 type StreamCell = Arc<Mutex<Option<StreamState>>>;
 
 struct StreamState {
-  head: Arc<Mutex<Option<http::Response<()>>>>,
-  body: StreamBody,
+    head: Arc<Mutex<Option<http::Response<()>>>>,
+    body: StreamBody,
 }
 pub(crate) type SchemeRegistry = Arc<
-  Mutex<
-    std::collections::HashMap<
-      (i32, String),
-      (
-        String,
-        Arc<Box<UriSchemeProtocolHandler>>,
-        Arc<Vec<CefInitScript>>,
-      ),
+    Mutex<
+        std::collections::HashMap<
+            (i32, String),
+            (
+                String,
+                Arc<Box<UriSchemeProtocolHandler>>,
+                Arc<Vec<CefInitScript>>,
+            ),
+        >,
     >,
-  >,
 >;
 
 fn csp_inject_initialization_scripts_hashes(
-  existing_csp: String,
-  initialization_scripts: &[CefInitScript],
+    existing_csp: String,
+    initialization_scripts: &[CefInitScript],
 ) -> String {
-  if initialization_scripts.is_empty() {
-    return existing_csp;
-  }
+    if initialization_scripts.is_empty() {
+        return existing_csp;
+    }
 
-  let script_hashes: Vec<String> = initialization_scripts
-    .iter()
-    .map(|s| s.hash.clone())
-    .collect();
+    let script_hashes: Vec<String> = initialization_scripts
+        .iter()
+        .map(|s| s.hash.clone())
+        .collect();
 
-  if script_hashes.is_empty() {
-    return existing_csp;
-  }
+    if script_hashes.is_empty() {
+        return existing_csp;
+    }
 
-  let mut csp_map: std::collections::HashMap<String, CspDirectiveSources> =
-    Csp::Policy(existing_csp.to_string()).into();
+    let mut csp_map: std::collections::HashMap<String, CspDirectiveSources> =
+        Csp::Policy(existing_csp.to_string()).into();
 
-  let script_src = csp_map
-    .entry("script-src".to_string())
-    .or_insert_with(|| CspDirectiveSources::List(vec!["'self'".to_string()]));
+    let script_src = csp_map
+        .entry("script-src".to_string())
+        .or_insert_with(|| CspDirectiveSources::List(vec!["'self'".to_string()]));
 
-  script_src.extend(script_hashes);
+    script_src.extend(script_hashes);
 
-  Csp::DirectiveMap(csp_map).to_string()
+    Csp::DirectiveMap(csp_map).to_string()
 }
 
 fn inject_scripts_into_html_body(
-  body: &[u8],
-  initialization_scripts: &[CefInitScript],
+    body: &[u8],
+    initialization_scripts: &[CefInitScript],
 ) -> Option<Vec<u8>> {
-  let Ok(body_str) = std::str::from_utf8(body) else {
-    return None;
-  };
+    let Ok(body_str) = std::str::from_utf8(body) else {
+        return None;
+    };
 
-  let document = parse_html(body_str.to_string());
+    let document = parse_html(body_str.to_string());
 
-  let head = if let Ok(ref head_node) = document.select_first("head") {
-    head_node.as_node().clone()
-  } else {
-    let head_node = NodeRef::new_element(
-      QualName::new(None, ns!(html), LocalName::from("head")),
-      None,
-    );
-    document.prepend(head_node.clone());
-    head_node
-  };
+    let head = if let Ok(ref head_node) = document.select_first("head") {
+        head_node.as_node().clone()
+    } else {
+        let head_node = NodeRef::new_element(
+            QualName::new(None, ns!(html), LocalName::from("head")),
+            None,
+        );
+        document.prepend(head_node.clone());
+        head_node
+    };
 
-  for init_script in initialization_scripts.iter().rev() {
-    let script_el = NodeRef::new_element(QualName::new(None, ns!(html), "script".into()), None);
-    script_el.append(NodeRef::new_text(init_script.script.as_str()));
-    head.prepend(script_el);
-  }
+    for init_script in initialization_scripts.iter().rev() {
+        let script_el = NodeRef::new_element(QualName::new(None, ns!(html), "script".into()), None);
+        script_el.append(NodeRef::new_text(init_script.script.as_str()));
+        head.prepend(script_el);
+    }
 
-  Some(serialize_node(&document))
+    Some(serialize_node(&document))
 }
 
 wrap_request_handler! {
@@ -217,48 +217,48 @@ wrap_request_handler! {
 /// (`-1`). Shared by the buffered and streaming `response_headers` paths, which
 /// differ only in the head's body type.
 fn write_response_headers<B>(
-  cef_response: &mut Response,
-  head: &http::Response<B>,
-  response_length: Option<&mut i64>,
-  redirect_url: Option<&mut CefString>,
+    cef_response: &mut Response,
+    head: &http::Response<B>,
+    response_length: Option<&mut i64>,
+    redirect_url: Option<&mut CefString>,
 ) {
-  cef_response.set_status(head.status().as_u16() as i32);
-  let mut content_type = None;
+    cef_response.set_status(head.status().as_u16() as i32);
+    let mut content_type = None;
 
-  // Apply via a multimap so REPEATED header names survive — `Set-Cookie` is
-  // the common one, and a page that sets two cookies in a single response must
-  // keep both. `set_header_by_name(.., overwrite=0)` per value silently drops
-  // the second (it only sets when the name is absent), so build the whole map
-  // and set it once. `http::HeaderMap`'s iterator yields (name, value) for
-  // every value, so duplicates come through naturally.
-  let mut map = CefStringMultimap::new();
-  for (name, value) in head.headers() {
-    let Ok(value) = value.to_str() else {
-      continue;
-    };
-    map.append(name.as_str(), value);
-    if name == CONTENT_TYPE {
-      content_type.replace(value.to_string());
+    // Apply via a multimap so REPEATED header names survive — `Set-Cookie` is
+    // the common one, and a page that sets two cookies in a single response must
+    // keep both. `set_header_by_name(.., overwrite=0)` per value silently drops
+    // the second (it only sets when the name is absent), so build the whole map
+    // and set it once. `http::HeaderMap`'s iterator yields (name, value) for
+    // every value, so duplicates come through naturally.
+    let mut map = CefStringMultimap::new();
+    for (name, value) in head.headers() {
+        let Ok(value) = value.to_str() else {
+            continue;
+        };
+        map.append(name.as_str(), value);
+        if name == CONTENT_TYPE {
+            content_type.replace(value.to_string());
+        }
     }
-  }
-  cef_response.set_header_map(Some(&mut map));
+    cef_response.set_header_map(Some(&mut map));
 
-  cef_response.set_header_by_name(Some(&"Cache-Control".into()), Some(&"no-store".into()), 1);
+    cef_response.set_header_by_name(Some(&"Cache-Control".into()), Some(&"no-store".into()), 1);
 
-  let mime_type = content_type
-    .as_ref()
-    .and_then(|t| t.split(';').next())
-    .map(str::trim)
-    .unwrap_or("text/plain");
-  cef_response.set_mime_type(Some(&mime_type.into()));
+    let mime_type = content_type
+        .as_ref()
+        .and_then(|t| t.split(';').next())
+        .map(str::trim)
+        .unwrap_or("text/plain");
+    cef_response.set_mime_type(Some(&mime_type.into()));
 
-  if let Some(length) = response_length {
-    *length = -1;
-  }
+    if let Some(length) = response_length {
+        *length = -1;
+    }
 
-  if let Some(redirect_url) = redirect_url {
-    let _ = std::mem::take(redirect_url);
-  }
+    if let Some(redirect_url) = redirect_url {
+        let _ = std::mem::take(redirect_url);
+    }
 }
 
 wrap_resource_handler! {
@@ -575,52 +575,52 @@ wrap_scheme_handler_factory! {
 pub(crate) struct ThreadSafe<T>(pub(crate) T);
 
 impl<T> ThreadSafe<T> {
-  pub(crate) fn into_owned(self) -> T {
-    self.0
-  }
+    pub(crate) fn into_owned(self) -> T {
+        self.0
+    }
 }
 
 unsafe impl<T> Send for ThreadSafe<T> {}
 unsafe impl<T> Sync for ThreadSafe<T> {}
 
 fn read_request_body(request: &mut Request) -> Vec<u8> {
-  let mut body = Vec::new();
+    let mut body = Vec::new();
 
-  if let Some(post_data) = request.post_data() {
-    let mut elements = vec![None; post_data.element_count()];
-    post_data.elements(Some(&mut elements));
-    for element in elements.into_iter().flatten() {
-      match element.get_type().as_ref() {
-        sys::cef_postdataelement_type_t::PDE_TYPE_BYTES => {
-          let size = element.bytes_count();
-          if size > 0 {
-            let mut buf = vec![0u8; size];
-            // Copy bytes into our buffer
-            let copied = element.bytes(size, buf.as_mut_ptr());
-            // Safety: CEF promises it wrote `copied` bytes into buf
-            unsafe {
-              buf.set_len(copied);
+    if let Some(post_data) = request.post_data() {
+        let mut elements = vec![None; post_data.element_count()];
+        post_data.elements(Some(&mut elements));
+        for element in elements.into_iter().flatten() {
+            match element.get_type().as_ref() {
+                sys::cef_postdataelement_type_t::PDE_TYPE_BYTES => {
+                    let size = element.bytes_count();
+                    if size > 0 {
+                        let mut buf = vec![0u8; size];
+                        // Copy bytes into our buffer
+                        let copied = element.bytes(size, buf.as_mut_ptr());
+                        // Safety: CEF promises it wrote `copied` bytes into buf
+                        unsafe {
+                            buf.set_len(copied);
+                        }
+                        body.extend(buf);
+                    }
+                }
+                sys::cef_postdataelement_type_t::PDE_TYPE_FILE => {
+                    // Read file from disk
+                    let file_path = CefString::from(&element.file()).to_string();
+                    if let Ok(mut file) = std::fs::File::open(&file_path) {
+                        use std::io::Read;
+                        let mut buf = Vec::new();
+                        if file.read_to_end(&mut buf).is_ok() {
+                            body.extend(buf);
+                        }
+                    }
+                }
+                _ => {}
             }
-            body.extend(buf);
-          }
         }
-        sys::cef_postdataelement_type_t::PDE_TYPE_FILE => {
-          // Read file from disk
-          let file_path = CefString::from(&element.file()).to_string();
-          if let Ok(mut file) = std::fs::File::open(&file_path) {
-            use std::io::Read;
-            let mut buf = Vec::new();
-            if file.read_to_end(&mut buf).is_ok() {
-              body.extend(buf);
-            }
-          }
-        }
-        _ => {}
-      }
     }
-  }
 
-  body
+    body
 }
 
 /// The tuple origin of `url`, as **Chromium** serializes it.
@@ -637,58 +637,58 @@ fn read_request_body(request: &mut Request) -> Vec<u8> {
 /// always `None` there, silently disabling both the `Origin: null` repair in
 /// `process_request` and any same-origin check a handler builds on it.
 fn tuple_origin(url: &Url) -> Option<String> {
-  let spec_origin = url.origin().ascii_serialization();
-  if spec_origin != "null" {
-    return Some(spec_origin);
-  }
-  let host = url.host_str()?;
-  Some(match url.port() {
-    Some(port) => format!("{}://{}:{}", url.scheme(), host, port),
-    None => format!("{}://{}", url.scheme(), host),
-  })
+    let spec_origin = url.origin().ascii_serialization();
+    if spec_origin != "null" {
+        return Some(spec_origin);
+    }
+    let host = url.host_str()?;
+    Some(match url.port() {
+        Some(port) => format!("{}://{}:{}", url.scheme(), host, port),
+        None => format!("{}://{}", url.scheme(), host),
+    })
 }
 
 #[cfg(test)]
 mod tests {
-  use super::tuple_origin;
-  use url::Url;
+    use super::tuple_origin;
+    use url::Url;
 
-  #[test]
-  fn tuple_origin_covers_special_and_custom_schemes() {
-    let special = Url::parse("https://example.com:8443/x?y").unwrap();
-    assert_eq!(
-      tuple_origin(&special).as_deref(),
-      Some("https://example.com:8443")
-    );
-    // A standard-registered custom scheme: the URL spec calls this opaque, but
-    // Chromium gives it a tuple origin, so we must too.
-    let custom = Url::parse("duck://site.alice.duck/index.html").unwrap();
-    assert_eq!(
-      tuple_origin(&custom).as_deref(),
-      Some("duck://site.alice.duck")
-    );
-    // Genuinely origin-less: nothing to compare against, so no origin.
-    let opaque = Url::parse("data:text/html,hi").unwrap();
-    assert_eq!(tuple_origin(&opaque), None);
-  }
+    #[test]
+    fn tuple_origin_covers_special_and_custom_schemes() {
+        let special = Url::parse("https://example.com:8443/x?y").unwrap();
+        assert_eq!(
+            tuple_origin(&special).as_deref(),
+            Some("https://example.com:8443")
+        );
+        // A standard-registered custom scheme: the URL spec calls this opaque, but
+        // Chromium gives it a tuple origin, so we must too.
+        let custom = Url::parse("duck://site.alice.duck/index.html").unwrap();
+        assert_eq!(
+            tuple_origin(&custom).as_deref(),
+            Some("duck://site.alice.duck")
+        );
+        // Genuinely origin-less: nothing to compare against, so no origin.
+        let opaque = Url::parse("data:text/html,hi").unwrap();
+        assert_eq!(tuple_origin(&opaque), None);
+    }
 }
 
 fn get_request_headers(request: &mut Request) -> HeaderMap {
-  let mut headers = HeaderMap::new();
+    let mut headers = HeaderMap::new();
 
-  let mut map = CefStringMultimap::new();
+    let mut map = CefStringMultimap::new();
 
-  request.header_map(Some(&mut map));
+    request.header_map(Some(&mut map));
 
-  // Iterate through all entries
-  for (name, value) in map {
-    for v in value {
-      headers.append(
-        HeaderName::from_bytes(name.as_bytes()).unwrap(),
-        HeaderValue::from_str(&v).unwrap(),
-      );
+    // Iterate through all entries
+    for (name, value) in map {
+        for v in value {
+            headers.append(
+                HeaderName::from_bytes(name.as_bytes()).unwrap(),
+                HeaderValue::from_str(&v).unwrap(),
+            );
+        }
     }
-  }
 
-  headers
+    headers
 }

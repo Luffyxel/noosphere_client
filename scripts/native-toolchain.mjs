@@ -21,6 +21,12 @@ function commandWorks(command, commandArgs) {
 }
 
 function findWindowsProtoc() {
+  const projectProtoc = [
+    resolve('.tools', 'protoc', 'bin', 'protoc.exe'),
+    resolve('..', '.tools', 'protoc', 'bin', 'protoc.exe'),
+  ].find(existsSync);
+  if (projectProtoc) return projectProtoc;
+
   const packageRoot = process.env.LOCALAPPDATA
     ? join(process.env.LOCALAPPDATA, 'Microsoft', 'WinGet', 'Packages')
     : null;

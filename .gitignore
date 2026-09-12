@@ -1,15 +1,22 @@
 # Dependencies and generated files
 /node_modules/
 /coverage/
+/remote-test-results/
+/.vm-lab/
 /dist-tauri/
 /src-tauri/target/
+/src-tauri/remote/target/
 /src-tauri/gen/
 /tsconfig.tsbuildinfo
 /Noosphere_*_portable_x64.exe
+/Noosphere_*_x64-setup.exe
+/SHA256SUMS-*.txt
 
 # Local configuration
 .env*
 !.env.example
+/.secrets/
+/.tools/
 *.log
 .DS_Store
 /.idea/

@@ -26,71 +26,71 @@ use winit::event_loop::EventLoopProxy;
 use super::PumpState;
 
 pub(super) struct PlatformPump {
-  state: Weak<PumpState>,
-  proxy: EventLoopProxy,
-  timer: Option<glib::SourceId>,
-  deadline: Option<Instant>,
+    state: Weak<PumpState>,
+    proxy: EventLoopProxy,
+    timer: Option<glib::SourceId>,
+    deadline: Option<Instant>,
 }
 
 impl PlatformPump {
-  pub(super) fn new(state: Weak<PumpState>, proxy: EventLoopProxy) -> Self {
-    Self {
-      state,
-      proxy,
-      timer: None,
-      deadline: None,
+    pub(super) fn new(state: Weak<PumpState>, proxy: EventLoopProxy) -> Self {
+        Self {
+            state,
+            proxy,
+            timer: None,
+            deadline: None,
+        }
     }
-  }
 
-  pub(super) fn post_schedule_work(&mut self, delay_ms: i64) {
-    // May be called on any thread. Marshal the request onto the default GLib
-    // main context, which the winit loop services on the main thread; wake winit
-    // so it does so promptly.
-    let state = self.state.clone();
-    glib::idle_add_once(move || {
-      if let Some(state) = state.upgrade() {
-        state.on_schedule_work(delay_ms);
-      }
-    });
-    self.proxy.wake_up();
-  }
-
-  pub(super) fn set_timer(&mut self, delay_ms: i64) {
-    debug_assert!(self.timer.is_none());
-    debug_assert!(delay_ms > 0);
-
-    let delay = Duration::from_millis(delay_ms as u64);
-    let state = self.state.clone();
-    let source = glib::timeout_add_once(delay, move || {
-      let Some(state) = state.upgrade() else {
-        return;
-      };
-      // This one-shot source removes itself after firing, so forget it before
-      // `on_timer_timeout` runs `kill_timer` — `SourceId::remove` would panic on
-      // an already-removed source.
-      if let Ok(mut platform) = state.platform.lock() {
-        platform.timer = None;
-        platform.deadline = None;
-      }
-      state.on_timer_timeout();
-    });
-
-    self.timer = Some(source);
-    self.deadline = Some(Instant::now() + delay);
-  }
-
-  pub(super) fn kill_timer(&mut self) {
-    if let Some(source) = self.timer.take() {
-      source.remove();
+    pub(super) fn post_schedule_work(&mut self, delay_ms: i64) {
+        // May be called on any thread. Marshal the request onto the default GLib
+        // main context, which the winit loop services on the main thread; wake winit
+        // so it does so promptly.
+        let state = self.state.clone();
+        glib::idle_add_once(move || {
+            if let Some(state) = state.upgrade() {
+                state.on_schedule_work(delay_ms);
+            }
+        });
+        self.proxy.wake_up();
     }
-    self.deadline = None;
-  }
 
-  pub(super) fn is_timer_pending(&self) -> bool {
-    self.timer.is_some()
-  }
+    pub(super) fn set_timer(&mut self, delay_ms: i64) {
+        debug_assert!(self.timer.is_none());
+        debug_assert!(delay_ms > 0);
 
-  pub(super) fn deadline(&self) -> Option<Instant> {
-    self.deadline
-  }
+        let delay = Duration::from_millis(delay_ms as u64);
+        let state = self.state.clone();
+        let source = glib::timeout_add_once(delay, move || {
+            let Some(state) = state.upgrade() else {
+                return;
+            };
+            // This one-shot source removes itself after firing, so forget it before
+            // `on_timer_timeout` runs `kill_timer` — `SourceId::remove` would panic on
+            // an already-removed source.
+            if let Ok(mut platform) = state.platform.lock() {
+                platform.timer = None;
+                platform.deadline = None;
+            }
+            state.on_timer_timeout();
+        });
+
+        self.timer = Some(source);
+        self.deadline = Some(Instant::now() + delay);
+    }
+
+    pub(super) fn kill_timer(&mut self) {
+        if let Some(source) = self.timer.take() {
+            source.remove();
+        }
+        self.deadline = None;
+    }
+
+    pub(super) fn is_timer_pending(&self) -> bool {
+        self.timer.is_some()
+    }
+
+    pub(super) fn deadline(&self) -> Option<Instant> {
+        self.deadline
+    }
 }

@@ -1,14 +1,22 @@
+mod app_update;
 mod commands;
 mod error;
 mod github;
 mod instance_profile;
 mod models;
 mod protocol;
+mod remote_access;
+mod remote_directory;
 mod repository_content;
 mod secure_blob;
 mod secure_store;
 mod state;
 mod validation;
+
+#[cfg(windows)]
+pub fn run_firewall_installer() -> i32 {
+    remote_access::install_firewall_for_current_executable()
+}
 
 use tauri::Manager as _;
 
@@ -19,6 +27,32 @@ type DesktopRuntime = tauri_runtime_cef::CefRuntime<tauri::EventLoopMessage>;
 type DesktopRuntime = tauri::Wry;
 
 type DesktopAppHandle = tauri::AppHandle<DesktopRuntime>;
+
+#[cfg(target_os = "linux")]
+pub fn prepare_linux_media_runtime() {
+    let Some(app_dir) = std::env::var_os("APPDIR").map(std::path::PathBuf::from) else {
+        return;
+    };
+    let runtime = app_dir.join("usr/lib/Noosphere/linux-media");
+    if !runtime.join("gstreamer-1.0").is_dir() {
+        return;
+    }
+    let variables = [
+        ("GST_PLUGIN_SYSTEM_PATH_1_0", runtime.join("gstreamer-1.0")),
+        ("GST_PLUGIN_SCANNER", runtime.join("gst-plugin-scanner")),
+        ("SPA_PLUGIN_DIR", runtime.join("spa-0.2")),
+        ("PIPEWIRE_MODULE_DIR", runtime.join("pipewire-0.3")),
+        ("PIPEWIRE_CONFIG_DIR", runtime.join("pipewire")),
+        ("XKB_CONFIG_ROOT", runtime.join("xkb")),
+    ];
+    for (name, path) in variables {
+        if path.exists() {
+            // This runs at process entry, before Tauri, Tokio, CEF or the host
+            // daemon starts any threads. Child host processes inherit it.
+            unsafe { std::env::set_var(name, path) };
+        }
+    }
+}
 
 #[cfg(windows)]
 fn allow_local_media_permissions(window: &tauri::WebviewWindow) -> tauri::Result<()> {
@@ -135,8 +169,12 @@ pub fn run() {
     }
     let builder = tauri::Builder::<DesktopRuntime>::default();
     builder
+        .manage(remote_access::RemoteAccess::default())
+        .manage(remote_directory::RemoteDirectory::default())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             let data_directory = if std::env::var("NOOSPHERE_SMOKE_TEST").as_deref() == Ok("1") {
                 let path = std::env::var_os("NOOSPHERE_SMOKE_USER_DATA")
@@ -159,6 +197,21 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            app_update::system_update_target,
+            remote_access::remote_status,
+            remote_access::remote_save_settings,
+            remote_access::remote_start_local_test,
+            remote_access::remote_stop_local_test,
+            remote_directory::remote_directory,
+            remote_directory::remote_sync_directory,
+            remote_directory::remote_set_host,
+            remote_directory::remote_set_grant,
+            remote_directory::remote_set_user_grant,
+            remote_directory::remote_request_access,
+            remote_directory::remote_connect_machine,
+            remote_directory::remote_stop_session,
+            remote_directory::remote_decide_access,
+            remote_directory::remote_cancel_access,
             commands::github_restore,
             commands::github_validate_session,
             commands::github_connect,

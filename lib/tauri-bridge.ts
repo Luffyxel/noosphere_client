@@ -1,4 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
+import type { RemoteDirectory, RemoteStatus } from '@/lib/remote-access';
 import {
   listen,
   type EventCallback,
@@ -35,6 +36,50 @@ function subscribe<T>(event: string, callback: EventCallback<T>): () => void {
 
 export function installTauriBridge(): void {
   const bridge: NoosphereDesktopApi = {
+    remoteAccess: {
+      cancelAccess: (principal) =>
+        invoke<RemoteDirectory>('remote_cancel_access', { principal }),
+      directory: () => invoke<RemoteDirectory>('remote_directory'),
+      syncDirectory: (refresh = false) =>
+        invoke<RemoteDirectory>('remote_sync_directory', { refresh }),
+      setHost: (enabled) =>
+        invoke<RemoteDirectory>('remote_set_host', { enabled }),
+      setGrant: (principal, permissions, unattended, revoke = false) =>
+        invoke<RemoteDirectory>('remote_set_grant', {
+          principal,
+          permissions,
+          unattended,
+          revoke,
+        }),
+      setUserGrant: (githubUserId, permissions, unattended, revoke = false) =>
+        invoke<RemoteDirectory>('remote_set_user_grant', {
+          githubUserId,
+          permissions,
+          unattended,
+          revoke,
+        }),
+      requestAccess: (principal, permissions) =>
+        invoke<RemoteDirectory>('remote_request_access', {
+          principal,
+          permissions,
+        }),
+      connectMachine: (principal) =>
+        invoke<RemoteDirectory>('remote_connect_machine', { principal }),
+      stopSession: () => invoke<void>('remote_stop_session'),
+      decideAccess: (requestId, permissions, remember, unattended) =>
+        invoke<RemoteDirectory>('remote_decide_access', {
+          requestId,
+          permissions,
+          remember,
+          unattended,
+        }),
+      status: () => invoke<RemoteStatus>('remote_status'),
+      saveSettings: (settings) =>
+        invoke<RemoteStatus>('remote_save_settings', { settings }),
+      startLocalTest: (settings) =>
+        invoke<void>('remote_start_local_test', { settings }),
+      stopLocalTest: () => invoke<void>('remote_stop_local_test'),
+    },
     isDesktop: true,
     platform: navigator.userAgent.includes('Windows') ? 'win32' : 'linux',
     github: {

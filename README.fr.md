@@ -8,8 +8,8 @@ compte supplémentaire.
 
 ## Téléchargements
 
-- [Installateur Windows](Noosphere_0.1.7_x64-setup.exe)
-- Linux : [AppImage](https://github.com/Luffyxel/noosphere_client/releases/download/v0.1.7/Noosphere_0.1.7_amd64.AppImage), [DEB](https://github.com/Luffyxel/noosphere_client/releases/download/v0.1.7/Noosphere_0.1.7_amd64.deb), [RPM](https://github.com/Luffyxel/noosphere_client/releases/download/v0.1.7/Noosphere_0.1.7_x86_64.rpm), [sommes de contrôle](https://github.com/Luffyxel/noosphere_client/releases/download/v0.1.7/SHA256SUMS.txt)
+- [Windows portable](Noosphere_0.1.17_portable_x64.exe) · [installateur](Noosphere_0.1.17_x64-setup.exe)
+- Linux : [AppImage](https://github.com/Luffyxel/noosphere_client/releases/download/v0.1.17/Noosphere_0.1.17_amd64.AppImage), [DEB](https://github.com/Luffyxel/noosphere_client/releases/download/v0.1.17/Noosphere_0.1.17_amd64.deb), [RPM](https://github.com/Luffyxel/noosphere_client/releases/download/v0.1.17/Noosphere_0.1.17_x86_64.rpm), [sommes de contrôle](https://github.com/Luffyxel/noosphere_client/releases/download/v0.1.17/SHA256SUMS.txt)
 
 Les instructions d’installation et les sommes de contrôle se trouvent dans
 [`release/`](release/README.fr.md).
@@ -48,6 +48,38 @@ GitHub peut voir les métadonnées du dépôt, notamment les dates de commit, le
 volume d’activité et les comptes impliqués. WebRTC révèle aux deux pairs les
 informations réseau nécessaires à ICE.
 
+## Développement du bureau à distance
+
+Le test reproductible à deux machines logiques est décrit dans [docs/remote-two-node-lab.fr.md](docs/remote-two-node-lab.fr.md).
+
+Un moteur natif de bureau à distance est en développement dans `src-tauri/remote`.
+La section Bureau à distance présente les machines de votre compte et de vos amis.
+La découverte démarre à la connexion à Noosphere, sans activer l’hébergement.
+Les amis peuvent recevoir des droits sur votre ordinateur même si leur propre hôte
+est désactivé. Chaque machine doit utiliser une version prenant en charge cet annuaire.
+Les réglages présentent les utilisateurs, y compris votre propre compte, et appliquent
+écran, clavier, souris et connexion sans confirmation, même avant la détection d’une
+machine. La règle s’applique aux machines vérifiées de cet utilisateur lorsqu’elles
+apparaissent. Autoriser l’écran active l’accès sur l’ordinateur hôte. Les demandes et
+décisions passent par des annonces chiffrées sur GitHub ; les droits restent dans
+le stockage protégé local.
+Un second ordinateur conserve sa propre identité sans remplacer le profil publié
+du premier. Les clés et l’historique des conversations ne sont pas transférés.
+
+Sur Windows, une autorisation acceptée permet maintenant d’ouvrir une session H.264
+native directe : capture et encodage GPU sur l’hôte, QUIC DATAGRAM, viewer GPU et
+retour clavier/souris. Le débit, les images clés et la FEC réagissent aux mesures
+réseau du client. La signalisation passe par les annonces GitHub chiffrées et
+ne dépend pas de la conversation affichée. STUN ajoute une adresse publique lorsque
+le routeur l’autorise ; sans serveur TURN, certains CGNAT restent injoignables.
+Noosphere ne demande aucune redirection de port sur la box. Windows demande une fois
+l’autorisation administrateur d’autoriser l’UDP entrant pour l’exécutable exact ;
+la fenêtre UAC ouvre Noosphere directement, sans fenêtre PowerShell. La version
+portable redemande cette autorisation si elle est déplacée ou remplacée.
+Cette version de validation 0.1.17 n’est pas encore la V0.2.0 multiplateforme.
+La [documentation du moteur](docs/remote-desktop.md) précise l’état de
+l’implémentation et les benchmarks reproductibles.
+
 ## Linux
 
 La version Linux est disponible pour x86_64 dans trois formats :
@@ -57,18 +89,26 @@ La version Linux est disponible pour x86_64 dans trois formats :
 - RPM pour Fedora, Red Hat Enterprise Linux 9 et 10, Rocky Linux 9 et 10,
   et openSUSE.
 
-Les paquets incluent le moteur CEF/Chromium utilisé par le client. X11 est pris
-en charge directement ; une session Wayland doit disposer de XWayland.
+Les paquets incluent le moteur CEF/Chromium utilisé par le client. Le bureau
+distant utilise PipeWire et le portail système sous Wayland. XWayland peut
+rester nécessaire pour afficher l’interface principale.
+
+GNOME et KDE utilisent le portail RemoteDesktop. Hyprland et Sway utilisent
+ScreenCast avec les protocoles Wayland d’entrée virtuelle. Une session X11 utilise
+`ximagesrc` et XTest. Les files vidéo sont limitées à une image pour empêcher
+l’accumulation de latence. La capture réelle a été validée sur NixOS 26.05 avec
+Hyprland 0.55.4 ; les flux PipeWire à fréquence variable sont normalisés vers la
+fréquence choisie sans bloquer les images suivantes.
 
 Sous NixOS, lancez l’AppImage avec `appimage-run` :
 
 ```bash
-nix-shell -p appimage-run --run 'appimage-run ./Noosphere_0.1.7_amd64.AppImage'
+nix-shell -p appimage-run --run 'appimage-run ./Noosphere_0.1.17_amd64.AppImage'
 ```
 
-Avec Hyprland géré par NixOS, activez
-`programs.hyprland.xwayland.enable = true`, puis redémarrez la session. Les
-commandes d’installation sont détaillées dans la
+Avec Hyprland géré par NixOS, activez PipeWire, WirePlumber,
+`xdg-desktop-portal-hyprland` et XWayland. Une configuration reproductible est
+fournie dans `packaging/nixos/remote-test.nix`. Les commandes sont dans la
 [documentation Linux](release/linux/README.fr.md).
 
 ## Compiler le projet

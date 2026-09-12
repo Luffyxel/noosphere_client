@@ -3,20 +3,20 @@
 // SPDX-License-Identifier: MIT
 
 use std::{
-  cell::Cell,
-  time::{Duration, Instant},
+    cell::Cell,
+    time::{Duration, Instant},
 };
 
 use cef::application_mac::{CefAppProtocol, CrAppControlProtocol, CrAppProtocol};
 use objc2::{
-  ClassType, DefinedClass, MainThreadMarker, MainThreadOnly, define_class, extern_methods,
-  msg_send,
-  rc::Retained,
-  runtime::{AnyObject, Bool, ProtocolObject},
+    ClassType, DefinedClass, MainThreadMarker, MainThreadOnly, define_class, extern_methods,
+    msg_send,
+    rc::Retained,
+    runtime::{AnyObject, Bool, ProtocolObject},
 };
 use objc2_app_kit::{
-  NSApp, NSApplication, NSApplicationActivationOptions, NSApplicationDelegate,
-  NSApplicationTerminateReply, NSEvent, NSRunningApplication,
+    NSApp, NSApplication, NSApplicationActivationOptions, NSApplicationDelegate,
+    NSApplicationTerminateReply, NSEvent, NSRunningApplication,
 };
 use objc2_application_services::kProcessTransformToForegroundApplication;
 use objc2_foundation::{NSArray, NSObject, NSObjectProtocol, NSString, NSURL};
@@ -25,20 +25,20 @@ use super::utils;
 
 #[derive(Default)]
 pub(crate) struct CefWinitApplicationIvars {
-  handling_send_event: Cell<Bool>,
-  last_dock_show_ms: Cell<u64>,
-  delegate: Cell<*const AppDelegate>,
+    handling_send_event: Cell<Bool>,
+    last_dock_show_ms: Cell<u64>,
+    delegate: Cell<*const AppDelegate>,
 }
 
 pub(crate) enum AppDelegateEvent {
-  TryTerminate,
-  Reopen { has_visible_windows: bool },
-  AccessibilityChanged { enabled: bool },
-  OpenURLs { urls: Vec<url::Url> },
+    TryTerminate,
+    Reopen { has_visible_windows: bool },
+    AccessibilityChanged { enabled: bool },
+    OpenURLs { urls: Vec<url::Url> },
 }
 
 pub(crate) struct CefAppDelegateIvars {
-  on_event: Box<dyn Fn(AppDelegateEvent)>,
+    on_event: Box<dyn Fn(AppDelegateEvent)>,
 }
 
 define_class!(
@@ -178,66 +178,65 @@ define_class!(
 );
 
 impl AppDelegate {
-  fn new(mtm: MainThreadMarker, on_event: Box<dyn Fn(AppDelegateEvent)>) -> Retained<Self> {
-    let this = Self::alloc(mtm).set_ivars(CefAppDelegateIvars { on_event });
-    unsafe { msg_send![super(this), init] }
-  }
+    fn new(mtm: MainThreadMarker, on_event: Box<dyn Fn(AppDelegateEvent)>) -> Retained<Self> {
+        let this = Self::alloc(mtm).set_ivars(CefAppDelegateIvars { on_event });
+        unsafe { msg_send![super(this), init] }
+    }
 
-  fn emit(&self, event: AppDelegateEvent) {
-    (self.ivars().on_event)(event);
-  }
+    fn emit(&self, event: AppDelegateEvent) {
+        (self.ivars().on_event)(event);
+    }
 }
 
 impl CefWinitApplication {
-  extern_methods! {
-    #[unsafe(method(sharedApplication))]
-    pub fn shared_application() -> Retained<Self>;
-  }
-
-  pub fn last_dock_show(&self) -> Option<Instant> {
-    match self.ivars().last_dock_show_ms.get() {
-      0 => None,
-      // Store elapsed milliseconds + 1 so the zero-initialized ivar can mean
-      // "not set" for AppKit-created NSApplication instances.
-      milliseconds => Some(utils::instant_epoch() + Duration::from_millis(milliseconds - 1)),
+    extern_methods! {
+      #[unsafe(method(sharedApplication))]
+      pub fn shared_application() -> Retained<Self>;
     }
-  }
 
-  pub fn set_last_dock_show(&self, instant: Instant) {
-    let milliseconds = instant
-      .saturating_duration_since(utils::instant_epoch())
-      .as_millis()
-      .try_into()
-      .unwrap_or(u64::MAX);
-    self
-      .ivars()
-      .last_dock_show_ms
-      // Offset by one so `0` remains the zero-initialized "not set" sentinel.
-      .set(milliseconds.saturating_add(1));
-  }
+    pub fn last_dock_show(&self) -> Option<Instant> {
+        match self.ivars().last_dock_show_ms.get() {
+            0 => None,
+            // Store elapsed milliseconds + 1 so the zero-initialized ivar can mean
+            // "not set" for AppKit-created NSApplication instances.
+            milliseconds => Some(utils::instant_epoch() + Duration::from_millis(milliseconds - 1)),
+        }
+    }
 
-  fn delegate(&self) -> Option<&AppDelegate> {
-    unsafe { self.ivars().delegate.get().as_ref() }
-  }
+    pub fn set_last_dock_show(&self, instant: Instant) {
+        let milliseconds = instant
+            .saturating_duration_since(utils::instant_epoch())
+            .as_millis()
+            .try_into()
+            .unwrap_or(u64::MAX);
+        self.ivars()
+            .last_dock_show_ms
+            // Offset by one so `0` remains the zero-initialized "not set" sentinel.
+            .set(milliseconds.saturating_add(1));
+    }
+
+    fn delegate(&self) -> Option<&AppDelegate> {
+        unsafe { self.ivars().delegate.get().as_ref() }
+    }
 }
 
 pub fn setup_application() {
-  let _ = CefWinitApplication::shared_application();
-  let mtm = MainThreadMarker::new().expect("macOS application must start on the main thread");
-  assert!(NSApp(mtm).isKindOfClass(CefWinitApplication::class()));
+    let _ = CefWinitApplication::shared_application();
+    let mtm = MainThreadMarker::new().expect("macOS application must start on the main thread");
+    assert!(NSApp(mtm).isKindOfClass(CefWinitApplication::class()));
 }
 
 pub(crate) fn set_application_event_handler(
-  on_event: Box<dyn Fn(AppDelegateEvent)>,
+    on_event: Box<dyn Fn(AppDelegateEvent)>,
 ) -> Retained<AppDelegate> {
-  let mtm = MainThreadMarker::new().expect("macOS application must start on the main thread");
-  let delegate = AppDelegate::new(mtm, on_event);
-  let app = CefWinitApplication::shared_application();
+    let mtm = MainThreadMarker::new().expect("macOS application must start on the main thread");
+    let delegate = AppDelegate::new(mtm, on_event);
+    let app = CefWinitApplication::shared_application();
 
-  // `NSApplication.delegate` is weak. The runtime owns the retained delegate;
-  // the app stores only a non-owning pointer because AppKit creates the
-  // NSApplication singleton and its ivars must stay zero-initialized/no-drop.
-  app.ivars().delegate.set(&*delegate as *const AppDelegate);
-  app.setDelegate(Some(ProtocolObject::from_ref(&*delegate)));
-  delegate
+    // `NSApplication.delegate` is weak. The runtime owns the retained delegate;
+    // the app stores only a non-owning pointer because AppKit creates the
+    // NSApplication singleton and its ivars must stay zero-initialized/no-drop.
+    app.ivars().delegate.set(&*delegate as *const AppDelegate);
+    app.setDelegate(Some(ProtocolObject::from_ref(&*delegate)));
+    delegate
 }

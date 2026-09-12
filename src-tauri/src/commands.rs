@@ -413,9 +413,9 @@ async fn initialize_repository(
     let local_profile = state
         .load_or_create_identity(viewer.id, repository.id, published_profile.as_ref())
         .await?;
-    let profile = published_profile
-        .filter(|published| crate::protocol::same_public_profile(published, &local_profile))
-        .unwrap_or(local_profile);
+    // A second computer has its own protected keys. Never replace the primary
+    // messaging identity merely because that computer has just signed in.
+    let profile = published_profile.unwrap_or(local_profile);
     let profile = format!(
         "{}\n",
         serde_json::to_string_pretty(&profile).map_err(|_| Error::Local)?
@@ -457,7 +457,7 @@ async fn initialize_repository(
 }
 
 #[allow(clippy::too_many_arguments)]
-async fn write_repository_file(
+pub(crate) async fn write_repository_file(
     client: &GitHubClient,
     token: &OAuthToken,
     viewer: &ViewerIdentity,
@@ -485,49 +485,8 @@ async fn write_repository_file(
         "/repos/{}/{}/contents/{file_path}",
         viewer.login, repository.name
     );
-    let existing: ApiResponse<Value> = client
-        .api_json(
-            Method::GET,
-            &endpoint,
-            Some(token.access_token.expose_secret()),
-            None,
-            None,
-            &[],
-        )
-        .await?;
-    let mut body = serde_json::json!({
-        "message": commit_message,
-        "content": STANDARD.encode(content),
-    });
-    if let Some(existing) = existing.data {
-        let bytes = repository_content::decode_file_bytes(&existing, 512 * 1024, true)?;
-        if bytes == content {
-            return Ok(false);
-        }
-        if !update_existing {
-            return Err(Error::GitHubConflict);
-        }
-        let sha = existing
-            .get("sha")
-            .and_then(Value::as_str)
-            .filter(|value| {
-                matches!(value.len(), 40 | 64) && value.bytes().all(|byte| byte.is_ascii_hexdigit())
-            })
-            .ok_or(Error::InvalidGitHubResponse)?;
-        body["sha"] = Value::String(sha.to_owned());
-    }
-    let created: ApiResponse<Value> = client
-        .api_json(
-            Method::PUT,
-            &endpoint,
-            Some(token.access_token.expose_secret()),
-            None,
-            Some(&body),
-            &[409, 422],
-        )
-        .await?;
-    if matches!(created.status, 409 | 422) {
-        let raced: ApiResponse<Value> = client
+    for attempt in 0..4 {
+        let existing: ApiResponse<Value> = client
             .api_json(
                 Method::GET,
                 &endpoint,
@@ -537,13 +496,64 @@ async fn write_repository_file(
                 &[],
             )
             .await?;
-        let raced = raced.data.ok_or(Error::GitHubConflict)?;
-        if repository_content::decode_file_bytes(&raced, 512 * 1024, true)? != content {
+        let mut body = serde_json::json!({
+            "message": commit_message,
+            "content": STANDARD.encode(content),
+        });
+        if let Some(existing) = existing.data {
+            let bytes = repository_content::decode_file_bytes(&existing, 512 * 1024, true)?;
+            if bytes == content {
+                return Ok(false);
+            }
+            if !update_existing {
+                return Err(Error::GitHubConflict);
+            }
+            let sha = existing
+                .get("sha")
+                .and_then(Value::as_str)
+                .filter(|value| {
+                    matches!(value.len(), 40 | 64)
+                        && value.bytes().all(|byte| byte.is_ascii_hexdigit())
+                })
+                .ok_or(Error::InvalidGitHubResponse)?;
+            body["sha"] = Value::String(sha.to_owned());
+        }
+        let created: ApiResponse<Value> = client
+            .api_json(
+                Method::PUT,
+                &endpoint,
+                Some(token.access_token.expose_secret()),
+                None,
+                Some(&body),
+                &[409, 422],
+            )
+            .await?;
+        if !matches!(created.status, 409 | 422) {
+            return Ok(true);
+        }
+        if attempt == 3 {
+            let raced: ApiResponse<Value> = client
+                .api_json(
+                    Method::GET,
+                    &endpoint,
+                    Some(token.access_token.expose_secret()),
+                    None,
+                    None,
+                    &[],
+                )
+                .await?;
+            if raced.data.is_some_and(|value| {
+                repository_content::decode_file_bytes(&value, 512 * 1024, true)
+                    .is_ok_and(|bytes| bytes == content)
+            }) {
+                return Ok(false);
+            }
             return Err(Error::GitHubConflict);
         }
-        return Ok(false);
+        let jitter = u64::from(uuid::Uuid::new_v4().as_bytes()[0]);
+        sleep(Duration::from_millis(150 * (1_u64 << attempt) + jitter)).await;
     }
-    Ok(true)
+    Err(Error::GitHubConflict)
 }
 
 #[tauri::command]
@@ -690,7 +700,7 @@ async fn resolve_user(
     }))
 }
 
-async fn read_repository_json(
+pub(crate) async fn read_repository_json(
     client: &GitHubClient,
     token: &OAuthToken,
     owner: &str,
@@ -720,7 +730,7 @@ async fn read_repository_json(
     )?)))
 }
 
-async fn read_repository_json_conditional(
+pub(crate) async fn read_repository_json_conditional(
     state: &AppState,
     token: &OAuthToken,
     owner: &str,
@@ -756,7 +766,7 @@ async fn read_repository_json_conditional(
     )?)))
 }
 
-async fn list_repository_directory(
+pub(crate) async fn list_repository_directory(
     state: &AppState,
     token: &OAuthToken,
     owner: &str,
@@ -1070,7 +1080,7 @@ async fn ensure_temporary_star(
     state.persist_social(viewer.repository.id).await
 }
 
-async fn session_viewer(state: &AppState) -> Result<GitHubViewer> {
+pub(crate) async fn session_viewer(state: &AppState) -> Result<GitHubViewer> {
     state
         .session
         .read()
@@ -1080,7 +1090,7 @@ async fn session_viewer(state: &AppState) -> Result<GitHubViewer> {
         .ok_or(Error::SessionExpired)
 }
 
-async fn oauth_token(state: &AppState) -> Result<OAuthToken> {
+pub(crate) async fn oauth_token(state: &AppState) -> Result<OAuthToken> {
     Ok(OAuthToken {
         access_token: state.access_token().await?,
         refresh_token: None,
@@ -1089,7 +1099,7 @@ async fn oauth_token(state: &AppState) -> Result<OAuthToken> {
     })
 }
 
-fn viewer_identity(viewer: &GitHubViewer) -> ViewerIdentity {
+pub(crate) fn viewer_identity(viewer: &GitHubViewer) -> ViewerIdentity {
     ViewerIdentity {
         id: viewer.id,
         login: viewer.login.clone(),
@@ -1098,7 +1108,7 @@ fn viewer_identity(viewer: &GitHubViewer) -> ViewerIdentity {
     }
 }
 
-fn repository_identity(viewer: &GitHubViewer) -> RepositoryIdentity {
+pub(crate) fn repository_identity(viewer: &GitHubViewer) -> RepositoryIdentity {
     RepositoryIdentity {
         id: viewer.repository.id,
         name: viewer.repository.name.clone(),

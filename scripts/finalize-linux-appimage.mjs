@@ -11,6 +11,8 @@ import {
   rename,
   rm,
   unlink,
+  copyFile,
+  writeFile,
 } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -154,6 +156,12 @@ try {
 await cp(appRun, path.join(appDirectory, 'AppRun'), { force: true });
 await chmod(path.join(appDirectory, 'AppRun'), 0o755);
 
+await installLinuxMediaRuntime();
+await writeFile(
+  path.join(cefResourceDirectory, 'noosphere-package-kind'),
+  'appimage\n',
+);
+
 for (const entry of await readdir(cefResourceDirectory, {
   withFileTypes: true,
 })) {
@@ -246,4 +254,147 @@ async function firstExistingFile(candidates) {
     }
   }
   return null;
+}
+
+async function installLinuxMediaRuntime() {
+  const pluginSource = await firstExistingDirectory([
+    '/usr/lib/x86_64-linux-gnu/gstreamer-1.0',
+    '/lib/x86_64-linux-gnu/gstreamer-1.0',
+    '/usr/lib64/gstreamer-1.0',
+  ]);
+  const pipewireSource = await firstExistingDirectory([
+    '/usr/lib/x86_64-linux-gnu/pipewire-0.3',
+    '/lib/x86_64-linux-gnu/pipewire-0.3',
+    '/usr/lib64/pipewire-0.3',
+  ]);
+  const spaSource = await firstExistingDirectory([
+    '/usr/lib/x86_64-linux-gnu/spa-0.2',
+    '/lib/x86_64-linux-gnu/spa-0.2',
+    '/usr/lib64/spa-0.2',
+  ]);
+  const scanner = await firstExistingFile([
+    '/usr/lib/x86_64-linux-gnu/gstreamer1.0/gstreamer-1.0/gst-plugin-scanner',
+    '/lib/x86_64-linux-gnu/gstreamer1.0/gstreamer-1.0/gst-plugin-scanner',
+    '/usr/libexec/gstreamer-1.0/gst-plugin-scanner',
+  ]);
+  if (!pluginSource || !pipewireSource || !spaSource || !scanner) {
+    throw new Error('The GStreamer/PipeWire runtime is incomplete.');
+  }
+
+  const runtime = path.join(cefResourceDirectory, 'linux-media');
+  const pluginTarget = path.join(runtime, 'gstreamer-1.0');
+  await mkdir(pluginTarget, { recursive: true });
+  const pluginNames = new Set([
+    'libgstapp.so',
+    'libgstautodetect.so',
+    'libgstcoreelements.so',
+    'libgstlibav.so',
+    'libgstnvcodec.so',
+    'libgstopenh264.so',
+    'libgstopengl.so',
+    'libgstpipewire.so',
+    'libgstplayback.so',
+    'libgstqsv.so',
+    'libgsttypefindfunctions.so',
+    'libgstva.so',
+    'libgstvaapi.so',
+    'libgstvideoconvert.so',
+    'libgstvideoconvertscale.so',
+    'libgstvideoparsersbad.so',
+    'libgstvideorate.so',
+    'libgstvideoscale.so',
+    'libgstwaylandsink.so',
+    'libgstx264.so',
+    'libgstximagesink.so',
+    'libgstximagesrc.so',
+  ]);
+  const pluginFiles = (await readdir(pluginSource))
+    .filter((name) => pluginNames.has(name))
+    .map((name) => path.join(pluginSource, name));
+  const requiredPlugins = [
+    'libgstapp.so',
+    'libgstcoreelements.so',
+    'libgstpipewire.so',
+    'libgstplayback.so',
+    'libgstvideoparsersbad.so',
+    'libgstvideorate.so',
+    'libgstximagesrc.so',
+  ];
+  for (const name of requiredPlugins) {
+    if (!pluginFiles.some((file) => path.basename(file) === name)) {
+      throw new Error(`Required GStreamer plugin is missing: ${name}`);
+    }
+  }
+  for (const source of pluginFiles) {
+    await copyFile(source, path.join(pluginTarget, path.basename(source)));
+  }
+  await cp(pipewireSource, path.join(runtime, 'pipewire-0.3'), {
+    recursive: true,
+  });
+  await cp(spaSource, path.join(runtime, 'spa-0.2'), { recursive: true });
+  await cp('/usr/share/pipewire', path.join(runtime, 'pipewire'), {
+    recursive: true,
+  });
+  await cp('/usr/share/X11/xkb', path.join(runtime, 'xkb'), {
+    recursive: true,
+  });
+  await copyFile(scanner, path.join(runtime, 'gst-plugin-scanner'));
+  await chmod(path.join(runtime, 'gst-plugin-scanner'), 0o755);
+
+  const moduleFiles = await sharedObjects([pipewireSource, spaSource]);
+  await copyDependencyClosure([scanner, ...pluginFiles, ...moduleFiles]);
+}
+
+async function sharedObjects(directories) {
+  const files = [];
+  for (const directory of directories) {
+    for (const entry of await readdir(directory, {
+      recursive: true,
+      withFileTypes: true,
+    })) {
+      if (entry.isFile() && entry.name.endsWith('.so')) {
+        files.push(path.join(entry.parentPath, entry.name));
+      }
+    }
+  }
+  return files;
+}
+
+async function copyDependencyClosure(roots) {
+  const excluded = new Set([
+    'ld-linux-x86-64.so.2',
+    'libc.so.6',
+    'libdl.so.2',
+    'libm.so.6',
+    'libpthread.so.0',
+    'libresolv.so.2',
+    'librt.so.1',
+    'libutil.so.1',
+  ]);
+  const queue = [...roots];
+  const visited = new Set();
+  while (queue.length) {
+    const file = queue.shift();
+    const resolved = await realpath(file);
+    if (visited.has(resolved)) continue;
+    visited.add(resolved);
+    const result = spawnSync('ldd', [resolved], { encoding: 'utf8' });
+    if (result.status !== 0) continue;
+    for (const line of result.stdout.split('\n')) {
+      const match =
+        line.match(/=>\s+(\/\S+)\s+\(/) ?? line.match(/^\s*(\/\S+)\s+\(/);
+      if (!match) continue;
+      const dependency = match[1];
+      const name = path.basename(dependency);
+      if (excluded.has(name)) continue;
+      const target = path.join(appLibraryDirectory, name);
+      try {
+        await access(target);
+      } catch (error) {
+        if (error?.code !== 'ENOENT') throw error;
+        await copyFile(await realpath(dependency), target);
+      }
+      queue.push(dependency);
+    }
+  }
 }

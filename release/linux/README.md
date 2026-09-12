@@ -2,23 +2,28 @@
 
 **English** | [Français](README.fr.md)
 
-The Linux release targets 64-bit x86 systems. It includes its CEF/Chromium
-runtime and supports X11 desktops. Wayland desktops need XWayland.
+The Linux release targets 64-bit x86 systems. Remote desktop capture uses
+PipeWire and the system portal on Wayland. The Noosphere shell uses XWayland
+when the compositor cannot host CEF directly.
 
 ## AppImage
 
 Use the AppImage on distributions without a DEB or RPM package:
 
 ```bash
-chmod +x Noosphere_0.1.4_amd64.AppImage
-./Noosphere_0.1.4_amd64.AppImage
+chmod +x Noosphere_0.1.17_amd64.AppImage
+./Noosphere_0.1.17_amd64.AppImage
 ```
 
 On NixOS:
 
 ```bash
-nix-shell -p appimage-run --run 'appimage-run ./Noosphere_0.1.4_amd64.AppImage'
+nix-shell -p appimage-run --run 'appimage-run ./Noosphere_0.1.17_amd64.AppImage'
 ```
+
+The AppImage includes the GStreamer, PipeWire and SPA modules required by the
+native video engine. It still uses the desktop portal installed by the system
+to request screen and input access.
 
 ## Arch Linux
 
@@ -26,20 +31,20 @@ Install FUSE 2, then run the AppImage:
 
 ```bash
 sudo pacman -S --needed fuse2
-chmod +x Noosphere_0.1.4_amd64.AppImage
-./Noosphere_0.1.4_amd64.AppImage
+chmod +x Noosphere_0.1.17_amd64.AppImage
+./Noosphere_0.1.17_amd64.AppImage
 ```
 
 ## Debian and Ubuntu
 
 ```bash
-sudo apt install ./Noosphere_0.1.4_amd64.deb
+sudo apt install ./Noosphere_0.1.17_amd64.deb
 ```
 
 ## Fedora, Red Hat Enterprise Linux, and Rocky Linux
 
 ```bash
-sudo dnf install ./Noosphere_0.1.4_x86_64.rpm
+sudo dnf install ./Noosphere_0.1.17_x86_64.rpm
 ```
 
 The RPM installs and resolves its runtime libraries on Rocky Linux 9 and 10.
@@ -47,18 +52,37 @@ The RPM installs and resolves its runtime libraries on Rocky Linux 9 and 10.
 ## openSUSE
 
 ```bash
-sudo zypper install ./Noosphere_0.1.4_x86_64.rpm
+sudo zypper install ./Noosphere_0.1.17_x86_64.rpm
 ```
 
-## Wayland
+## Wayland and Linux desktops
 
-Noosphere currently runs through XWayland. With Hyprland managed by NixOS,
-enable `programs.hyprland.xwayland.enable = true` and restart the session.
+- GNOME and KDE use their XDG RemoteDesktop portal for display, keyboard and
+  pointer access.
+- Hyprland and Sway use their ScreenCast portal plus the Wayland
+  virtual-keyboard and wlr-virtual-pointer protocols.
+- X11 uses `ximagesrc` for capture and XTest for input; XWayland remains useful
+  for the main application shell.
 
-The AppImage passed the two-client smoke test on NixOS 26.05 under Xvfb. A
-Hyprland session still needs XWayland for a visible launch. The same media test
-runs in the Ubuntu 22.04 packaging container. On Arch Linux, the AppImage
-starts under X11; the media smoke test has not been validated there yet.
+Noosphere accepts the variable-rate PipeWire streams produced by Wayland
+compositors and normalizes them to the selected frame rate. The first Wayland
+capture opens the desktop's secure screen picker.
+
+For NixOS/Hyprland, import
+[`packaging/nixos/remote-test.nix`](../../packaging/nixos/remote-test.nix) or
+enable the same PipeWire, WirePlumber and portal services. Run
+`./scripts/test-linux-remote.sh` to verify the media path.
+
+If Hyprland is started by a custom script, import its environment into the user
+services before Noosphere starts:
+
+```bash
+dbus-update-activation-environment --systemd \
+  WAYLAND_DISPLAY XDG_CURRENT_DESKTOP HYPRLAND_INSTANCE_SIGNATURE
+```
+
+The reproducible NixOS/Hyprland and X11 validation report is in
+[`docs/linux-remote-validation.md`](../../docs/linux-remote-validation.md).
 
 ## Checksums
 

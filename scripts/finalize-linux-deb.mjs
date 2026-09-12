@@ -77,16 +77,31 @@ try {
     );
   }
   await chmod(path.join(cefResourceDirectory, 'chrome-sandbox'), 0o755);
+  await writeFile(
+    path.join(cefResourceDirectory, 'noosphere-package-kind'),
+    'deb\n',
+  );
   const controlPath = path.join(unpackedDirectory, 'DEBIAN', 'control');
   const control = await readFile(controlPath, 'utf8');
   const updated = control.replace(/^Depends:\s*(.+)$/m, (_, value) => {
+    const remoteDesktopDependencies = [
+      'gstreamer1.0-libav',
+      'gstreamer1.0-pipewire',
+      'gstreamer1.0-plugins-bad',
+      'gstreamer1.0-plugins-base',
+      'gstreamer1.0-plugins-good',
+      'gstreamer1.0-x',
+      'xdg-desktop-portal',
+    ];
     const dependencies = value
       .split(',')
       .map((dependency) => dependency.trim())
       .filter(
         (dependency) => dependency && !dependency.startsWith('libwebkit2gtk-'),
       );
-    return `Depends: ${[...new Set(dependencies)].join(', ')}`;
+    return `Depends: ${[
+      ...new Set([...dependencies, ...remoteDesktopDependencies]),
+    ].join(', ')}`;
   });
   if (updated === control) {
     throw new Error('The DEB dependency list could not be updated.');

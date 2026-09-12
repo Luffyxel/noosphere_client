@@ -10,24 +10,21 @@
 
 use std::borrow::Cow;
 
+use tauri_runtime::Icon;
 #[cfg(target_os = "macos")]
 use tauri_runtime::dpi::LogicalRect;
 #[cfg(not(target_os = "macos"))]
 use tauri_runtime::dpi::PhysicalRect;
 use tauri_runtime::dpi::{Pixel, Rect};
 use tauri_runtime::webview::{DownloadEvent, PageLoadEvent};
-use tauri_runtime::Icon;
 use url::Url;
 
 // Published tauri-runtime keeps these handler aliases private; the types
 // themselves (boxed fields on PendingWebview) are identical.
-pub(crate) type UriSchemeProtocolHandler = dyn Fn(
-    &str,
-    http::Request<Vec<u8>>,
-    Box<dyn FnOnce(http::Response<Cow<'static, [u8]>>) + Send>,
-  ) + Send
-  + Sync
-  + 'static;
+pub(crate) type UriSchemeProtocolHandler = dyn Fn(&str, http::Request<Vec<u8>>, Box<dyn FnOnce(http::Response<Cow<'static, [u8]>>) + Send>)
+    + Send
+    + Sync
+    + 'static;
 
 pub(crate) type NavigationHandler = dyn Fn(&Url) -> bool + Send;
 
@@ -41,11 +38,8 @@ pub(crate) type DownloadHandler = dyn Fn(DownloadEvent) -> bool + Send + Sync;
 // never invoked from CEF: constructing the published `NewWindowFeatures`
 // requires a platform webview handle (`webkit2gtk::WebView` on Linux) that a
 // CEF browser cannot provide. See `life_span.rs` for how presence is used.
-pub(crate) type NewWindowHandler = dyn Fn(
-    Url,
-    tauri_runtime::webview::NewWindowFeatures,
-  ) -> tauri_runtime::webview::NewWindowResponse
-  + Send;
+pub(crate) type NewWindowHandler = dyn Fn(Url, tauri_runtime::webview::NewWindowFeatures) -> tauri_runtime::webview::NewWindowResponse
+    + Send;
 
 // feat/cef-only: published PendingWebview has no address-changed channel, so
 // this stays crate-internal (currently never populated) until upstream ships.
@@ -53,32 +47,26 @@ pub(crate) type AddressChangedHandler = dyn Fn(&Url) + Send + Sync + 'static;
 
 // feat/cef adds these conversions on tauri_runtime::dpi::Rect directly.
 #[cfg(not(target_os = "macos"))]
-pub(crate) fn rect_to_physical<P: Pixel, S: Pixel>(
-  rect: Rect,
-  scale: f64,
-) -> PhysicalRect<P, S> {
-  PhysicalRect {
-    position: rect.position.to_physical(scale),
-    size: rect.size.to_physical(scale),
-  }
+pub(crate) fn rect_to_physical<P: Pixel, S: Pixel>(rect: Rect, scale: f64) -> PhysicalRect<P, S> {
+    PhysicalRect {
+        position: rect.position.to_physical(scale),
+        size: rect.size.to_physical(scale),
+    }
 }
 
 #[cfg(target_os = "macos")]
-pub(crate) fn rect_to_logical<P: Pixel, S: Pixel>(
-  rect: Rect,
-  scale: f64,
-) -> LogicalRect<P, S> {
-  LogicalRect {
-    position: rect.position.to_logical(scale),
-    size: rect.size.to_logical(scale),
-  }
+pub(crate) fn rect_to_logical<P: Pixel, S: Pixel>(rect: Rect, scale: f64) -> LogicalRect<P, S> {
+    LogicalRect {
+        position: rect.position.to_logical(scale),
+        size: rect.size.to_logical(scale),
+    }
 }
 
 // feat/cef adds Icon::into_owned.
 pub(crate) fn icon_into_owned(icon: Icon<'_>) -> Icon<'static> {
-  Icon {
-    rgba: Cow::Owned(icon.rgba.into_owned()),
-    width: icon.width,
-    height: icon.height,
-  }
+    Icon {
+        rgba: Cow::Owned(icon.rgba.into_owned()),
+        width: icon.width,
+        height: icon.height,
+    }
 }

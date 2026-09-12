@@ -14,89 +14,96 @@ use crate::{webview::AppWebview, window::AppWindow};
 use super::utils;
 
 impl AppWebview {
-  pub(crate) fn nsview(&self) -> Retained<NSView> {
-    let handle = self.host.window_handle();
-    let view = handle.cast::<NSView>();
-    unsafe { Retained::<NSView>::retain(view).expect("failed to retain NSView") }
-  }
+    pub(crate) fn nsview(&self) -> Retained<NSView> {
+        let handle = self.host.window_handle();
+        let view = handle.cast::<NSView>();
+        unsafe { Retained::<NSView>::retain(view).expect("failed to retain NSView") }
+    }
 
-  pub(crate) fn set_background_color(&self, color: Option<Color>) {
-    let nsview = self.nsview();
+    pub(crate) fn set_background_color(&self, color: Option<Color>) {
+        let nsview = self.nsview();
 
-    nsview.setWantsLayer(true);
+        nsview.setWantsLayer(true);
 
-    let Some(layer) = nsview.layer() else {
-      return;
-    };
+        let Some(layer) = nsview.layer() else {
+            return;
+        };
 
-    let nscolor = color
-      .map(utils::ns_color_from_tauri_color)
-      .unwrap_or_else(NSColor::windowBackgroundColor);
+        let nscolor = color
+            .map(utils::ns_color_from_tauri_color)
+            .unwrap_or_else(NSColor::windowBackgroundColor);
 
-    let cg_color = nscolor.CGColor();
-    layer.setBackgroundColor(Some(&*cg_color));
-  }
+        let cg_color = nscolor.CGColor();
+        layer.setBackgroundColor(Some(&*cg_color));
+    }
 
-  pub(crate) fn bounds(&self) -> Option<Rect> {
-    let nsview = self.nsview();
+    pub(crate) fn bounds(&self) -> Option<Rect> {
+        let nsview = self.nsview();
 
-    let parent = unsafe { nsview.superview()? };
-    let parent_frame = parent.frame();
-    let frame = nsview.frame();
+        let parent = unsafe { nsview.superview()? };
+        let parent_frame = parent.frame();
+        let frame = nsview.frame();
 
-    let y = if parent.isFlipped() {
-      frame.origin.y
-    } else {
-      parent_frame.size.height - frame.origin.y - frame.size.height
-    };
+        let y = if parent.isFlipped() {
+            frame.origin.y
+        } else {
+            parent_frame.size.height - frame.origin.y - frame.size.height
+        };
 
-    let position = LogicalPosition::new(frame.origin.x, y);
-    let size = LogicalSize::new(frame.size.width, frame.size.height);
+        let position = LogicalPosition::new(frame.origin.x, y);
+        let size = LogicalSize::new(frame.size.width, frame.size.height);
 
-    Some(Rect {
-      position: position.into(),
-      size: size.into(),
-    })
-  }
+        Some(Rect {
+            position: position.into(),
+            size: size.into(),
+        })
+    }
 
-  pub(crate) fn reparent(&self, parent: &AppWindow) {
-    let view = self.nsview();
-    let parent = parent.nsview();
+    pub(crate) fn reparent(&self, parent: &AppWindow) {
+        let view = self.nsview();
+        let parent = parent.nsview();
 
-    parent.addSubview(&view);
-  }
+        parent.addSubview(&view);
+    }
 
-  pub(crate) fn apply_visible(&self, visible: bool) {
-    let nsview = self.nsview();
+    pub(crate) fn apply_visible(&self, visible: bool) {
+        let nsview = self.nsview();
 
-    nsview.setHidden(!visible);
-  }
+        nsview.setHidden(!visible);
+    }
 
-  pub(crate) fn destroy_native(&self) {
-    let nsview = self.nsview();
-    nsview.removeFromSuperview();
-  }
+    pub(crate) fn destroy_native(&self) {
+        let nsview = self.nsview();
+        nsview.removeFromSuperview();
+    }
 
-  pub(crate) fn apply_physical_bounds(&self, scale: f64, x: i32, y: i32, width: i32, height: i32) {
-    let nsview = self.nsview();
-    let Some(parent) = (unsafe { nsview.superview() }) else {
-      return;
-    };
+    pub(crate) fn apply_physical_bounds(
+        &self,
+        scale: f64,
+        x: i32,
+        y: i32,
+        width: i32,
+        height: i32,
+    ) {
+        let nsview = self.nsview();
+        let Some(parent) = (unsafe { nsview.superview() }) else {
+            return;
+        };
 
-    // CEF provides child bounds as physical pixels, but NSView frames are logical pixels.
-    let x = x as f64 / scale;
-    let y = y as f64 / scale;
-    let width = width as f64 / scale;
-    let height = height as f64 / scale;
+        // CEF provides child bounds as physical pixels, but NSView frames are logical pixels.
+        let x = x as f64 / scale;
+        let y = y as f64 / scale;
+        let width = width as f64 / scale;
+        let height = height as f64 / scale;
 
-    let parent_frame = parent.frame();
-    let y = if parent.isFlipped() {
-      y
-    } else {
-      parent_frame.size.height - (y + height)
-    };
+        let parent_frame = parent.frame();
+        let y = if parent.isFlipped() {
+            y
+        } else {
+            parent_frame.size.height - (y + height)
+        };
 
-    let frame = NSRect::new(NSPoint::new(x, y), NSSize::new(width, height));
-    nsview.setFrame(frame);
-  }
+        let frame = NSRect::new(NSPoint::new(x, y), NSSize::new(width, height));
+        nsview.setFrame(frame);
+    }
 }

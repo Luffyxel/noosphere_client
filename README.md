@@ -8,8 +8,8 @@ account.
 
 ## Downloads
 
-- [Windows installer](Noosphere_0.1.7_x64-setup.exe)
-- Linux: [AppImage](https://github.com/Luffyxel/noosphere_client/releases/download/v0.1.7/Noosphere_0.1.7_amd64.AppImage), [DEB](https://github.com/Luffyxel/noosphere_client/releases/download/v0.1.7/Noosphere_0.1.7_amd64.deb), [RPM](https://github.com/Luffyxel/noosphere_client/releases/download/v0.1.7/Noosphere_0.1.7_x86_64.rpm), [checksums](https://github.com/Luffyxel/noosphere_client/releases/download/v0.1.7/SHA256SUMS.txt)
+- [Windows portable](Noosphere_0.1.17_portable_x64.exe) · [installer](Noosphere_0.1.17_x64-setup.exe)
+- Linux: [AppImage](https://github.com/Luffyxel/noosphere_client/releases/download/v0.1.17/Noosphere_0.1.17_amd64.AppImage), [DEB](https://github.com/Luffyxel/noosphere_client/releases/download/v0.1.17/Noosphere_0.1.17_amd64.deb), [RPM](https://github.com/Luffyxel/noosphere_client/releases/download/v0.1.17/Noosphere_0.1.17_x86_64.rpm), [checksums](https://github.com/Luffyxel/noosphere_client/releases/download/v0.1.17/SHA256SUMS.txt)
 
 Installation notes and checksums are kept in [`release/`](release/README.md).
 
@@ -47,6 +47,33 @@ GitHub can observe repository metadata such as commit dates, activity volume,
 and the accounts involved. WebRTC exposes the network information required by
 ICE to both peers.
 
+## Remote desktop development
+
+A native remote desktop engine is being developed in `src-tauri/remote`.
+The dedicated Remote Desktop section discovers machines belonging to your account
+and friends. Discovery starts at sign-in without enabling hosting. Friends can
+receive access to your computer while their own host is disabled. Each device
+needs a build supporting the directory. Settings list users, including your own
+account, and save screen, keyboard, mouse and unattended access even before a
+machine is discovered. The rule is applied to that user's verified machines as
+they appear. Granting screen access enables the local host.
+Encrypted GitHub mailboxes carry requests and decisions; grants remain in protected
+local storage.
+A second computer keeps its own identity without replacing the first computer's
+published profile. Chat keys and history are not transferred between computers.
+
+On Windows, an approved request can now open a direct native H.264 session with
+GPU capture/encoding, QUIC DATAGRAM, GPU viewing and keyboard/mouse return. Bitrate,
+keyframes and FEC react to client network feedback. Encrypted GitHub machine mailboxes
+carry signaling independently of the selected conversation.
+STUN advertises a public candidate when the router permits it; without a TURN server,
+some CGNAT paths remain unreachable. No router port forwarding is required. Windows
+asks once for administrator approval to allow inbound UDP for the exact executable;
+the UAC prompt opens Noosphere directly without a PowerShell window. Moving or
+replacing the portable build triggers that approval again. Version 0.1.17 is a
+validation build rather than the cross-platform V0.2.0. See the [engine documentation](docs/remote-desktop.md)
+for implementation status and reproducible benchmarks.
+
 ## Linux
 
 The Linux release is available for x86_64 in three formats:
@@ -56,17 +83,26 @@ The Linux release is available for x86_64 in three formats:
 - RPM for Fedora, Red Hat Enterprise Linux 9 and 10, Rocky Linux 9 and 10,
   and openSUSE.
 
-The packages include the CEF/Chromium runtime used by the client. X11 is
-supported directly; Wayland sessions require XWayland.
+The packages include the CEF/Chromium runtime used by the client. Remote
+desktop capture uses PipeWire and the system portal on Wayland. XWayland may
+still be required for the main application shell.
+
+GNOME and KDE use the RemoteDesktop portal. Hyprland and Sway use ScreenCast
+with native Wayland virtual-input protocols. X11 sessions use `ximagesrc` and
+XTest. Video queues are capped at one frame so stale frames cannot accumulate.
+Real capture has been validated on NixOS 26.05 with Hyprland 0.55.4;
+variable-rate PipeWire streams are normalized to the selected frame rate
+without blocking newer frames.
 
 On NixOS, run the AppImage through `appimage-run`:
 
 ```bash
-nix-shell -p appimage-run --run 'appimage-run ./Noosphere_0.1.7_amd64.AppImage'
+nix-shell -p appimage-run --run 'appimage-run ./Noosphere_0.1.17_amd64.AppImage'
 ```
 
-For Hyprland managed by NixOS, enable
-`programs.hyprland.xwayland.enable = true` and restart the session. See the
+For Hyprland managed by NixOS, enable PipeWire, WirePlumber,
+`xdg-desktop-portal-hyprland`, and XWayland. A reproducible configuration is
+provided in `packaging/nixos/remote-test.nix`. See the
 [Linux package notes](release/linux/README.md) for installation commands.
 
 ## Building from source

@@ -11,6 +11,7 @@ import {
   Mic,
   MicOff,
   MessageCircle,
+  Monitor,
   Phone,
   PhoneOff,
   Plus,
@@ -36,6 +37,7 @@ import {
 } from 'react';
 
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
+import { AppUpdater } from '@/components/app-updater';
 import { BrandLoader, BrandLogo } from '@/components/brand';
 import { Button } from '@/components/ui/button';
 import {
@@ -56,6 +58,10 @@ import type {
   UserLookup,
 } from '@/lib/desktop-bridge';
 import { captureCallMedia } from '@/lib/media-capture';
+import { RemoteWorkspace } from '@/components/remote-access/workspace';
+import { IncomingRemoteRequest } from '@/components/remote-access/permissions';
+import { RemoteSessionOverlay } from '@/components/remote-access/session-overlay';
+import { useRemoteAccess } from '@/lib/use-remote-access';
 import { mergeMessages, type DisplayMessage } from '@/lib/message-list';
 import { startSocialRefreshLoop } from '@/lib/social-refresh';
 import { useDirectPeer } from '@/lib/use-direct-peer';
@@ -1107,6 +1113,9 @@ function NoosphereApp({
   initialSocialState: SocialState;
   onSignOut: () => void;
 }) {
+  const [section, setSection] = useState<'messages' | 'remote'>('messages');
+  const [remoteSettingsOpen, setRemoteSettingsOpen] = useState(false);
+  const remoteAccess = useRemoteAccess(viewer.id, section === 'remote');
   const [conversations, setConversations] = useState<Conversation[]>(
     initialSocialState.conversations,
   );
@@ -1868,22 +1877,41 @@ function NoosphereApp({
   }
 
   return (
-    <main className="flex h-dvh min-h-[620px] overflow-hidden bg-[#1c1c1e] font-sans text-[#f5f5f7]">
+    <main className="relative flex h-dvh min-h-[620px] overflow-hidden bg-[#1c1c1e] font-sans text-[#f5f5f7]">
       <aside className="flex w-[72px] shrink-0 flex-col items-center border-r border-white/[.07] bg-[#151517] py-3">
         <button
           type="button"
           aria-label="Messages directs"
+          aria-current={section === 'messages' ? 'page' : undefined}
           className={cn(
             'grid size-11 place-items-center rounded-[13px] text-white transition',
-            selectedId === null
+            section === 'messages'
               ? 'bg-[var(--noosphere-accent-strong)]'
               : 'bg-[#2c2c2e] hover:bg-[#3a3a3c]',
           )}
-          onClick={() => setSelectedId(null)}
+          onClick={() => {
+            setSection('messages');
+            setSelectedId(null);
+          }}
         >
           <BrandLogo className="size-7" />
         </button>
         <div className="my-3 h-px w-7 bg-white/[.08]" />
+        <button
+          type="button"
+          aria-label="Bureau à distance"
+          title="Bureau à distance"
+          aria-current={section === 'remote' ? 'page' : undefined}
+          className={cn(
+            'mb-3 grid size-11 place-items-center rounded-[13px] transition',
+            section === 'remote'
+              ? 'bg-[var(--noosphere-accent-strong)] text-white'
+              : 'bg-[#242426] text-[#8e8e93] hover:bg-[#303033] hover:text-white',
+          )}
+          onClick={() => setSection('remote')}
+        >
+          <Monitor className="size-5" />
+        </button>
         <button
           type="button"
           className="grid size-10 place-items-center rounded-[12px] bg-[#242426] text-[var(--noosphere-accent)] transition hover:bg-[#303033]"
@@ -1892,9 +1920,35 @@ function NoosphereApp({
         >
           <Plus className="size-5" />
         </button>
+        <button
+          type="button"
+          aria-label="Réglages du bureau à distance"
+          title="Réglages du bureau à distance"
+          className="mt-auto grid size-10 place-items-center rounded-[12px] text-[#8e8e93] hover:bg-white/[.06] hover:text-white"
+          onClick={() => {
+            setSection('remote');
+            setRemoteSettingsOpen(true);
+          }}
+        >
+          <Settings2 className="size-5" />
+        </button>
       </aside>
 
-      <aside className="hidden w-[272px] shrink-0 flex-col border-r border-white/[.07] bg-[#202022] md:flex">
+      {section === 'remote' && (
+        <RemoteWorkspace
+          viewer={viewer}
+          friends={conversations}
+          remote={remoteAccess}
+          settingsOpen={remoteSettingsOpen}
+          onSettingsChange={setRemoteSettingsOpen}
+        />
+      )}
+      <aside
+        className={cn(
+          'hidden w-[272px] shrink-0 flex-col border-r border-white/[.07] bg-[#202022]',
+          section === 'messages' && 'md:flex',
+        )}
+      >
         <header className="flex h-[58px] items-center justify-between border-b border-white/[.07] px-4">
           <p className="text-[15px] font-semibold tracking-[-.01em]">
             Messages
@@ -1985,7 +2039,12 @@ function NoosphereApp({
         </div>
       </aside>
 
-      <section className="relative flex min-w-0 flex-1 flex-col">
+      <section
+        className={cn(
+          'relative min-w-0 flex-1 flex-col',
+          section === 'messages' ? 'flex' : 'hidden',
+        )}
+      >
         <header className="flex h-[58px] shrink-0 items-center justify-between border-b border-white/[.07] px-5">
           <div className="flex min-w-0 items-center gap-2.5">
             {selectedConversation ? (
@@ -2105,22 +2164,6 @@ function NoosphereApp({
               </div>
             )}
           </div>
-        )}
-
-        {directConversation && (
-          <VoiceCallOverlay
-            status={displayedCallStatus}
-            peer={directConversation.peer}
-            localStream={localStream}
-            remoteStream={remoteStream}
-            microphoneEnabled={microphoneEnabled}
-            cameraEnabled={cameraEnabled}
-            onAccept={acceptIncomingCall}
-            onDecline={declineCall}
-            onEnd={endCall}
-            onToggleMicrophone={toggleMicrophone}
-            onToggleCamera={toggleCamera}
-          />
         )}
 
         {callError && (
@@ -2381,6 +2424,21 @@ function NoosphereApp({
           </ScrollArea>
         )}
       </section>
+      {directConversation && (
+        <VoiceCallOverlay
+          status={displayedCallStatus}
+          peer={directConversation.peer}
+          localStream={localStream}
+          remoteStream={remoteStream}
+          microphoneEnabled={microphoneEnabled}
+          cameraEnabled={cameraEnabled}
+          onAccept={acceptIncomingCall}
+          onDecline={declineCall}
+          onEnd={endCall}
+          onToggleMicrophone={toggleMicrophone}
+          onToggleCamera={toggleCamera}
+        />
+      )}
 
       <AddFriendDialog
         open={addFriendOpen}
@@ -2397,6 +2455,7 @@ function NoosphereApp({
         }}
         onMessage={() => {
           if (!profileConversation) return;
+          setSection('messages');
           setSelectedId(profileConversation.id);
           setFriendProfileId(null);
         }}
@@ -2414,6 +2473,8 @@ function NoosphereApp({
         onChange={updateMediaSettings}
         onRequestAccess={() => void refreshMediaDevices(true)}
       />
+      <IncomingRemoteRequest remote={remoteAccess} />
+      <RemoteSessionOverlay remote={remoteAccess} />
     </main>
   );
 }
@@ -2482,15 +2543,24 @@ export default function Home() {
     setSession(null);
   }
 
+  let content;
   if (session === undefined) {
-    return <LoadingScreen />;
+    content = <LoadingScreen />;
+  } else if (!session) {
+    content = <LoginScreen onGitHub={openSession} />;
+  } else {
+    content = (
+      <NoosphereApp
+        viewer={session.viewer}
+        initialSocialState={session.social}
+        onSignOut={() => void signOut()}
+      />
+    );
   }
-  if (!session) return <LoginScreen onGitHub={openSession} />;
   return (
-    <NoosphereApp
-      viewer={session.viewer}
-      initialSocialState={session.social}
-      onSignOut={() => void signOut()}
-    />
+    <>
+      {content}
+      <AppUpdater />
+    </>
   );
 }

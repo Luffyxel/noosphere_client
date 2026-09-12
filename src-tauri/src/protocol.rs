@@ -632,6 +632,52 @@ pub fn serialize_identity(secret: &DeviceSecret) -> Result<SecretString> {
     Ok(SecretString::from(serialized))
 }
 
+pub(crate) fn remote_identity(
+    secret: &DeviceSecret,
+) -> Result<noosphere_remote::identity::SignalIdentity> {
+    let private = zeroize::Zeroizing::new(decode(&secret.identity_private_key, 32)?);
+    noosphere_remote::identity::SignalIdentity::from_private_key(secret.github_user_id, &private)
+        .map_err(|_| Error::Crypto)
+}
+
+pub(crate) fn remote_credentials(
+    secret: &DeviceSecret,
+    machine_id: [u8; 16],
+) -> Result<noosphere_remote::diagnostic::Credentials> {
+    Ok(noosphere_remote::diagnostic::Credentials {
+        github_user_id: secret.github_user_id,
+        private_key: decode(&secret.identity_private_key, 32)?,
+        machine_id,
+    })
+}
+
+#[cfg(test)]
+mod remote_identity_tests {
+    use super::*;
+    #[test]
+    fn remote_authentication_uses_the_existing_identity_without_modifying_ratchets() {
+        use noosphere_remote::transport::session::IdentityAuthenticator as _;
+        let (secret, _) = create_identity(42, 420).unwrap();
+        let before = serde_json::to_string(&secret).unwrap();
+        let identity = remote_identity(&secret).unwrap();
+        let principal = identity.principal([1; 16]).unwrap();
+        let transcript = b"noosphere/remote/auth/v1\0session-exporter-and-binding";
+        let signature = identity.sign(transcript).unwrap();
+        identity.verify(&principal, transcript, &signature).unwrap();
+        assert!(
+            identity
+                .verify(
+                    &principal,
+                    b"noosphere/remote/auth/v1\0another-session",
+                    &signature
+                )
+                .is_err()
+        );
+        assert!(identity.sign(b"unrelated-protocol").is_err());
+        assert_eq!(serde_json::to_string(&secret).unwrap(), before);
+    }
+}
+
 pub fn forget_peer_owned(mut secret: DeviceSecret, github_user_id: u64) -> Result<DeviceSecret> {
     let peer = address(github_user_id)?.to_string();
     secret.sessions.retain(|entry| entry.address != peer);
@@ -1207,10 +1253,13 @@ fn ephemeral_message_id(domain: &[u8], conversation_id: &str, sender_id: u64) ->
 }
 
 fn run_local<T>(future: impl std::future::Future<Output = Result<T>>) -> Result<T> {
-    tokio::runtime::Builder::new_current_thread()
-        .build()
-        .map_err(|_| Error::Local)?
-        .block_on(future)
+    // libsignal exposes its store operations through async traits even though
+    // this in-memory implementation completes them synchronously.  A separate
+    // Tokio runtime used to work in CLI tests, but panicked when a Tauri command
+    // called this code from an existing Tokio worker on Linux.  futures-lite's
+    // local executor can drive these self-contained futures without nesting a
+    // runtime or tying the cryptographic state to Tauri's scheduler.
+    futures_lite::future::block_on(future)
 }
 
 pub async fn create_acceptance(

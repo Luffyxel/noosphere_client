@@ -1,3 +1,5 @@
+import type { RemoteAccessApi } from '@/lib/remote-access';
+
 export type GitHubViewer = {
   id: number;
   login: string;
@@ -80,6 +82,7 @@ export type CallSignal = {
 };
 
 export type NoosphereDesktopApi = {
+  remoteAccess: RemoteAccessApi;
   isDesktop: true;
   platform: string;
   github: {

@@ -3,5 +3,5 @@
   "identifier": "desktop",
   "description": "Permissions minimales de la fenêtre principale.",
   "windows": ["main"],
-  "permissions": ["core:default"]
+  "permissions": ["core:default", "process:allow-restart", "updater:default"]
 }

@@ -6,21 +6,21 @@ use std::cell::Cell;
 
 use objc2::{DefinedClass, MainThreadMarker, MainThreadOnly, define_class, msg_send, rc::Retained};
 use objc2_app_kit::{
-  NSApplication, NSBezierPath, NSColor, NSDockTile, NSImageView, NSProgressIndicator, NSView,
+    NSApplication, NSBezierPath, NSColor, NSDockTile, NSImageView, NSProgressIndicator, NSView,
 };
 use objc2_foundation::{NSInsetRect, NSPoint, NSRect, NSSize};
 use tauri_runtime::{ProgressBarState, ProgressBarStatus};
 
 struct DockProgressIndicatorIvars {
-  state: Cell<ProgressBarStatus>,
+    state: Cell<ProgressBarStatus>,
 }
 
 impl Default for DockProgressIndicatorIvars {
-  fn default() -> Self {
-    Self {
-      state: Cell::new(ProgressBarStatus::None),
+    fn default() -> Self {
+        Self {
+            state: Cell::new(ProgressBarStatus::None),
+        }
     }
-  }
 }
 
 define_class!(
@@ -57,82 +57,82 @@ define_class!(
 );
 
 impl DockProgressIndicator {
-  fn new(mtm: MainThreadMarker, frame: NSRect) -> Retained<Self> {
-    let this = Self::alloc(mtm).set_ivars(DockProgressIndicatorIvars::default());
-    unsafe { msg_send![super(this), initWithFrame: frame] }
-  }
+    fn new(mtm: MainThreadMarker, frame: NSRect) -> Retained<Self> {
+        let this = Self::alloc(mtm).set_ivars(DockProgressIndicatorIvars::default());
+        unsafe { msg_send![super(this), initWithFrame: frame] }
+    }
 
-  fn set_state(&self, status: ProgressBarStatus) {
-    self.ivars().state.set(status);
-  }
+    fn set_state(&self, status: ProgressBarStatus) {
+        self.ivars().state.set(status);
+    }
 }
 
 fn draw_rounded_rect(rect: NSRect) {
-  let radius = rect.size.height / 2.0;
-  NSBezierPath::bezierPathWithRoundedRect_xRadius_yRadius(rect, radius, radius).fill();
+    let radius = rect.size.height / 2.0;
+    NSBezierPath::bezierPathWithRoundedRect_xRadius_yRadius(rect, radius, radius).fill();
 }
 
 pub fn set_dock_progress_bar(state: ProgressBarState) {
-  let Some(mtm) = MainThreadMarker::new() else {
-    return;
-  };
-  let app = NSApplication::sharedApplication(mtm);
-  let dock_tile = app.dockTile();
-  let Some(progress_indicator) = dock_progress_indicator(&app, &dock_tile, mtm) else {
-    return;
-  };
+    let Some(mtm) = MainThreadMarker::new() else {
+        return;
+    };
+    let app = NSApplication::sharedApplication(mtm);
+    let dock_tile = app.dockTile();
+    let Some(progress_indicator) = dock_progress_indicator(&app, &dock_tile, mtm) else {
+        return;
+    };
 
-  if let Some(progress) = state.progress {
-    progress_indicator.setDoubleValue(progress.min(100) as f64);
-    progress_indicator.setHidden(false);
-  }
+    if let Some(progress) = state.progress {
+        progress_indicator.setDoubleValue(progress.min(100) as f64);
+        progress_indicator.setHidden(false);
+    }
 
-  if let Some(status) = state.status {
-    progress_indicator.set_state(status);
-    progress_indicator.setHidden(matches!(status, ProgressBarStatus::None));
-  }
+    if let Some(status) = state.status {
+        progress_indicator.set_state(status);
+        progress_indicator.setHidden(matches!(status, ProgressBarStatus::None));
+    }
 
-  dock_tile.display();
+    dock_tile.display();
 }
 
 fn dock_progress_indicator(
-  app: &NSApplication,
-  dock_tile: &NSDockTile,
-  mtm: MainThreadMarker,
+    app: &NSApplication,
+    dock_tile: &NSDockTile,
+    mtm: MainThreadMarker,
 ) -> Option<Retained<DockProgressIndicator>> {
-  let content_view = match dock_tile.contentView(mtm) {
-    Some(content_view) => content_view,
-    None => {
-      let app_icon = app.applicationIconImage()?;
-      let image_view = NSImageView::imageViewWithImage(&app_icon, mtm);
-      dock_tile.setContentView(Some(&image_view));
-      dock_tile.contentView(mtm)?
+    let content_view = match dock_tile.contentView(mtm) {
+        Some(content_view) => content_view,
+        None => {
+            let app_icon = app.applicationIconImage()?;
+            let image_view = NSImageView::imageViewWithImage(&app_icon, mtm);
+            dock_tile.setContentView(Some(&image_view));
+            dock_tile.contentView(mtm)?
+        }
+    };
+
+    if let Some(progress_indicator) = existing_progress_indicator(&content_view) {
+        return Some(progress_indicator);
     }
-  };
 
-  if let Some(progress_indicator) = existing_progress_indicator(&content_view) {
-    return Some(progress_indicator);
-  }
+    let dock_tile_size = dock_tile.size();
+    let frame = NSRect::new(
+        NSPoint::new(0.0, 0.0),
+        NSSize::new(dock_tile_size.width, 15.0),
+    );
+    let progress_indicator = DockProgressIndicator::new(mtm, frame);
+    content_view.addSubview(&progress_indicator);
 
-  let dock_tile_size = dock_tile.size();
-  let frame = NSRect::new(
-    NSPoint::new(0.0, 0.0),
-    NSSize::new(dock_tile_size.width, 15.0),
-  );
-  let progress_indicator = DockProgressIndicator::new(mtm, frame);
-  content_view.addSubview(&progress_indicator);
-
-  Some(progress_indicator)
+    Some(progress_indicator)
 }
 
 fn existing_progress_indicator(content_view: &NSView) -> Option<Retained<DockProgressIndicator>> {
-  let subviews = content_view.subviews();
-  for idx in 0..subviews.count() {
-    let subview = subviews.objectAtIndex(idx);
-    if let Ok(progress_indicator) = subview.downcast::<DockProgressIndicator>() {
-      return Some(progress_indicator);
+    let subviews = content_view.subviews();
+    for idx in 0..subviews.count() {
+        let subview = subviews.objectAtIndex(idx);
+        if let Ok(progress_indicator) = subview.downcast::<DockProgressIndicator>() {
+            return Some(progress_indicator);
+        }
     }
-  }
 
-  None
+    None
 }
