@@ -13,6 +13,7 @@ const MAX_PROTECTED_BYTES: usize = 32 * 1024 * 1024;
 #[cfg(target_os = "linux")]
 const MAX_PROTECTED_BYTES: usize = 32 * 1024 * 1024 + 32;
 
+#[derive(Clone)]
 pub struct SecureBlobStore {
     #[cfg(windows)]
     directory: PathBuf,

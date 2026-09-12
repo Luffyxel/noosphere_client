@@ -169,7 +169,12 @@ impl AppState {
         #[cfg(windows)]
         let secret = load_system_secret(account).await?;
         #[cfg(target_os = "linux")]
-        let secret = self.blobs.load(&account)?;
+        let secret = {
+            let store = self.blobs.clone();
+            tokio::task::spawn_blocking(move || store.load(&account))
+                .await
+                .map_err(|_| Error::SecureStorageUnavailable)??
+        };
         let Some(secret) = secret else {
             return Ok(None);
         };
