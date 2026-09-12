@@ -25,10 +25,12 @@ The AppImage includes the GStreamer, PipeWire and SPA modules required by the
 native video engine. It still uses the desktop portal installed by the system
 to request screen and input access.
 
-GitHub authentication uses the XDG OpenURI portal first, then `xdg-open`,
-`gio open` or `sensible-browser`. The code screen also provides an **Open
-GitHub** button. Credentials are stored in encrypted files restricted to the
-current Unix user, without creating a desktop keyring password.
+GitHub authentication uses the XDG OpenURI portal first, then the user systemd
+service or desktop launchers. On NixOS, these launchers are isolated from the
+libraries bundled in the AppImage so the system browser can start. The code
+screen also provides an **Open GitHub** button. Credentials are stored in
+encrypted files restricted to the current Unix user, without creating a
+desktop keyring password.
 
 On NixOS, updates automatically relaunch the AppImage through `appimage-run`.
 The original AppImage file must remain writable by the current user.

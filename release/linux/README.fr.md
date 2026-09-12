@@ -25,9 +25,11 @@ L’AppImage contient les modules GStreamer, PipeWire et SPA nécessaires au
 moteur vidéo. Elle utilise toujours le portail du bureau installé par le
 système pour demander l’écran et les entrées.
 
-L’authentification GitHub utilise d’abord le portail XDG OpenURI, puis
-`xdg-open`, `gio open` ou `sensible-browser`. L’écran du code propose aussi un
-bouton **Ouvrir GitHub**. Les identifiants sont conservés dans des fichiers
+L’authentification GitHub utilise d’abord le portail XDG OpenURI, puis le
+service systemd utilisateur ou les lanceurs du bureau. Sous NixOS, ces lanceurs
+sont isolés des bibliothèques embarquées dans l’AppImage afin que le navigateur
+du système puisse démarrer. L’écran du code propose aussi un bouton **Ouvrir
+GitHub**. Les identifiants sont conservés dans des fichiers
 chiffrés réservés à l’utilisateur Unix courant, sans créer de mot de passe de
 trousseau au démarrage.
 

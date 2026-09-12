@@ -217,27 +217,65 @@ async fn open_github_url(app: &DesktopAppHandle, url: &url::Url) -> Result<()> {
 #[cfg(target_os = "linux")]
 async fn linux_open_url(url: &url::Url) -> bool {
     use ashpd::desktop::open_uri::OpenFileRequest;
+    use std::process::{Command, Stdio};
 
-    if let Ok(uri) = ashpd::Uri::parse(url.as_str())
-        && let Ok(request) = OpenFileRequest::default().send_uri(&uri).await
+    if let Ok(Ok(request)) = tokio::time::timeout(Duration::from_secs(5), async {
+        let uri = ashpd::Uri::parse(url.as_str())?;
+        OpenFileRequest::default().send_uri(&uri).await
+    })
+    .await
         && request.response().is_ok()
     {
         return true;
     }
-    let candidates: [(&str, &[&str]); 3] = [
+
+    let candidates: [(&str, &[&str]); 12] = [
+        (
+            "systemd-run",
+            &[
+                "--user",
+                "--quiet",
+                "--collect",
+                "--wait",
+                "--service-type=exec",
+                "xdg-open",
+            ],
+        ),
+        (
+            "/run/current-system/sw/bin/systemd-run",
+            &[
+                "--user",
+                "--quiet",
+                "--collect",
+                "--wait",
+                "--service-type=exec",
+                "xdg-open",
+            ],
+        ),
         ("xdg-open", &[]),
+        ("/run/current-system/sw/bin/xdg-open", &[]),
         ("gio", &["open"]),
+        ("/run/current-system/sw/bin/gio", &["open"]),
         ("sensible-browser", &[]),
+        ("firefox", &["--new-tab"]),
+        ("chromium", &["--new-tab"]),
+        ("chromium-browser", &["--new-tab"]),
+        ("google-chrome", &["--new-tab"]),
+        ("brave", &["--new-tab"]),
     ];
     for (program, arguments) in candidates {
-        let Ok(mut child) = std::process::Command::new(program)
+        let mut command = Command::new(program);
+        command
             .args(arguments)
             .arg(url.as_str())
-            .spawn()
-        else {
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        sanitize_linux_external_command(&mut command);
+        let Ok(mut child) = command.spawn() else {
             continue;
         };
-        for _ in 0..10 {
+        for _ in 0..50 {
             match child.try_wait() {
                 Ok(Some(status)) if status.success() => return true,
                 Ok(Some(_)) | Err(_) => break,
@@ -252,6 +290,114 @@ async fn linux_open_url(url: &url::Url) -> bool {
         }
     }
     false
+}
+
+#[cfg(target_os = "linux")]
+fn sanitize_linux_external_command(command: &mut std::process::Command) {
+    let Some(app_dir) = std::env::var_os("APPDIR").map(PathBuf::from) else {
+        return;
+    };
+    sanitize_linux_external_command_for_appimage(command, &app_dir);
+}
+
+#[cfg(target_os = "linux")]
+fn sanitize_linux_external_command_for_appimage(
+    command: &mut std::process::Command,
+    app_dir: &std::path::Path,
+) {
+    for name in [
+        "APPDIR",
+        "APPIMAGE",
+        "ARGV0",
+        "LD_LIBRARY_PATH",
+        "LD_PRELOAD",
+        "GDK_PIXBUF_MODULE_FILE",
+        "GIO_EXTRA_MODULES",
+        "GI_TYPELIB_PATH",
+        "GSETTINGS_SCHEMA_DIR",
+        "GST_PLUGIN_PATH",
+        "GST_PLUGIN_PATH_1_0",
+        "GST_PLUGIN_SYSTEM_PATH",
+        "GST_PLUGIN_SYSTEM_PATH_1_0",
+        "GST_PLUGIN_SCANNER",
+        "GTK_PATH",
+        "PIPEWIRE_CONFIG_DIR",
+        "PIPEWIRE_MODULE_DIR",
+        "SPA_PLUGIN_DIR",
+        "XKB_CONFIG_ROOT",
+    ] {
+        command.env_remove(name);
+    }
+
+    for name in ["PATH", "XDG_DATA_DIRS"] {
+        let Some(value) = std::env::var_os(name) else {
+            continue;
+        };
+        let filtered = filter_appimage_paths(&value, &app_dir);
+        if filtered.is_empty() {
+            command.env_remove(name);
+        } else {
+            command.env(name, filtered);
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn filter_appimage_paths(value: &std::ffi::OsStr, app_dir: &std::path::Path) -> std::ffi::OsString {
+    let paths = std::env::split_paths(value).filter(|path| !path.starts_with(app_dir));
+    std::env::join_paths(paths).unwrap_or_default()
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod linux_browser_tests {
+    use super::*;
+
+    #[test]
+    fn appimage_paths_are_removed_from_external_launcher_paths() {
+        let app_dir = std::path::Path::new("/tmp/.mount_noosphere");
+        let paths = std::env::join_paths([
+            app_dir.join("usr/bin"),
+            PathBuf::from("/run/current-system/sw/bin"),
+            app_dir.join("usr/share"),
+            PathBuf::from("/etc/profiles/per-user/test/bin"),
+        ])
+        .unwrap();
+
+        let filtered = filter_appimage_paths(&paths, app_dir);
+        let paths = std::env::split_paths(&filtered).collect::<Vec<_>>();
+
+        assert_eq!(
+            paths,
+            [
+                PathBuf::from("/run/current-system/sw/bin"),
+                PathBuf::from("/etc/profiles/per-user/test/bin"),
+            ]
+        );
+    }
+
+    #[test]
+    fn appimage_library_overrides_are_removed_from_external_launchers() {
+        let mut command = std::process::Command::new("true");
+        command.env("LD_LIBRARY_PATH", "/tmp/.mount_noosphere/usr/lib");
+        command.env(
+            "GST_PLUGIN_SCANNER",
+            "/tmp/.mount_noosphere/usr/lib/scanner",
+        );
+
+        sanitize_linux_external_command_for_appimage(
+            &mut command,
+            std::path::Path::new("/tmp/.mount_noosphere"),
+        );
+
+        let removed = command
+            .get_envs()
+            .filter(|(name, _)| {
+                *name == std::ffi::OsStr::new("LD_LIBRARY_PATH")
+                    || *name == std::ffi::OsStr::new("GST_PLUGIN_SCANNER")
+            })
+            .all(|(_, value)| value.is_none());
+        assert!(removed);
+    }
 }
 
 fn emit_setup_status(
