@@ -231,12 +231,9 @@ export function RemoteWorkspace({
               className="size-8 rounded-[9px] text-[#8e8e93]"
               title="Actualiser les machines"
               aria-label="Actualiser les machines"
-              disabled={remote.busy}
               onClick={() => void remote.refresh()}
             >
-              <RefreshCw
-                className={cn('size-4', remote.busy && 'animate-spin')}
-              />
+              <RefreshCw className="size-4" />
             </Button>
             <Button
               variant="ghost"
@@ -413,7 +410,6 @@ export function RemoteWorkspace({
                             variant="ghost"
                             className="text-[var(--noosphere-accent)]"
                             title="Cet ami doit ouvrir une version compatible de Noosphere."
-                            disabled={remote.busy}
                             onClick={() => void remote.refresh()}
                           >
                             Actualiser

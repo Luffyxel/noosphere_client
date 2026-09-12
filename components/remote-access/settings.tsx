@@ -8,6 +8,7 @@ import {
   Activity,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { APP_VERSION } from '@/lib/app-version';
 import type { Conversation, GitHubViewer } from '@/lib/desktop-bridge';
 import {
   remoteUsers,
@@ -214,6 +215,13 @@ export function RemoteAccessSettings({
                 </SettingRow>
               </SettingsGroup>
             )}
+            <SettingsGroup title="Noosphere">
+              <SettingRow title="Version">
+                <span className="text-[12px] tabular-nums text-[#a1a1a6]">
+                  {APP_VERSION}
+                </span>
+              </SettingRow>
+            </SettingsGroup>
           </>
         )}
         {tab === 'access' && (

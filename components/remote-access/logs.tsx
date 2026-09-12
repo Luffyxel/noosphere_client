@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Check, Copy, RefreshCw, ScrollText } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { APP_VERSION } from '@/lib/app-version';
 import {
   Dialog,
   DialogContent,
@@ -48,7 +49,7 @@ export function RemoteLogsDialog({
 
   async function copy() {
     const header = [
-      `Noosphere Remote 0.1.17`,
+      `Noosphere Remote ${APP_VERSION}`,
       `Session: ${session}`,
       `Streaming: ${remote.status?.streamingReady ? 'ready' : 'unavailable'}`,
       ...(remote.error ? [`Error: ${remote.error}`] : []),
@@ -84,14 +85,11 @@ export function RemoteLogsDialog({
               variant="ghost"
               size="sm"
               className="h-8 rounded-[9px] text-[11px] text-[#a1a1a6]"
-              disabled={remote.busy}
               onClick={() =>
                 void remote.refresh().then(() => remote.refreshStatus())
               }
             >
-              <RefreshCw
-                className={cn('size-3.5', remote.busy && 'animate-spin')}
-              />
+              <RefreshCw className="size-3.5" />
               Actualiser
             </Button>
             <Button

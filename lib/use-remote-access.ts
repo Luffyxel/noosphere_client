@@ -4,6 +4,7 @@ import type {
   RemoteDirectory,
   RemoteStatus,
 } from './remote-access';
+import { createOperationQueue } from './operation-queue';
 
 export function useRemoteAccess(accountId: number, visible: boolean) {
   const [directory, setDirectory] = useState<RemoteDirectory | null>(null);
@@ -12,37 +13,43 @@ export function useRemoteAccess(accountId: number, visible: boolean) {
   const [statusError, setStatusError] = useState('');
   const [busy, setBusy] = useState(false);
   const [time, setTime] = useState(Date.now);
-  const working = useRef(false);
   const generation = useRef(0);
+  const [operations] = useState(createOperationQueue);
 
   const run = useCallback(
-    async (action: (api: RemoteAccessApi) => Promise<RemoteDirectory>) => {
-      const api = window.noosphereDesktop?.remoteAccess;
-      if (!api || working.current) return false;
+    (
+      action: (api: RemoteAccessApi) => Promise<RemoteDirectory>,
+      options: { background?: boolean } = {},
+    ) => {
       const epoch = generation.current;
-      working.current = true;
-      setBusy(true);
-      setError('');
-      try {
-        const next = await action(api);
-        if (
-          epoch !== generation.current ||
-          next.owner.githubUserId !== accountId
-        )
+      return operations.enqueue(async () => {
+        const api = window.noosphereDesktop?.remoteAccess;
+        if (!api || epoch !== generation.current) return false;
+        if (!options.background) {
+          setBusy(true);
+          setError('');
+        }
+        try {
+          const next = await action(api);
+          if (
+            epoch !== generation.current ||
+            next.owner.githubUserId !== accountId
+          )
+            return false;
+          setDirectory(next);
+          setTime(Date.now());
+          setError(next.syncErrors.join('\n'));
+          return true;
+        } catch (failure) {
+          if (epoch === generation.current) setError(String(failure));
           return false;
-        setDirectory(next);
-        setTime(Date.now());
-        setError(next.syncErrors.join('\n'));
-        return true;
-      } catch (failure) {
-        if (epoch === generation.current) setError(String(failure));
-        return false;
-      } finally {
-        working.current = false;
-        if (epoch === generation.current) setBusy(false);
-      }
+        } finally {
+          if (!options.background && epoch === generation.current)
+            setBusy(false);
+        }
+      });
     },
-    [accountId],
+    [accountId, operations],
   );
 
   const readStatus = useCallback(async () => {
@@ -66,14 +73,17 @@ export function useRemoteAccess(accountId: number, visible: boolean) {
     async function poll() {
       if (generation.current !== epoch) return;
       // Discovery also registers guest-only devices, without enabling hosting.
-      await run((api) => api.syncDirectory());
+      await run((api) => api.syncDirectory(), { background: true });
       if (generation.current === epoch) {
         const delay = directory?.connecting ? 750 : visible ? 2_000 : 4_000;
         timer = setTimeout(() => void poll(), delay);
       }
     }
     timer = setTimeout(
-      () => void run((api) => api.directory()).then(() => poll()),
+      () =>
+        void run((api) => api.directory(), { background: true }).then(() =>
+          poll(),
+        ),
       0,
     );
     return () => {
@@ -111,7 +121,7 @@ export function useRemoteAccess(accountId: number, visible: boolean) {
     if (!visible) return;
     // Opening this section refreshes the global discovery cache.
     const timer = setTimeout(
-      () => void run((api) => api.syncDirectory(true)),
+      () => void run((api) => api.syncDirectory(true), { background: true }),
       0,
     );
     return () => clearTimeout(timer);
@@ -125,7 +135,7 @@ export function useRemoteAccess(accountId: number, visible: boolean) {
     busy,
     error,
     run,
-    refresh: () => run((api) => api.syncDirectory(true)),
+    refresh: () => run((api) => api.syncDirectory(true), { background: true }),
     refreshStatus: readStatus,
     stopSession: async () => {
       const api = window.noosphereDesktop?.remoteAccess;
