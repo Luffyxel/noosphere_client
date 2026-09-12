@@ -17,7 +17,7 @@
     "build:linux:binary": "node scripts/native-toolchain.mjs tauri build --no-bundle",
     "prepare:linux": "node scripts/prepare-linux-runtime.mjs",
     "bundle:linux": "node scripts/prepare-linux-packaging-tools.mjs && npm run prepare:linux && npm run bundle:linux:portable && npm run bundle:linux:rpm",
-    "bundle:linux:portable": "node scripts/native-toolchain.mjs tauri bundle --bundles deb && node scripts/finalize-linux-deb.mjs && node scripts/native-toolchain.mjs tauri bundle --bundles appimage && node scripts/finalize-linux-appimage.mjs",
+    "bundle:linux:portable": "node scripts/native-toolchain.mjs tauri bundle --bundles deb && node scripts/finalize-linux-deb.mjs && node scripts/finalize-linux-appimage.mjs",
     "bundle:linux:rpm": "node scripts/native-toolchain.mjs tauri bundle --bundles rpm && node scripts/build-linux-rpm.mjs",
     "build:tauri-ui": "vite build --config vite.tauri.config.ts",
     "generate:latest-json": "node scripts/generate-latest-json.mjs",

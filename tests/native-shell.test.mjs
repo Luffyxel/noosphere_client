@@ -67,6 +67,18 @@ void test('l’AppImage embarque SQLite pour le stockage NSS de Chromium', async
   assert.match(finalizer, /realpath\(sqliteLibrary\)/);
 });
 
+void test('le constructeur AppImage dédié est appelé directement', async () => {
+  const packageJson = JSON.parse(
+    await readFile(new URL('package.json', root), 'utf8'),
+  );
+  const command = packageJson.scripts['bundle:linux:portable'];
+
+  assert.match(command, /tauri bundle --bundles deb/);
+  assert.match(command, /finalize-linux-deb\.mjs/);
+  assert.match(command, /finalize-linux-appimage\.mjs/);
+  assert.doesNotMatch(command, /tauri bundle --bundles appimage/);
+});
+
 void test('les jobs Linux utilisent des dépendances reproductibles', async () => {
   const [installer, ci, release] = await Promise.all([
     readFile(new URL('scripts/install-linux-build-deps.sh', root), 'utf8'),
