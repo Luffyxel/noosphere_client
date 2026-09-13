@@ -62,19 +62,29 @@ pub async fn system_install_appimage_update(
             return Err("Unsupported AppImage update target".to_owned());
         }
         let source = appimage_source()?;
+        eprintln!(
+            "[updater] checking AppImage update for {}",
+            source.display()
+        );
         let updater = _app
             .updater_builder()
             .target(_target)
             .executable_path(source)
             .timeout(std::time::Duration::from_secs(15))
             .build()
-            .map_err(|error| error.to_string())?;
-        let Some(mut update) = updater.check().await.map_err(|error| error.to_string())? else {
+            .map_err(|error| update_failure("configuration", error))?;
+        let Some(mut update) = updater
+            .check()
+            .await
+            .map_err(|error| update_failure("metadata", error))?
+        else {
+            eprintln!("[updater] AppImage is current");
             return Ok(None);
         };
         update.timeout = Some(std::time::Duration::from_secs(30 * 60));
 
         let version = update.version.clone();
+        eprintln!("[updater] downloading AppImage {version}");
         _on_event
             .send(AppImageUpdateEvent::Found {
                 version: version.clone(),
@@ -86,6 +96,8 @@ pub async fn system_install_appimage_update(
         let installation_events = _on_event.clone();
         let installation_version = version.clone();
         let mut started = false;
+        let mut pending_chunk_length = 0usize;
+        let mut last_progress = std::time::Instant::now();
         update
             .download_and_install(
                 move |chunk_length, content_length| {
@@ -96,24 +108,38 @@ pub async fn system_install_appimage_update(
                             content_length,
                         });
                     }
-                    let _ = progress_events.send(AppImageUpdateEvent::Progress {
-                        version: progress_version.clone(),
-                        chunk_length,
-                    });
+                    pending_chunk_length = pending_chunk_length.saturating_add(chunk_length);
+                    if last_progress.elapsed() >= std::time::Duration::from_millis(500) {
+                        let _ = progress_events.send(AppImageUpdateEvent::Progress {
+                            version: progress_version.clone(),
+                            chunk_length: pending_chunk_length,
+                        });
+                        pending_chunk_length = 0;
+                        last_progress = std::time::Instant::now();
+                    }
                 },
                 move || {
+                    eprintln!("[updater] AppImage download complete");
                     let _ = installation_events.send(AppImageUpdateEvent::Installing {
                         version: installation_version,
                     });
                 },
             )
             .await
-            .map_err(|error| error.to_string())?;
+            .map_err(|error| update_failure("installation", error))?;
+        eprintln!("[updater] AppImage {version} installed");
         return Ok(Some(version));
     }
 
     #[allow(unreachable_code)]
     Err("AppImage updates are unavailable on this platform".to_owned())
+}
+
+#[cfg(all(target_arch = "x86_64", target_os = "linux"))]
+fn update_failure(stage: &str, error: impl std::fmt::Display) -> String {
+    let message = error.to_string();
+    eprintln!("[updater] {stage} failed: {message}");
+    message
 }
 
 #[tauri::command]
