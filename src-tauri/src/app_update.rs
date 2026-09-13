@@ -2,20 +2,27 @@
 use std::path::{Path, PathBuf};
 #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
 use std::process::{Command, Stdio};
+#[cfg(all(target_arch = "x86_64", target_os = "linux"))]
+use tauri::Manager as _;
 
 #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
 const PACKAGE_KIND_FILE: &str = "noosphere-package-kind";
 
 #[tauri::command]
-pub fn system_update_target() -> Option<String> {
+pub fn system_update_target(_app: crate::DesktopAppHandle) -> Result<Option<String>, String> {
     if cfg!(debug_assertions)
         || std::env::var("NOOSPHERE_SMOKE_TEST").as_deref() == Ok("1")
         || std::env::var("NOOSPHERE_DISABLE_UPDATES").as_deref() == Ok("1")
     {
-        return None;
+        return Ok(None);
     }
 
-    update_target()
+    #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
+    if std::env::var_os("APPIMAGE").is_some() && prepare_writable_appimage(&_app)? {
+        return Ok(None);
+    }
+
+    Ok(update_target())
 }
 
 #[tauri::command]
@@ -50,6 +57,77 @@ pub fn system_relaunch_after_update(_app: crate::DesktopAppHandle) -> Result<boo
 #[cfg(all(target_arch = "x86_64", windows))]
 fn update_target() -> Option<String> {
     Some("windows-x86_64-nsis".into())
+}
+
+#[cfg(all(target_arch = "x86_64", target_os = "linux"))]
+fn prepare_writable_appimage(app: &crate::DesktopAppHandle) -> Result<bool, String> {
+    let source = std::env::var_os("APPIMAGE")
+        .map(PathBuf::from)
+        .filter(|path| path.is_absolute() && path.is_file())
+        .ok_or_else(|| "AppImage source unavailable".to_owned())?;
+
+    if appimage_directory_is_writable(&source) {
+        return Ok(false);
+    }
+
+    let managed_directory = app
+        .path()
+        .app_data_dir()
+        .map_err(|_| "AppImage user directory unavailable".to_owned())?;
+    std::fs::create_dir_all(&managed_directory)
+        .map_err(|_| "AppImage user directory could not be created".to_owned())?;
+    let managed =
+        managed_directory.join(format!("Noosphere-{}.AppImage", env!("CARGO_PKG_VERSION")));
+    if !managed.is_file() {
+        install_managed_copy(&source, &managed)?;
+    }
+
+    let runner = find_appimage_run().ok_or_else(|| "appimage-run unavailable".to_owned())?;
+    Command::new(runner)
+        .arg(&managed)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|_| "appimage-run could not restart Noosphere".to_owned())?;
+    app.exit(0);
+    Ok(true)
+}
+
+#[cfg(all(target_arch = "x86_64", target_os = "linux"))]
+fn appimage_directory_is_writable(app_image: &Path) -> bool {
+    use std::io::Write as _;
+
+    let Some(parent) = app_image.parent() else {
+        return false;
+    };
+    let probe = parent.join(format!(".noosphere-update-{}", uuid::Uuid::new_v4()));
+    let result = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&probe)
+        .and_then(|mut file| file.write_all(b"update"));
+    let _ = std::fs::remove_file(probe);
+    result.is_ok()
+}
+
+#[cfg(all(target_arch = "x86_64", target_os = "linux"))]
+fn install_managed_copy(source: &Path, destination: &Path) -> Result<(), String> {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let parent = destination
+        .parent()
+        .ok_or_else(|| "AppImage user directory unavailable".to_owned())?;
+    let temporary = parent.join(format!(".Noosphere.AppImage-{}", std::process::id()));
+    let copy_result = (|| {
+        std::fs::copy(source, &temporary)?;
+        let mut permissions = std::fs::metadata(&temporary)?.permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(&temporary, permissions)?;
+        std::fs::rename(&temporary, destination)
+    })();
+    let _ = std::fs::remove_file(&temporary);
+    copy_result.map_err(|_| "AppImage could not be installed in the user directory".to_owned())
 }
 
 #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
@@ -133,7 +211,10 @@ fn update_target() -> Option<String> {
 mod tests {
     use std::ffi::OsStr;
 
-    use super::{linux_target_for_kind, uses_appimage_run};
+    use super::{
+        appimage_directory_is_writable, install_managed_copy, linux_target_for_kind,
+        uses_appimage_run,
+    };
 
     #[test]
     fn maps_each_linux_package_to_its_release_target() {
@@ -155,5 +236,19 @@ mod tests {
             "/tmp/.mount_Noosphere/usr"
         ))));
         assert!(!uses_appimage_run(None));
+    }
+
+    #[test]
+    fn prepares_a_writable_managed_appimage() {
+        let writable = tempfile::tempdir().unwrap();
+        let source = writable.path().join("source.AppImage");
+        let managed = writable.path().join("managed").join("Noosphere.AppImage");
+        std::fs::write(&source, b"appimage").unwrap();
+        std::fs::create_dir_all(managed.parent().unwrap()).unwrap();
+
+        install_managed_copy(&source, &managed).unwrap();
+
+        assert_eq!(std::fs::read(&managed).unwrap(), b"appimage");
+        assert!(appimage_directory_is_writable(&managed));
     }
 }

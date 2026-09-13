@@ -12,10 +12,35 @@ type Notice = {
   phase: 'downloading' | 'installing' | 'installed' | 'error';
   version: string;
   percentage: number | null;
+  error?: string;
 };
 
 function isTauri() {
   return '__TAURI_INTERNALS__' in window;
+}
+
+function updateErrorMessage(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  const normalized = message.toLowerCase();
+  if (normalized.includes('signature')) return 'Signature invalide';
+  if (
+    normalized.includes('permission denied') ||
+    normalized.includes('os error 13') ||
+    normalized.includes('appimage')
+  ) {
+    return 'AppImage non modifiable';
+  }
+  if (normalized.includes('timed out') || normalized.includes('timeout')) {
+    return 'Téléchargement expiré';
+  }
+  if (
+    normalized.includes('network') ||
+    normalized.includes('request') ||
+    normalized.includes('connect')
+  ) {
+    return 'Téléchargement impossible';
+  }
+  return 'Installation impossible';
 }
 
 export function AppUpdater() {
@@ -28,11 +53,13 @@ export function AppUpdater() {
     let active = true;
     let update: Update | null = null;
     let foundUpdate = false;
+    let updateTargetReady = false;
     const timer = window.setTimeout(() => {
       void (async () => {
         let installed = false;
         try {
           const target = await invoke<string | null>('system_update_target');
+          updateTargetReady = true;
           if (!active || !target) return;
 
           update = await check({ target, timeout: 15_000 });
@@ -73,11 +100,12 @@ export function AppUpdater() {
           }
         } catch (error) {
           console.error('Noosphere update failed', error);
-          if (active && foundUpdate) {
+          if (active && (foundUpdate || !updateTargetReady)) {
             setNotice((current) => ({
               phase: installed ? 'installed' : 'error',
               version: current?.version ?? '',
               percentage: null,
+              error: installed ? undefined : updateErrorMessage(error),
             }));
           }
           if (update) await update.close().catch(() => {});
@@ -124,7 +152,7 @@ export function AppUpdater() {
                 ? 'Installation…'
                 : notice.phase === 'installed'
                   ? 'Relancez Noosphere'
-                  : 'Réessayer au prochain lancement'}
+                  : notice.error}
           </p>
         </div>
         {notice.phase === 'error' && (

@@ -17,6 +17,7 @@
 !.env.example
 /.secrets/
 /.tools/
+/.tmp/
 *.log
 .DS_Store
 /.idea/
