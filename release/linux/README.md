@@ -25,10 +25,11 @@ The AppImage includes the GStreamer, PipeWire and SPA modules required by the
 native video engine. It still uses the desktop portal installed by the system
 to request screen and input access.
 
-GitHub authentication uses the XDG OpenURI portal first, then the user systemd
-service or desktop launchers. On NixOS, these launchers are isolated from the
-libraries bundled in the AppImage so the system browser can start. The code
-screen also provides an **Open GitHub** button. Credentials are stored in
+GitHub authentication uses the desktop launcher and then the XDG OpenURI
+portal. On NixOS, Noosphere also searches the system, user and Home Manager
+profiles without passing the libraries bundled in the AppImage to the browser.
+Firefox, Chromium and their Flatpak packages are available as fallbacks. The
+code screen also provides an **Open GitHub** button. Credentials are stored in
 encrypted files restricted to the current Unix user, without creating a
 desktop keyring password.
 

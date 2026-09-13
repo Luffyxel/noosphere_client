@@ -217,7 +217,10 @@ async fn open_github_url(app: &DesktopAppHandle, url: &url::Url) -> Result<()> {
 #[cfg(target_os = "linux")]
 async fn linux_open_url(url: &url::Url) -> bool {
     use ashpd::desktop::open_uri::OpenFileRequest;
-    use std::process::{Command, Stdio};
+
+    if try_linux_url_launcher("xdg-open", &[], url, false).await {
+        return true;
+    }
 
     if let Ok(Ok(request)) = tokio::time::timeout(Duration::from_secs(5), async {
         let uri = ashpd::Uri::parse(url.as_str())?;
@@ -229,66 +232,60 @@ async fn linux_open_url(url: &url::Url) -> bool {
         return true;
     }
 
-    let candidates: [(&str, &[&str]); 12] = [
-        (
-            "systemd-run",
-            &[
-                "--user",
-                "--quiet",
-                "--collect",
-                "--wait",
-                "--service-type=exec",
-                "xdg-open",
-            ],
-        ),
-        (
-            "/run/current-system/sw/bin/systemd-run",
-            &[
-                "--user",
-                "--quiet",
-                "--collect",
-                "--wait",
-                "--service-type=exec",
-                "xdg-open",
-            ],
-        ),
-        ("xdg-open", &[]),
-        ("/run/current-system/sw/bin/xdg-open", &[]),
-        ("gio", &["open"]),
-        ("/run/current-system/sw/bin/gio", &["open"]),
-        ("sensible-browser", &[]),
-        ("firefox", &["--new-tab"]),
-        ("chromium", &["--new-tab"]),
-        ("chromium-browser", &["--new-tab"]),
-        ("google-chrome", &["--new-tab"]),
-        ("brave", &["--new-tab"]),
+    let candidates: [(&str, &[&str], bool); 9] = [
+        ("gio", &["open"], false),
+        ("sensible-browser", &[], false),
+        ("firefox", &["--new-tab"], true),
+        ("chromium", &["--new-tab"], true),
+        ("chromium-browser", &["--new-tab"], true),
+        ("google-chrome", &["--new-tab"], true),
+        ("brave", &["--new-tab"], true),
+        ("flatpak", &["run", "org.mozilla.firefox"], true),
+        ("flatpak", &["run", "org.chromium.Chromium"], true),
     ];
-    for (program, arguments) in candidates {
-        let mut command = Command::new(program);
-        command
-            .args(arguments)
-            .arg(url.as_str())
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null());
-        sanitize_linux_external_command(&mut command);
-        let Ok(mut child) = command.spawn() else {
-            continue;
-        };
-        for _ in 0..50 {
-            match child.try_wait() {
-                Ok(Some(status)) if status.success() => return true,
-                Ok(Some(_)) | Err(_) => break,
-                Ok(None) => sleep(Duration::from_millis(100)).await,
-            }
-        }
-        if child.try_wait().is_ok_and(|status| status.is_none()) {
-            let _ = std::thread::spawn(move || {
-                let _ = child.wait();
-            });
+    for (program, arguments, long_running_is_success) in candidates {
+        if try_linux_url_launcher(program, arguments, url, long_running_is_success).await {
             return true;
         }
     }
+    false
+}
+
+#[cfg(target_os = "linux")]
+async fn try_linux_url_launcher(
+    program: &str,
+    arguments: &[&str],
+    url: &url::Url,
+    long_running_is_success: bool,
+) -> bool {
+    use std::process::{Command, Stdio};
+
+    let mut command = Command::new(program);
+    command
+        .args(arguments)
+        .arg(url.as_str())
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    sanitize_linux_external_command(&mut command);
+    let Ok(mut child) = command.spawn() else {
+        return false;
+    };
+    for _ in 0..50 {
+        match child.try_wait() {
+            Ok(Some(status)) => return status.success(),
+            Err(_) => return false,
+            Ok(None) => sleep(Duration::from_millis(100)).await,
+        }
+    }
+    if long_running_is_success && child.try_wait().is_ok_and(|status| status.is_none()) {
+        let _ = std::thread::spawn(move || {
+            let _ = child.wait();
+        });
+        return true;
+    }
+    let _ = child.kill();
+    let _ = child.wait();
     false
 }
 
@@ -329,23 +326,80 @@ fn sanitize_linux_external_command_for_appimage(
         command.env_remove(name);
     }
 
-    for name in ["PATH", "XDG_DATA_DIRS"] {
-        let Some(value) = std::env::var_os(name) else {
-            continue;
-        };
-        let filtered = filter_appimage_paths(&value, app_dir);
-        if filtered.is_empty() {
-            command.env_remove(name);
-        } else {
-            command.env(name, filtered);
-        }
-    }
+    command.env("PATH", linux_host_path(app_dir));
+    command.env("XDG_DATA_DIRS", linux_host_data_dirs(app_dir));
 }
 
 #[cfg(target_os = "linux")]
 fn filter_appimage_paths(value: &std::ffi::OsStr, app_dir: &std::path::Path) -> std::ffi::OsString {
     let paths = std::env::split_paths(value).filter(|path| !path.starts_with(app_dir));
     std::env::join_paths(paths).unwrap_or_default()
+}
+
+#[cfg(target_os = "linux")]
+fn linux_host_path(app_dir: &std::path::Path) -> std::ffi::OsString {
+    let mut paths = linux_profile_directories("bin");
+    if let Some(value) = std::env::var_os("PATH") {
+        paths.extend(std::env::split_paths(&filter_appimage_paths(
+            &value, app_dir,
+        )));
+    }
+    join_unique_paths(paths)
+}
+
+#[cfg(target_os = "linux")]
+fn linux_host_data_dirs(app_dir: &std::path::Path) -> std::ffi::OsString {
+    let mut paths = linux_profile_directories("share");
+    paths.extend([
+        PathBuf::from("/usr/local/share"),
+        PathBuf::from("/usr/share"),
+    ]);
+    if let Some(value) = std::env::var_os("XDG_DATA_DIRS") {
+        paths.extend(std::env::split_paths(&filter_appimage_paths(
+            &value, app_dir,
+        )));
+    }
+    join_unique_paths(paths)
+}
+
+#[cfg(target_os = "linux")]
+fn linux_profile_directories(suffix: &str) -> Vec<PathBuf> {
+    let mut paths = Vec::new();
+    if let Some(home) = std::env::var_os("HOME") {
+        paths.push(PathBuf::from(home).join(".nix-profile").join(suffix));
+    }
+    let user = std::env::var_os("USER")
+        .filter(|value| !value.is_empty())
+        .or_else(|| {
+            std::env::var_os("HOME").and_then(|home| {
+                PathBuf::from(home)
+                    .file_name()
+                    .map(std::ffi::OsStr::to_os_string)
+            })
+        });
+    if let Some(user) = user {
+        paths.push(
+            PathBuf::from("/etc/profiles/per-user")
+                .join(user)
+                .join(suffix),
+        );
+    }
+    paths.extend([
+        PathBuf::from("/run/current-system/sw").join(suffix),
+        PathBuf::from("/nix/var/nix/profiles/default").join(suffix),
+    ]);
+    paths
+}
+
+#[cfg(target_os = "linux")]
+fn join_unique_paths(paths: impl IntoIterator<Item = PathBuf>) -> std::ffi::OsString {
+    let mut unique = Vec::new();
+    for path in paths {
+        if !path.as_os_str().is_empty() && !unique.contains(&path) {
+            unique.push(path);
+        }
+    }
+    std::env::join_paths(unique).unwrap_or_default()
 }
 
 #[cfg(all(test, target_os = "linux"))]
@@ -373,6 +427,17 @@ mod linux_browser_tests {
                 PathBuf::from("/etc/profiles/per-user/test/bin"),
             ]
         );
+    }
+
+    #[test]
+    fn nixos_system_profiles_are_added_to_external_launcher_paths() {
+        let app_dir = std::path::Path::new("/tmp/.mount_noosphere");
+        let paths = linux_host_path(app_dir);
+        let paths = std::env::split_paths(&paths).collect::<Vec<_>>();
+
+        assert!(paths.contains(&PathBuf::from("/run/current-system/sw/bin")));
+        assert!(paths.contains(&PathBuf::from("/nix/var/nix/profiles/default/bin")));
+        assert!(!paths.iter().any(|path| path.starts_with(app_dir)));
     }
 
     #[test]
