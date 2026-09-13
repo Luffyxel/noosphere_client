@@ -69,7 +69,7 @@ pub async fn system_install_appimage_update(
         let updater = _app
             .updater_builder()
             .target(_target)
-            .executable_path(source)
+            .executable_path(source.clone())
             .timeout(std::time::Duration::from_secs(15))
             .build()
             .map_err(|error| update_failure("configuration", error))?;
@@ -93,13 +93,11 @@ pub async fn system_install_appimage_update(
 
         let progress_events = _on_event.clone();
         let progress_version = version.clone();
-        let installation_events = _on_event.clone();
-        let installation_version = version.clone();
         let mut started = false;
         let mut pending_chunk_length = 0usize;
         let mut last_progress = std::time::Instant::now();
-        update
-            .download_and_install(
+        let bytes = update
+            .download(
                 move |chunk_length, content_length| {
                     if !started {
                         started = true;
@@ -120,12 +118,16 @@ pub async fn system_install_appimage_update(
                 },
                 move || {
                     eprintln!("[updater] AppImage download complete");
-                    let _ = installation_events.send(AppImageUpdateEvent::Installing {
-                        version: installation_version,
-                    });
                 },
             )
             .await
+            .map_err(|error| update_failure("download", error))?;
+        _on_event
+            .send(AppImageUpdateEvent::Installing {
+                version: version.clone(),
+            })
+            .map_err(|error| error.to_string())?;
+        install_appimage_update(&source, &bytes)
             .map_err(|error| update_failure("installation", error))?;
         eprintln!("[updater] AppImage {version} installed");
         return Ok(Some(version));
@@ -140,6 +142,36 @@ fn update_failure(stage: &str, error: impl std::fmt::Display) -> String {
     let message = error.to_string();
     eprintln!("[updater] {stage} failed: {message}");
     message
+}
+
+#[cfg(all(target_arch = "x86_64", target_os = "linux"))]
+fn install_appimage_update(destination: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    use std::io::Write as _;
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let parent = destination.parent().ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "AppImage destination has no parent directory",
+        )
+    })?;
+    let temporary = parent.join(format!(".Noosphere-update-{}", uuid::Uuid::new_v4()));
+    let result = (|| {
+        let mut output = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temporary)?;
+        output.write_all(bytes)?;
+        output.sync_all()?;
+
+        let mut permissions = std::fs::metadata(destination)?.permissions();
+        permissions.set_mode(permissions.mode() | 0o100);
+        std::fs::set_permissions(&temporary, permissions)?;
+        std::fs::rename(&temporary, destination)?;
+        std::fs::File::open(parent)?.sync_all()
+    })();
+    let _ = std::fs::remove_file(temporary);
+    result
 }
 
 #[tauri::command]
@@ -366,8 +398,8 @@ mod tests {
     use std::ffi::OsStr;
 
     use super::{
-        appimage_directory_is_writable, install_managed_copy, linux_target_for_kind,
-        uses_appimage_run,
+        appimage_directory_is_writable, install_appimage_update, install_managed_copy,
+        linux_target_for_kind, uses_appimage_run,
     };
 
     #[test]
@@ -404,5 +436,24 @@ mod tests {
 
         assert_eq!(std::fs::read(&managed).unwrap(), b"appimage");
         assert!(appimage_directory_is_writable(&managed));
+    }
+
+    #[test]
+    fn replaces_an_appimage_beside_its_temporary_file() {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let writable = tempfile::tempdir().unwrap();
+        let appimage = writable.path().join("Noosphere.AppImage");
+        std::fs::write(&appimage, b"old version").unwrap();
+        std::fs::set_permissions(&appimage, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        install_appimage_update(&appimage, b"new version").unwrap();
+
+        assert_eq!(std::fs::read(&appimage).unwrap(), b"new version");
+        assert_ne!(
+            std::fs::metadata(&appimage).unwrap().permissions().mode() & 0o100,
+            0
+        );
+        assert_eq!(std::fs::read_dir(writable.path()).unwrap().count(), 1);
     }
 }
