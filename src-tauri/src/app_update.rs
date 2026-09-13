@@ -9,6 +9,10 @@ use tauri_plugin_updater::UpdaterExt as _;
 
 #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
 const PACKAGE_KIND_FILE: &str = "noosphere-package-kind";
+#[cfg(all(target_arch = "x86_64", target_os = "linux"))]
+const UPDATE_METADATA_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
+#[cfg(all(target_arch = "x86_64", target_os = "linux"))]
+const UPDATE_METADATA_ATTEMPTS: usize = 2;
 
 #[tauri::command]
 pub fn system_update_target(_app: crate::DesktopAppHandle) -> Result<Option<String>, String> {
@@ -70,14 +74,24 @@ pub async fn system_install_appimage_update(
             .updater_builder()
             .target(_target)
             .executable_path(source.clone())
-            .timeout(std::time::Duration::from_secs(15))
+            .timeout(UPDATE_METADATA_TIMEOUT)
             .build()
             .map_err(|error| update_failure("configuration", error))?;
-        let Some(mut update) = updater
-            .check()
-            .await
-            .map_err(|error| update_failure("metadata", error))?
-        else {
+        let mut attempt = 1;
+        let update = loop {
+            match updater.check().await {
+                Ok(update) => break update,
+                Err(error) if attempt < UPDATE_METADATA_ATTEMPTS => {
+                    eprintln!(
+                        "[updater] metadata request {attempt} failed: {error}; retrying automatically"
+                    );
+                    attempt += 1;
+                    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                }
+                Err(error) => return Err(update_failure("metadata", error)),
+            }
+        };
+        let Some(mut update) = update else {
             eprintln!("[updater] AppImage is current");
             return Ok(None);
         };
