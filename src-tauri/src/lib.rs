@@ -199,6 +199,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             app_update::system_update_target,
+            app_update::system_install_appimage_update,
             app_update::system_relaunch_after_update,
             remote_access::remote_status,
             remote_access::remote_save_settings,

@@ -1,6 +1,6 @@
 'use client';
 
-import { invoke } from '@tauri-apps/api/core';
+import { Channel, invoke } from '@tauri-apps/api/core';
 import { relaunch } from '@tauri-apps/plugin-process';
 import { check, type Update } from '@tauri-apps/plugin-updater';
 import { LoaderCircle, RefreshCw, X } from 'lucide-react';
@@ -14,6 +14,16 @@ type Notice = {
   percentage: number | null;
   error?: string;
 };
+
+type AppImageUpdateEvent =
+  | { event: 'found'; version: string }
+  | {
+      event: 'started';
+      version: string;
+      contentLength: number | null;
+    }
+  | { event: 'progress'; version: string; chunkLength: number }
+  | { event: 'installing'; version: string };
 
 function isTauri() {
   return '__TAURI_INTERNALS__' in window;
@@ -61,6 +71,53 @@ export function AppUpdater() {
           const target = await invoke<string | null>('system_update_target');
           updateTargetReady = true;
           if (!active || !target) return;
+
+          if (target === 'linux-x86_64-appimage') {
+            let downloaded = 0;
+            let total: number | undefined;
+            const onEvent = new Channel<AppImageUpdateEvent>();
+            onEvent.onmessage = (event) => {
+              if (!active) return;
+              foundUpdate = true;
+              if (event.event === 'started') {
+                total = event.contentLength ?? undefined;
+                setNotice({
+                  phase: 'downloading',
+                  version: event.version,
+                  percentage: null,
+                });
+                return;
+              }
+              if (event.event === 'progress') {
+                downloaded += event.chunkLength;
+                setNotice({
+                  phase: 'downloading',
+                  version: event.version,
+                  percentage: updatePercentage(downloaded, total),
+                });
+                return;
+              }
+              setNotice({
+                phase:
+                  event.event === 'installing' ? 'installing' : 'downloading',
+                version: event.version,
+                percentage: event.event === 'installing' ? 100 : null,
+              });
+            };
+            const version = await invoke<string | null>(
+              'system_install_appimage_update',
+              { target, onEvent },
+            );
+            if (!active || !version) return;
+
+            installed = true;
+            setNotice({ phase: 'installing', version, percentage: 100 });
+            const handled = await invoke<boolean>(
+              'system_relaunch_after_update',
+            );
+            if (!handled) await relaunch();
+            return;
+          }
 
           update = await check({ target, timeout: 15_000 });
           if (!active || !update) return;

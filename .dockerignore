@@ -3,6 +3,7 @@
 .idea
 .vscode
 .vm-lab
+.tmp
 .next
 node_modules
 packaging/linux/Dockerfile

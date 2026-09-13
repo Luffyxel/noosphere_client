@@ -4,6 +4,8 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
 use tauri::Manager as _;
+#[cfg(all(target_arch = "x86_64", target_os = "linux"))]
+use tauri_plugin_updater::UpdaterExt as _;
 
 #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
 const PACKAGE_KIND_FILE: &str = "noosphere-package-kind";
@@ -25,6 +27,95 @@ pub fn system_update_target(_app: crate::DesktopAppHandle) -> Result<Option<Stri
     Ok(update_target())
 }
 
+#[derive(Clone, serde::Serialize)]
+#[cfg_attr(
+    not(all(target_arch = "x86_64", target_os = "linux")),
+    allow(dead_code)
+)]
+#[serde(rename_all = "camelCase", tag = "event")]
+pub enum AppImageUpdateEvent {
+    Found {
+        version: String,
+    },
+    Started {
+        version: String,
+        content_length: Option<u64>,
+    },
+    Progress {
+        version: String,
+        chunk_length: usize,
+    },
+    Installing {
+        version: String,
+    },
+}
+
+#[tauri::command]
+pub async fn system_install_appimage_update(
+    _app: crate::DesktopAppHandle,
+    _target: String,
+    _on_event: tauri::ipc::Channel<AppImageUpdateEvent>,
+) -> Result<Option<String>, String> {
+    #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
+    {
+        if _target != "linux-x86_64-appimage" {
+            return Err("Unsupported AppImage update target".to_owned());
+        }
+        let source = appimage_source()?;
+        let updater = _app
+            .updater_builder()
+            .target(_target)
+            .executable_path(source)
+            .timeout(std::time::Duration::from_secs(15))
+            .build()
+            .map_err(|error| error.to_string())?;
+        let Some(mut update) = updater.check().await.map_err(|error| error.to_string())? else {
+            return Ok(None);
+        };
+        update.timeout = Some(std::time::Duration::from_secs(30 * 60));
+
+        let version = update.version.clone();
+        _on_event
+            .send(AppImageUpdateEvent::Found {
+                version: version.clone(),
+            })
+            .map_err(|error| error.to_string())?;
+
+        let progress_events = _on_event.clone();
+        let progress_version = version.clone();
+        let installation_events = _on_event.clone();
+        let installation_version = version.clone();
+        let mut started = false;
+        update
+            .download_and_install(
+                move |chunk_length, content_length| {
+                    if !started {
+                        started = true;
+                        let _ = progress_events.send(AppImageUpdateEvent::Started {
+                            version: progress_version.clone(),
+                            content_length,
+                        });
+                    }
+                    let _ = progress_events.send(AppImageUpdateEvent::Progress {
+                        version: progress_version.clone(),
+                        chunk_length,
+                    });
+                },
+                move || {
+                    let _ = installation_events.send(AppImageUpdateEvent::Installing {
+                        version: installation_version,
+                    });
+                },
+            )
+            .await
+            .map_err(|error| error.to_string())?;
+        return Ok(Some(version));
+    }
+
+    #[allow(unreachable_code)]
+    Err("AppImage updates are unavailable on this platform".to_owned())
+}
+
 #[tauri::command]
 pub fn system_relaunch_after_update(_app: crate::DesktopAppHandle) -> Result<bool, String> {
     #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
@@ -39,13 +130,7 @@ pub fn system_relaunch_after_update(_app: crate::DesktopAppHandle) -> Result<boo
             .filter(|path| path.is_absolute() && path.is_file())
             .ok_or_else(|| "AppImage source unavailable".to_owned())?;
         let runner = find_appimage_run().ok_or_else(|| "appimage-run unavailable".to_owned())?;
-        Command::new(runner)
-            .arg(app_image)
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .map_err(|_| "appimage-run could not restart Noosphere".to_owned())?;
+        launch_appimage(&runner, &app_image)?;
         _app.exit(0);
         return Ok(true);
     }
@@ -61,10 +146,7 @@ fn update_target() -> Option<String> {
 
 #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
 fn prepare_writable_appimage(app: &crate::DesktopAppHandle) -> Result<bool, String> {
-    let source = std::env::var_os("APPIMAGE")
-        .map(PathBuf::from)
-        .filter(|path| path.is_absolute() && path.is_file())
-        .ok_or_else(|| "AppImage source unavailable".to_owned())?;
+    let source = appimage_source()?;
 
     if appimage_directory_is_writable(&source) {
         return Ok(false);
@@ -83,15 +165,61 @@ fn prepare_writable_appimage(app: &crate::DesktopAppHandle) -> Result<bool, Stri
     }
 
     let runner = find_appimage_run().ok_or_else(|| "appimage-run unavailable".to_owned())?;
+    launch_appimage(&runner, &managed)?;
+    app.exit(0);
+    Ok(true)
+}
+
+#[cfg(all(target_arch = "x86_64", target_os = "linux"))]
+fn appimage_source() -> Result<PathBuf, String> {
+    std::env::var_os("APPIMAGE")
+        .map(PathBuf::from)
+        .filter(|path| path.is_absolute() && path.is_file())
+        .ok_or_else(|| "AppImage source unavailable".to_owned())
+}
+
+#[cfg(all(target_arch = "x86_64", target_os = "linux"))]
+fn launch_appimage(runner: &Path, app_image: &Path) -> Result<(), String> {
+    let unit = format!("noosphere-update-{}", uuid::Uuid::new_v4());
+    let mut detached = Command::new("systemd-run");
+    detached
+        .args(["--user", "--quiet", "--collect", "--on-active=1s", "--unit"])
+        .arg(unit);
+    for variable in [
+        "DBUS_SESSION_BUS_ADDRESS",
+        "DISPLAY",
+        "HOME",
+        "PATH",
+        "WAYLAND_DISPLAY",
+        "XDG_CURRENT_DESKTOP",
+        "XDG_RUNTIME_DIR",
+    ] {
+        if let Some(value) = std::env::var_os(variable) {
+            detached
+                .arg("--setenv")
+                .arg(format!("{variable}={}", value.to_string_lossy()));
+        }
+    }
+    let detached_started = detached
+        .arg(runner)
+        .arg(app_image)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .is_ok_and(|status| status.success());
+    if detached_started {
+        return Ok(());
+    }
+
     Command::new(runner)
-        .arg(&managed)
+        .arg(app_image)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()
-        .map_err(|_| "appimage-run could not restart Noosphere".to_owned())?;
-    app.exit(0);
-    Ok(true)
+        .map(|_| ())
+        .map_err(|_| "appimage-run could not restart Noosphere".to_owned())
 }
 
 #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
