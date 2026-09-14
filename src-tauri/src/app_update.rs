@@ -266,7 +266,8 @@ fn launch_appimage(runner: &Path, app_image: &Path) -> Result<(), String> {
     let arguments = relaunch_arguments();
     let executable =
         std::env::current_exe().map_err(|_| "Noosphere relaunch helper unavailable".to_owned())?;
-    let parent_pid = std::process::id().to_string();
+    let parent_pid = std::process::id();
+    let runtime_processes = encode_process_tokens(&runtime_process_tokens(parent_pid));
     let unit = format!("noosphere-update-{}", uuid::Uuid::new_v4());
     let mut detached = Command::new("systemd-run");
     detached
@@ -276,6 +277,7 @@ fn launch_appimage(runner: &Path, app_image: &Path) -> Result<(), String> {
         "DBUS_SESSION_BUS_ADDRESS",
         "DISPLAY",
         "HOME",
+        "HYPRLAND_INSTANCE_SIGNATURE",
         "PATH",
         "WAYLAND_DISPLAY",
         "XAUTHORITY",
@@ -292,7 +294,8 @@ fn launch_appimage(runner: &Path, app_image: &Path) -> Result<(), String> {
     let detached_started = detached
         .arg(&executable)
         .arg(RELAUNCH_HELPER_ARGUMENT)
-        .arg(&parent_pid)
+        .arg(parent_pid.to_string())
+        .arg(&runtime_processes)
         .arg(runner)
         .arg(app_image)
         .arg("--")
@@ -308,7 +311,8 @@ fn launch_appimage(runner: &Path, app_image: &Path) -> Result<(), String> {
 
     Command::new(executable)
         .arg(RELAUNCH_HELPER_ARGUMENT)
-        .arg(parent_pid)
+        .arg(parent_pid.to_string())
+        .arg(runtime_processes)
         .arg(runner)
         .arg(app_image)
         .arg("--")
@@ -378,12 +382,16 @@ pub fn relaunch_helper_status() -> Option<i32> {
             .next()
             .and_then(|value| value.to_string_lossy().parse::<u32>().ok())
             .ok_or(())?;
+        let runtime_processes = arguments
+            .next()
+            .map(|value| decode_process_tokens(&value))
+            .ok_or(())?;
         let runner = arguments.next().map(PathBuf::from).ok_or(())?;
         let app_image = arguments.next().map(PathBuf::from).ok_or(())?;
         if arguments.next().as_deref() != Some(OsStr::new("--")) {
             return Err(());
         }
-        wait_for_parent_exit(parent_pid).map_err(|_| ())?;
+        wait_for_runtime_exit(parent_pid, &runtime_processes).map_err(|_| ())?;
         let mut command = relaunch_command(&runner, &app_image, arguments.collect());
         use std::os::unix::process::CommandExt as _;
         let _error = command.exec();
@@ -395,27 +403,139 @@ pub fn relaunch_helper_status() -> Option<i32> {
 #[cfg(all(test, target_arch = "x86_64", target_os = "linux"))]
 fn wait_for_parent_and_launch(
     parent_pid: u32,
+    runtime_processes: &[ProcessToken],
     runner: &Path,
     app_image: &Path,
     arguments: Vec<OsString>,
 ) -> std::io::Result<std::process::Child> {
-    wait_for_parent_exit(parent_pid)?;
+    wait_for_runtime_exit(parent_pid, runtime_processes)?;
     relaunch_command(runner, app_image, arguments).spawn()
 }
 
 #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
-fn wait_for_parent_exit(parent_pid: u32) -> std::io::Result<()> {
+#[derive(Clone, Copy)]
+struct ProcessToken {
+    pid: u32,
+    start_time: u64,
+}
+
+#[cfg(all(target_arch = "x86_64", target_os = "linux"))]
+fn runtime_process_tokens(root_pid: u32) -> Vec<ProcessToken> {
+    use std::os::unix::fs::MetadataExt as _;
+
+    let Ok(root_executable) = std::fs::metadata(format!("/proc/{root_pid}/exe")) else {
+        return Vec::new();
+    };
+    let Ok(entries) = std::fs::read_dir("/proc") else {
+        return Vec::new();
+    };
+    let mut processes = std::collections::HashMap::new();
+    for entry in entries.flatten() {
+        let Ok(pid) = entry.file_name().to_string_lossy().parse::<u32>() else {
+            continue;
+        };
+        if let Some(identity) = process_identity(pid) {
+            processes.insert(pid, identity);
+        }
+    }
+
+    let mut result = Vec::new();
+    for (&pid, &(_, start_time, _)) in &processes {
+        let executable_matches =
+            std::fs::metadata(format!("/proc/{pid}/exe")).is_ok_and(|metadata| {
+                metadata.dev() == root_executable.dev() && metadata.ino() == root_executable.ino()
+            });
+        if executable_matches && process_descends_from(pid, root_pid, &processes) {
+            result.push(ProcessToken { pid, start_time });
+        }
+    }
+    result.sort_by_key(|process| process.pid);
+    result
+}
+
+#[cfg(all(target_arch = "x86_64", target_os = "linux"))]
+fn process_descends_from(
+    mut pid: u32,
+    root_pid: u32,
+    processes: &std::collections::HashMap<u32, (u32, u64, char)>,
+) -> bool {
+    let mut visited = std::collections::HashSet::new();
+    loop {
+        if pid == root_pid {
+            return true;
+        }
+        if !visited.insert(pid) {
+            return false;
+        }
+        let Some(&(parent_pid, _, _)) = processes.get(&pid) else {
+            return false;
+        };
+        if parent_pid == 0 || parent_pid == pid {
+            return false;
+        }
+        pid = parent_pid;
+    }
+}
+
+#[cfg(all(target_arch = "x86_64", target_os = "linux"))]
+fn process_identity(pid: u32) -> Option<(u32, u64, char)> {
+    let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+    let fields = stat.get(stat.rfind(") ")? + 2..)?.split_whitespace();
+    let fields = fields.collect::<Vec<_>>();
+    let state = fields.first()?.chars().next()?;
+    let parent_pid = fields.get(1)?.parse().ok()?;
+    let start_time = fields.get(19)?.parse().ok()?;
+    Some((parent_pid, start_time, state))
+}
+
+#[cfg(all(target_arch = "x86_64", target_os = "linux"))]
+fn encode_process_tokens(processes: &[ProcessToken]) -> String {
+    processes
+        .iter()
+        .map(|process| format!("{}:{}", process.pid, process.start_time))
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+#[cfg(all(target_arch = "x86_64", target_os = "linux"))]
+fn decode_process_tokens(value: &OsStr) -> Vec<ProcessToken> {
+    value
+        .to_string_lossy()
+        .split(',')
+        .filter_map(|token| {
+            let (pid, start_time) = token.split_once(':')?;
+            Some(ProcessToken {
+                pid: pid.parse().ok()?,
+                start_time: start_time.parse().ok()?,
+            })
+        })
+        .collect()
+}
+
+#[cfg(all(target_arch = "x86_64", target_os = "linux"))]
+fn wait_for_runtime_exit(
+    parent_pid: u32,
+    runtime_processes: &[ProcessToken],
+) -> std::io::Result<()> {
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
-    while Path::new("/proc").join(parent_pid.to_string()).exists() {
+    loop {
+        let parent_alive = Path::new("/proc").join(parent_pid.to_string()).exists();
+        let runtime_alive = runtime_processes.iter().any(|process| {
+            process_identity(process.pid).is_some_and(|(_, start_time, state)| {
+                start_time == process.start_time && state != 'Z'
+            })
+        });
+        if !parent_alive && !runtime_alive {
+            return Ok(());
+        }
         if std::time::Instant::now() >= deadline {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::TimedOut,
-                "the previous Noosphere process did not stop",
+                "the previous Noosphere runtime did not stop",
             ));
         }
         std::thread::sleep(std::time::Duration::from_millis(25));
     }
-    Ok(())
 }
 
 #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
@@ -427,8 +547,8 @@ fn relaunch_command(runner: &Path, app_image: &Path, arguments: Vec<OsString>) -
         .env("APPIMAGE", app_image)
         .env(RELAUNCH_MARKER, "1")
         .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit());
     command
 }
 
@@ -557,8 +677,8 @@ mod tests {
 
     use super::{
         appimage_directory_is_writable, appimage_sha256, clear_appimage_run_cache_at,
-        install_appimage_update, install_managed_copy, linux_target_for_kind, uses_appimage_run,
-        wait_for_parent_and_launch,
+        install_appimage_update, install_managed_copy, linux_target_for_kind,
+        runtime_process_tokens, uses_appimage_run, wait_for_parent_and_launch,
     };
 
     #[test]
@@ -647,6 +767,10 @@ if [ "${NOOSPHERE_UPDATE_RELAUNCHED:-}" = 1 ]; then role=new; fi
 printf '%s' "$$" > "$NOOSPHERE_TRANSITION_TEST_DIRECTORY/$role.pid"
 printf '%s' "$APPIMAGE" > "$NOOSPHERE_TRANSITION_TEST_DIRECTORY/$role.appimage"
 printf '%s' "$1" > "$NOOSPHERE_TRANSITION_TEST_DIRECTORY/$role.arguments"
+if [ "$role" = old ]; then
+  "$APPIMAGE" -c 'while [ ! -e "$NOOSPHERE_TRANSITION_TEST_DIRECTORY/release-runtime" ]; do sleep 0.02; done' &
+  printf '%s' "$!" > "$NOOSPHERE_TRANSITION_TEST_DIRECTORY/runtime.pid"
+fi
 while [ ! -e "$NOOSPHERE_TRANSITION_TEST_DIRECTORY/release-$role" ]; do sleep 0.02; done
 "#;
         let child_arguments = vec![
@@ -667,7 +791,10 @@ while [ ! -e "$NOOSPHERE_TRANSITION_TEST_DIRECTORY/release-$role" ]; do sleep 0.
             .spawn()
             .unwrap();
         wait_for_path(&directory.join("old.pid"), Duration::from_secs(15));
+        wait_for_path(&directory.join("runtime.pid"), Duration::from_secs(15));
         let old_pid = read_pid(&directory.join("old.pid"));
+        let runtime_processes = runtime_process_tokens(old_pid);
+        assert!(runtime_processes.len() >= 2);
 
         install_appimage_update(&appimage, &new_bytes).unwrap();
         let new_digest = appimage_sha256(&appimage).unwrap();
@@ -688,13 +815,23 @@ while [ ! -e "$NOOSPHERE_TRANSITION_TEST_DIRECTORY/release-$role" ]; do sleep 0.
         let helper_runner = runner.clone();
         let helper_appimage = appimage.clone();
         let helper_arguments = child_arguments.clone();
+        let helper_runtime_processes = runtime_processes.clone();
         let helper = std::thread::spawn(move || {
-            wait_for_parent_and_launch(old_pid, &helper_runner, &helper_appimage, helper_arguments)
-                .unwrap()
+            wait_for_parent_and_launch(
+                old_pid,
+                &helper_runtime_processes,
+                &helper_runner,
+                &helper_appimage,
+                helper_arguments,
+            )
+            .unwrap()
         });
         std::fs::write(directory.join("release-old"), []).unwrap();
         let old_status = old.wait().unwrap();
         assert!(old_status.success(), "old process ended with {old_status}");
+        std::thread::sleep(Duration::from_millis(150));
+        assert!(!directory.join("new.pid").exists());
+        std::fs::write(directory.join("release-runtime"), []).unwrap();
 
         let mut new = helper.join().unwrap();
         wait_for_path(&directory.join("new.pid"), Duration::from_secs(15));
