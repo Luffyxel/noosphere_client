@@ -293,6 +293,22 @@ mod linux {
     }
 
     pub fn load_unlocked_legacy_secret(account: &str) -> Option<SecretString> {
+        let account = account.to_owned();
+        run_on_dedicated_thread(move || load_unlocked_legacy_secret_inner(&account)).flatten()
+    }
+
+    pub(super) fn run_on_dedicated_thread<T: Send + 'static>(
+        task: impl FnOnce() -> T + Send + 'static,
+    ) -> Option<T> {
+        std::thread::Builder::new()
+            .name("noosphere-secret-migration".to_owned())
+            .spawn(task)
+            .ok()?
+            .join()
+            .ok()
+    }
+
+    fn load_unlocked_legacy_secret_inner(account: &str) -> Option<SecretString> {
         let connection = zbus::blocking::Connection::session().ok()?;
         let dbus = zbus::blocking::fdo::DBusProxy::new(&connection).ok()?;
         let secret_service_name = "org.freedesktop.secrets".try_into().ok()?;
@@ -545,5 +561,14 @@ mod linux_tests {
             .unwrap();
         std::fs::copy(store.path("account-one"), store.path("account-two")).unwrap();
         assert!(store.load("account-two").is_err());
+    }
+
+    #[tokio::test]
+    async fn legacy_secret_migration_does_not_nest_the_tauri_runtime() {
+        assert!(tokio::runtime::Handle::try_current().is_ok());
+        let outside_runtime =
+            linux::run_on_dedicated_thread(|| tokio::runtime::Handle::try_current().is_err())
+                .unwrap();
+        assert!(outside_runtime);
     }
 }
