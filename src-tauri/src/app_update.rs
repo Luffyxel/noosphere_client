@@ -1,7 +1,10 @@
 #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
-use std::path::{Path, PathBuf};
-#[cfg(all(target_arch = "x86_64", target_os = "linux"))]
 use std::process::{Command, Stdio};
+#[cfg(all(target_arch = "x86_64", target_os = "linux"))]
+use std::{
+    ffi::{OsStr, OsString},
+    path::{Path, PathBuf},
+};
 #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
 use tauri::Manager as _;
 #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
@@ -13,6 +16,10 @@ const PACKAGE_KIND_FILE: &str = "noosphere-package-kind";
 const UPDATE_METADATA_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
 #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
 const UPDATE_METADATA_ATTEMPTS: usize = 2;
+#[cfg(all(target_arch = "x86_64", target_os = "linux"))]
+const RELAUNCH_HELPER_ARGUMENT: &str = "--noosphere-appimage-relaunch-helper";
+#[cfg(all(target_arch = "x86_64", target_os = "linux"))]
+const RELAUNCH_MARKER: &str = "NOOSPHERE_UPDATE_RELAUNCHED";
 
 #[tauri::command]
 pub fn system_update_target(_app: crate::DesktopAppHandle) -> Result<Option<String>, String> {
@@ -202,9 +209,10 @@ pub fn system_relaunch_after_update(_app: crate::DesktopAppHandle) -> Result<boo
             .filter(|path| path.is_absolute() && path.is_file())
             .ok_or_else(|| "AppImage source unavailable".to_owned())?;
         let runner = find_appimage_run().ok_or_else(|| "appimage-run unavailable".to_owned())?;
+        clear_appimage_run_cache(&app_image)?;
         launch_appimage(&runner, &app_image)?;
-        _app.exit(0);
-        return Ok(true);
+        eprintln!("[updater] AppImage relaunch scheduled");
+        std::process::exit(0);
     }
 
     #[allow(unreachable_code)]
@@ -223,6 +231,9 @@ fn prepare_writable_appimage(app: &crate::DesktopAppHandle) -> Result<bool, Stri
     if appimage_directory_is_writable(&source) {
         return Ok(false);
     }
+    if std::env::var_os(RELAUNCH_MARKER).as_deref() == Some(OsStr::new("1")) {
+        return Err("AppImage user handoff did not produce a writable file".to_owned());
+    }
 
     let managed_directory = app
         .path()
@@ -238,8 +249,8 @@ fn prepare_writable_appimage(app: &crate::DesktopAppHandle) -> Result<bool, Stri
 
     let runner = find_appimage_run().ok_or_else(|| "appimage-run unavailable".to_owned())?;
     launch_appimage(&runner, &managed)?;
-    app.exit(0);
-    Ok(true)
+    eprintln!("[updater] writable AppImage relaunch scheduled");
+    std::process::exit(0);
 }
 
 #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
@@ -252,6 +263,10 @@ fn appimage_source() -> Result<PathBuf, String> {
 
 #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
 fn launch_appimage(runner: &Path, app_image: &Path) -> Result<(), String> {
+    let arguments = relaunch_arguments();
+    let executable =
+        std::env::current_exe().map_err(|_| "Noosphere relaunch helper unavailable".to_owned())?;
+    let parent_pid = std::process::id().to_string();
     let unit = format!("noosphere-update-{}", uuid::Uuid::new_v4());
     let mut detached = Command::new("systemd-run");
     detached
@@ -263,8 +278,10 @@ fn launch_appimage(runner: &Path, app_image: &Path) -> Result<(), String> {
         "HOME",
         "PATH",
         "WAYLAND_DISPLAY",
+        "XAUTHORITY",
         "XDG_CURRENT_DESKTOP",
         "XDG_RUNTIME_DIR",
+        "XDG_SESSION_TYPE",
     ] {
         if let Some(value) = std::env::var_os(variable) {
             detached
@@ -273,8 +290,13 @@ fn launch_appimage(runner: &Path, app_image: &Path) -> Result<(), String> {
         }
     }
     let detached_started = detached
+        .arg(&executable)
+        .arg(RELAUNCH_HELPER_ARGUMENT)
+        .arg(&parent_pid)
         .arg(runner)
         .arg(app_image)
+        .arg("--")
+        .args(&arguments)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -284,14 +306,130 @@ fn launch_appimage(runner: &Path, app_image: &Path) -> Result<(), String> {
         return Ok(());
     }
 
-    Command::new(runner)
+    Command::new(executable)
+        .arg(RELAUNCH_HELPER_ARGUMENT)
+        .arg(parent_pid)
+        .arg(runner)
         .arg(app_image)
+        .arg("--")
+        .args(arguments)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()
         .map(|_| ())
         .map_err(|_| "appimage-run could not restart Noosphere".to_owned())
+}
+
+#[cfg(all(target_arch = "x86_64", target_os = "linux"))]
+fn relaunch_arguments() -> Vec<OsString> {
+    std::env::args_os().skip(1).collect()
+}
+
+#[cfg(all(target_arch = "x86_64", target_os = "linux"))]
+fn clear_appimage_run_cache(app_image: &Path) -> Result<(), String> {
+    let cache_root = std::env::var_os("XDG_CACHE_HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".cache")))
+        .ok_or_else(|| "AppImage cache directory unavailable".to_owned())?;
+    clear_appimage_run_cache_at(app_image, &cache_root)
+}
+
+#[cfg(all(target_arch = "x86_64", target_os = "linux"))]
+fn clear_appimage_run_cache_at(app_image: &Path, cache_root: &Path) -> Result<(), String> {
+    let digest = appimage_sha256(app_image)?;
+    let cache = cache_root.join("appimage-run").join(digest);
+    if cache.exists() {
+        std::fs::remove_dir_all(cache)
+            .map_err(|_| "The previous appimage-run cache could not be cleared".to_owned())?;
+    }
+    Ok(())
+}
+
+#[cfg(all(target_arch = "x86_64", target_os = "linux"))]
+fn appimage_sha256(app_image: &Path) -> Result<String, String> {
+    use sha2::{Digest as _, Sha256};
+    use std::io::Read as _;
+
+    let mut source = std::fs::File::open(app_image)
+        .map_err(|_| "AppImage could not be opened after installation".to_owned())?;
+    let mut hasher = Sha256::new();
+    let mut buffer = [0u8; 1024 * 1024];
+    loop {
+        let length = source
+            .read(&mut buffer)
+            .map_err(|_| "AppImage could not be verified after installation".to_owned())?;
+        if length == 0 {
+            break;
+        }
+        hasher.update(&buffer[..length]);
+    }
+    Ok(hex::encode(hasher.finalize()))
+}
+
+#[cfg(all(target_arch = "x86_64", target_os = "linux"))]
+pub fn relaunch_helper_status() -> Option<i32> {
+    let mut arguments = std::env::args_os().skip(1);
+    if arguments.next().as_deref() != Some(OsStr::new(RELAUNCH_HELPER_ARGUMENT)) {
+        return None;
+    }
+    let result: Result<(), ()> = (|| {
+        let parent_pid = arguments
+            .next()
+            .and_then(|value| value.to_string_lossy().parse::<u32>().ok())
+            .ok_or(())?;
+        let runner = arguments.next().map(PathBuf::from).ok_or(())?;
+        let app_image = arguments.next().map(PathBuf::from).ok_or(())?;
+        if arguments.next().as_deref() != Some(OsStr::new("--")) {
+            return Err(());
+        }
+        wait_for_parent_exit(parent_pid).map_err(|_| ())?;
+        let mut command = relaunch_command(&runner, &app_image, arguments.collect());
+        use std::os::unix::process::CommandExt as _;
+        let _error = command.exec();
+        Err(())
+    })();
+    Some(if result.is_ok() { 0 } else { 1 })
+}
+
+#[cfg(all(test, target_arch = "x86_64", target_os = "linux"))]
+fn wait_for_parent_and_launch(
+    parent_pid: u32,
+    runner: &Path,
+    app_image: &Path,
+    arguments: Vec<OsString>,
+) -> std::io::Result<std::process::Child> {
+    wait_for_parent_exit(parent_pid)?;
+    relaunch_command(runner, app_image, arguments).spawn()
+}
+
+#[cfg(all(target_arch = "x86_64", target_os = "linux"))]
+fn wait_for_parent_exit(parent_pid: u32) -> std::io::Result<()> {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    while Path::new("/proc").join(parent_pid.to_string()).exists() {
+        if std::time::Instant::now() >= deadline {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                "the previous Noosphere process did not stop",
+            ));
+        }
+        std::thread::sleep(std::time::Duration::from_millis(25));
+    }
+    Ok(())
+}
+
+#[cfg(all(target_arch = "x86_64", target_os = "linux"))]
+fn relaunch_command(runner: &Path, app_image: &Path, arguments: Vec<OsString>) -> Command {
+    let mut command = Command::new(runner);
+    command
+        .arg(app_image)
+        .args(arguments)
+        .env("APPIMAGE", app_image)
+        .env(RELAUNCH_MARKER, "1")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    command
 }
 
 #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
@@ -409,11 +547,18 @@ fn update_target() -> Option<String> {
 
 #[cfg(all(test, target_arch = "x86_64", target_os = "linux"))]
 mod tests {
-    use std::ffi::OsStr;
+    use std::{
+        ffi::{OsStr, OsString},
+        os::unix::fs::{MetadataExt as _, PermissionsExt as _},
+        path::Path,
+        process::{Command, Stdio},
+        time::{Duration, Instant},
+    };
 
     use super::{
-        appimage_directory_is_writable, install_appimage_update, install_managed_copy,
-        linux_target_for_kind, uses_appimage_run,
+        appimage_directory_is_writable, appimage_sha256, clear_appimage_run_cache_at,
+        install_appimage_update, install_managed_copy, linux_target_for_kind, uses_appimage_run,
+        wait_for_parent_and_launch,
     };
 
     #[test]
@@ -454,8 +599,6 @@ mod tests {
 
     #[test]
     fn replaces_an_appimage_beside_its_temporary_file() {
-        use std::os::unix::fs::PermissionsExt as _;
-
         let writable = tempfile::tempdir().unwrap();
         let appimage = writable.path().join("Noosphere.AppImage");
         std::fs::write(&appimage, b"old version").unwrap();
@@ -469,5 +612,159 @@ mod tests {
             0
         );
         assert_eq!(std::fs::read_dir(writable.path()).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn removes_the_cache_derived_from_the_installed_appimage() {
+        let writable = tempfile::tempdir().unwrap();
+        let appimage = writable.path().join("Noosphere.AppImage");
+        std::fs::write(&appimage, b"signed appimage bytes").unwrap();
+        let digest = appimage_sha256(&appimage).unwrap();
+        let cache = writable.path().join("cache/appimage-run").join(digest);
+        std::fs::create_dir_all(&cache).unwrap();
+        std::fs::write(cache.join("libcef.so"), []).unwrap();
+
+        clear_appimage_run_cache_at(&appimage, &writable.path().join("cache")).unwrap();
+
+        assert!(!cache.exists());
+    }
+
+    #[test]
+    fn replaces_and_relaunches_one_appimage_process() {
+        let writable = tempfile::tempdir().unwrap();
+        let directory = writable.path();
+        let appimage = directory.join("Noosphere.AppImage");
+        let new_bytes = std::fs::read("/bin/sh").unwrap();
+        let mut old_bytes = new_bytes.clone();
+        old_bytes.extend_from_slice(b"old-appimage");
+        std::fs::write(&appimage, old_bytes).unwrap();
+        std::fs::set_permissions(&appimage, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let old_digest = appimage_sha256(&appimage).unwrap();
+        let token = format!("noosphere-transition-{}", std::process::id());
+        let child_script = r#"
+role=old
+if [ "${NOOSPHERE_UPDATE_RELAUNCHED:-}" = 1 ]; then role=new; fi
+printf '%s' "$$" > "$NOOSPHERE_TRANSITION_TEST_DIRECTORY/$role.pid"
+printf '%s' "$APPIMAGE" > "$NOOSPHERE_TRANSITION_TEST_DIRECTORY/$role.appimage"
+printf '%s' "$1" > "$NOOSPHERE_TRANSITION_TEST_DIRECTORY/$role.arguments"
+while [ ! -e "$NOOSPHERE_TRANSITION_TEST_DIRECTORY/release-$role" ]; do sleep 0.02; done
+"#;
+        let child_arguments = vec![
+            OsString::from("-c"),
+            OsString::from(child_script),
+            OsString::from("noosphere-transition"),
+            OsString::from("preserved-value"),
+        ];
+
+        let mut old = Command::new(&appimage)
+            .args(&child_arguments)
+            .env("APPIMAGE", &appimage)
+            .env("NOOSPHERE_TRANSITION_TEST_DIRECTORY", directory)
+            .env("NOOSPHERE_TRANSITION_TEST_TOKEN", &token)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        wait_for_path(&directory.join("old.pid"), Duration::from_secs(15));
+        let old_pid = read_pid(&directory.join("old.pid"));
+
+        install_appimage_update(&appimage, &new_bytes).unwrap();
+        let new_digest = appimage_sha256(&appimage).unwrap();
+        assert_ne!(old_digest, new_digest);
+
+        let runner = directory.join("appimage-run");
+        let quoted_directory = directory.to_string_lossy().replace('\'', "'\\''");
+        let quoted_token = token.replace('\'', "'\\''");
+        std::fs::write(
+            &runner,
+            format!(
+                "#!/bin/sh\nexport NOOSPHERE_TRANSITION_TEST_DIRECTORY='{quoted_directory}'\nexport NOOSPHERE_TRANSITION_TEST_TOKEN='{quoted_token}'\nexec \"$@\"\n"
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&runner, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        let helper_runner = runner.clone();
+        let helper_appimage = appimage.clone();
+        let helper_arguments = child_arguments.clone();
+        let helper = std::thread::spawn(move || {
+            wait_for_parent_and_launch(old_pid, &helper_runner, &helper_appimage, helper_arguments)
+                .unwrap()
+        });
+        std::fs::write(directory.join("release-old"), []).unwrap();
+        let old_status = old.wait().unwrap();
+        assert!(old_status.success(), "old process ended with {old_status}");
+
+        let mut new = helper.join().unwrap();
+        wait_for_path(&directory.join("new.pid"), Duration::from_secs(15));
+        let new_pid = read_pid(&directory.join("new.pid"));
+        assert_ne!(old_pid, new_pid);
+        assert_eq!(
+            std::fs::read_to_string(directory.join("new.appimage")).unwrap(),
+            appimage.to_string_lossy()
+        );
+        assert!(
+            std::fs::read_to_string(directory.join("new.arguments"))
+                .unwrap()
+                .contains("preserved-value")
+        );
+        assert_eq!(
+            std::fs::read_link(format!("/proc/{new_pid}/exe")).unwrap(),
+            appimage
+        );
+        let running_metadata = std::fs::metadata(format!("/proc/{new_pid}/exe")).unwrap();
+        let installed_metadata = std::fs::metadata(&appimage).unwrap();
+        assert_eq!(running_metadata.dev(), installed_metadata.dev());
+        assert_eq!(running_metadata.ino(), installed_metadata.ino());
+        assert_eq!(processes_with_token(&token, &appimage), 1);
+
+        std::fs::write(directory.join("release-new"), []).unwrap();
+        assert!(new.wait().unwrap().success());
+        assert_eq!(processes_with_token(&token, &appimage), 0);
+    }
+
+    fn wait_for_path(path: &Path, timeout: Duration) {
+        let deadline = Instant::now() + timeout;
+        while !path.exists() {
+            assert!(
+                Instant::now() < deadline,
+                "timed out waiting for {}",
+                path.display()
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+
+    fn read_pid(path: &Path) -> u32 {
+        std::fs::read_to_string(path).unwrap().parse().unwrap()
+    }
+
+    fn processes_with_token(token: &str, executable: &Path) -> usize {
+        let expected = format!("NOOSPHERE_TRANSITION_TEST_TOKEN={token}");
+        let expected_metadata = std::fs::metadata(executable).unwrap();
+        std::fs::read_dir("/proc")
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|entry| {
+                entry
+                    .file_name()
+                    .to_string_lossy()
+                    .bytes()
+                    .all(|byte| byte.is_ascii_digit())
+            })
+            .filter(|entry| {
+                std::fs::metadata(entry.path().join("exe")).is_ok_and(|metadata| {
+                    metadata.dev() == expected_metadata.dev()
+                        && metadata.ino() == expected_metadata.ino()
+                })
+            })
+            .filter_map(|entry| std::fs::read(entry.path().join("environ")).ok())
+            .filter(|environment| {
+                environment
+                    .split(|byte| *byte == 0)
+                    .any(|variable| variable == expected.as_bytes())
+            })
+            .count()
     }
 }

@@ -14,6 +14,11 @@ mod secure_store;
 mod state;
 mod validation;
 
+#[cfg(all(target_arch = "x86_64", target_os = "linux"))]
+pub fn appimage_relaunch_helper_status() -> Option<i32> {
+    app_update::relaunch_helper_status()
+}
+
 #[cfg(windows)]
 pub fn run_firewall_installer() -> i32 {
     remote_access::install_firewall_for_current_executable()
