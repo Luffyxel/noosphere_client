@@ -291,6 +291,10 @@ fn launch_appimage(runner: &Path, app_image: &Path) -> Result<(), String> {
                 .arg(format!("{variable}={}", value.to_string_lossy()));
         }
     }
+    configure_systemd_user_bus(
+        &mut detached,
+        std::env::var_os("XDG_RUNTIME_DIR").as_deref(),
+    );
     let detached_started = detached
         .arg(&executable)
         .arg(RELAUNCH_HELPER_ARGUMENT)
@@ -323,6 +327,20 @@ fn launch_appimage(runner: &Path, app_image: &Path) -> Result<(), String> {
         .spawn()
         .map(|_| ())
         .map_err(|_| "appimage-run could not restart Noosphere".to_owned())
+}
+
+#[cfg(all(target_arch = "x86_64", target_os = "linux"))]
+fn configure_systemd_user_bus(command: &mut Command, runtime_directory: Option<&OsStr>) {
+    let Some(runtime_directory) = runtime_directory else {
+        return;
+    };
+    let bus = Path::new(runtime_directory).join("bus");
+    if bus.exists() {
+        command.env(
+            "DBUS_SESSION_BUS_ADDRESS",
+            format!("unix:path={}", bus.to_string_lossy()),
+        );
+    }
 }
 
 #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
@@ -677,8 +695,9 @@ mod tests {
 
     use super::{
         appimage_directory_is_writable, appimage_sha256, clear_appimage_run_cache_at,
-        install_appimage_update, install_managed_copy, linux_target_for_kind,
-        runtime_process_tokens, uses_appimage_run, wait_for_parent_and_launch,
+        configure_systemd_user_bus, install_appimage_update, install_managed_copy,
+        linux_target_for_kind, runtime_process_tokens, uses_appimage_run,
+        wait_for_parent_and_launch,
     };
 
     #[test]
@@ -747,6 +766,31 @@ mod tests {
         clear_appimage_run_cache_at(&appimage, &writable.path().join("cache")).unwrap();
 
         assert!(!cache.exists());
+    }
+
+    #[test]
+    fn systemd_launcher_uses_the_user_manager_bus() {
+        let runtime = tempfile::tempdir().unwrap();
+        std::fs::write(runtime.path().join("bus"), []).unwrap();
+        let mut command = Command::new("systemd-run");
+        command.env(
+            "DBUS_SESSION_BUS_ADDRESS",
+            "unix:path=/tmp/desktop-session-bus",
+        );
+
+        configure_systemd_user_bus(&mut command, Some(runtime.path().as_os_str()));
+
+        let address = command
+            .get_envs()
+            .find_map(|(name, value)| (name == "DBUS_SESSION_BUS_ADDRESS").then(|| value.unwrap()))
+            .unwrap();
+        assert_eq!(
+            address,
+            OsStr::new(&format!(
+                "unix:path={}",
+                runtime.path().join("bus").display()
+            ))
+        );
     }
 
     #[test]
