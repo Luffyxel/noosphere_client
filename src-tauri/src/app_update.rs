@@ -20,6 +20,8 @@ const UPDATE_METADATA_ATTEMPTS: usize = 2;
 const RELAUNCH_HELPER_ARGUMENT: &str = "--noosphere-appimage-relaunch-helper";
 #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
 const RELAUNCH_MARKER: &str = "NOOSPHERE_UPDATE_RELAUNCHED";
+#[cfg(all(target_arch = "x86_64", target_os = "linux"))]
+const WRAPPED_RELAUNCH_MARKER: &str = "NOOSPHERE_UPDATE_WRAPPED_HELPER";
 
 #[tauri::command]
 pub fn system_update_target(_app: crate::DesktopAppHandle) -> Result<Option<String>, String> {
@@ -295,8 +297,12 @@ fn launch_appimage(runner: &Path, app_image: &Path) -> Result<(), String> {
         &mut detached,
         std::env::var_os("XDG_RUNTIME_DIR").as_deref(),
     );
+    detached
+        .arg("--setenv")
+        .arg(format!("{WRAPPED_RELAUNCH_MARKER}=1"));
     let detached_started = detached
-        .arg(&executable)
+        .arg(runner)
+        .arg(app_image)
         .arg(RELAUNCH_HELPER_ARGUMENT)
         .arg(parent_pid.to_string())
         .arg(&runtime_processes)
@@ -410,12 +416,35 @@ pub fn relaunch_helper_status() -> Option<i32> {
             return Err(());
         }
         wait_for_runtime_exit(parent_pid, &runtime_processes).map_err(|_| ())?;
-        let mut command = relaunch_command(&runner, &app_image, arguments.collect());
+        let original_arguments = arguments.collect();
+        let mut command =
+            if std::env::var_os(WRAPPED_RELAUNCH_MARKER).as_deref() == Some(OsStr::new("1")) {
+                wrapped_relaunch_command(&app_image, original_arguments).map_err(|_| ())?
+            } else {
+                relaunch_command(&runner, &app_image, original_arguments)
+            };
         use std::os::unix::process::CommandExt as _;
         let _error = command.exec();
         Err(())
     })();
     Some(if result.is_ok() { 0 } else { 1 })
+}
+
+#[cfg(all(target_arch = "x86_64", target_os = "linux"))]
+fn wrapped_relaunch_command(
+    app_image: &Path,
+    arguments: Vec<OsString>,
+) -> std::io::Result<Command> {
+    let mut command = Command::new(std::env::current_exe()?);
+    command
+        .args(arguments)
+        .env("APPIMAGE", app_image)
+        .env(RELAUNCH_MARKER, "1")
+        .env_remove(WRAPPED_RELAUNCH_MARKER)
+        .stdin(Stdio::null())
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit());
+    Ok(command)
 }
 
 #[cfg(all(test, target_arch = "x86_64", target_os = "linux"))]
