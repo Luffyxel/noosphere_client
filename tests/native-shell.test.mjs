@@ -45,6 +45,14 @@ void test('WebView2 accorde uniquement les permissions micro et caméra', async 
   assert.doesNotMatch(runtime, /COREWEBVIEW2_PERMISSION_KIND_GEOLOCATION/);
 });
 
+void test('le moteur Linux ne sollicite pas le trousseau du bureau', async () => {
+  const runtime = await readFile(new URL('src-tauri/src/lib.rs', root), 'utf8');
+  assert.match(
+    runtime,
+    /\("password-store"\.into\(\), Some\("basic"\.into\(\)\)\)/,
+  );
+});
+
 void test('le test Windows reste exécutable sans périphérique média', async () => {
   const [smoke, ci, release] = await Promise.all([
     readFile(new URL('lib/tauri-smoke.ts', root), 'utf8'),

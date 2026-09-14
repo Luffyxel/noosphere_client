@@ -32,7 +32,8 @@ embarquées dans l’AppImage. Firefox, Chromium et leurs versions Flatpak serve
 de solutions de repli. L’écran du code propose aussi un bouton **Ouvrir GitHub**.
 Les identifiants sont conservés dans des fichiers
 chiffrés réservés à l’utilisateur Unix courant, sans créer de mot de passe de
-trousseau au démarrage.
+trousseau au démarrage. Le moteur d’interface n’accède pas non plus à GNOME
+Keyring ou KWallet.
 
 Sous NixOS, l’actualisation relance automatiquement l’AppImage avec
 `appimage-run`. Le fichier AppImage d’origine doit rester modifiable par

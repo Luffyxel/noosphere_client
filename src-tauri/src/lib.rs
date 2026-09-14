@@ -93,7 +93,10 @@ fn configure_linux_runtime() -> bool {
 
     let smoke_test = std::env::var("NOOSPHERE_SMOKE_TEST").as_deref() == Ok("1");
     let resource_directory = linux_cef_resource_directory();
-    let mut command_line_args = vec![("--disable-setuid-sandbox".into(), None)];
+    let mut command_line_args = vec![
+        ("--disable-setuid-sandbox".into(), None),
+        ("password-store".into(), Some("basic".into())),
+    ];
     if smoke_test {
         command_line_args.extend([
             ("--no-sandbox".into(), None),

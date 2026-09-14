@@ -31,7 +31,8 @@ profiles without passing the libraries bundled in the AppImage to the browser.
 Firefox, Chromium and their Flatpak packages are available as fallbacks. The
 code screen also provides an **Open GitHub** button. Credentials are stored in
 encrypted files restricted to the current Unix user, without creating a
-desktop keyring password.
+desktop keyring password. The interface engine does not access GNOME Keyring or
+KWallet either.
 
 On NixOS, updates automatically relaunch the AppImage through `appimage-run`.
 The original AppImage file must remain writable by the current user.
