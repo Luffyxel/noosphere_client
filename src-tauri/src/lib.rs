@@ -61,6 +61,9 @@ pub fn prepare_linux_media_runtime() {
 
     if let Some(driver_directory) = linux_va_driver_directory() {
         prepend_linux_path("LIBVA_DRIVERS_PATH", &driver_directory);
+        if let Some(preload) = linux_nixos_va_preload(&driver_directory) {
+            unsafe { std::env::set_var("NOOSPHERE_REMOTE_LD_PRELOAD", preload) };
+        }
     }
 
     if std::env::var_os("GST_REGISTRY").is_none()
@@ -72,6 +75,81 @@ pub fn prepare_linux_media_runtime() {
         // The versioned name also forces a fresh hardware probe after updates.
         unsafe { std::env::set_var("GST_REGISTRY", registry) };
     }
+}
+
+#[cfg(target_os = "linux")]
+fn linux_nixos_va_preload(driver_directory: &std::path::Path) -> Option<std::ffi::OsString> {
+    let driver = [
+        "iHD_drv_video.so",
+        "i965_drv_video.so",
+        "radeonsi_drv_video.so",
+        "nouveau_drv_video.so",
+        "nvidia_drv_video.so",
+    ]
+    .into_iter()
+    .map(|name| driver_directory.join(name))
+    .find(|path| path.exists())?
+    .canonicalize()
+    .ok()?;
+    let package = nix_store_package_for(&driver, std::path::Path::new("/nix/store"))?;
+    let output = std::process::Command::new("/run/current-system/sw/bin/nix-store")
+        .args(["-q", "--references"])
+        .arg(package)
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let references = String::from_utf8(output.stdout)
+        .ok()?
+        .lines()
+        .map(std::path::PathBuf::from)
+        .collect::<Vec<_>>();
+    nixos_va_preload_from_references(&references, std::env::var_os("LD_PRELOAD"))
+}
+
+#[cfg(target_os = "linux")]
+fn nix_store_package_for(
+    path: &std::path::Path,
+    store: &std::path::Path,
+) -> Option<std::path::PathBuf> {
+    let name = path.strip_prefix(store).ok()?.components().next()?;
+    Some(store.join(name.as_os_str()))
+}
+
+#[cfg(target_os = "linux")]
+fn nixos_va_preload_from_references(
+    references: &[std::path::PathBuf],
+    current: Option<std::ffi::OsString>,
+) -> Option<std::ffi::OsString> {
+    let va = references
+        .iter()
+        .map(|path| path.join("lib"))
+        .find(|path| path.join("libva.so.2").is_file())?;
+    let cxx = references
+        .iter()
+        .map(|path| path.join("lib/libstdc++.so.6"))
+        .find(|path| path.is_file())?;
+    let mut libraries = [
+        "libva.so.2",
+        "libva-drm.so.2",
+        "libva-x11.so.2",
+        "libva-wayland.so.2",
+        "libva-glx.so.2",
+    ]
+    .into_iter()
+    .map(|name| va.join(name))
+    .filter(|path| path.is_file())
+    .collect::<Vec<_>>();
+    libraries.push(cxx);
+    if let Some(current) = current {
+        for path in std::env::split_paths(&current) {
+            if !libraries.contains(&path) {
+                libraries.push(path);
+            }
+        }
+    }
+    std::env::join_paths(libraries).ok()
 }
 
 #[cfg(target_os = "linux")]
@@ -190,6 +268,48 @@ mod linux_media_runtime_tests {
             Some(std::path::PathBuf::from(
                 "/tmp/cache/noosphere/gstreamer-registry-0.1.43.bin"
             ))
+        );
+    }
+
+    #[test]
+    fn nix_store_package_is_derived_from_a_driver_symlink_target() {
+        assert_eq!(
+            nix_store_package_for(
+                std::path::Path::new("/nix/store/driver-package/lib/dri/iHD_drv_video.so"),
+                std::path::Path::new("/nix/store"),
+            ),
+            Some(std::path::PathBuf::from("/nix/store/driver-package"))
+        );
+    }
+
+    #[test]
+    fn nixos_va_preload_uses_one_compatible_library_set() {
+        let temporary = tempfile::tempdir().unwrap();
+        let va = temporary.path().join("libva");
+        let cxx = temporary.path().join("gcc");
+        std::fs::create_dir_all(va.join("lib")).unwrap();
+        std::fs::create_dir_all(cxx.join("lib")).unwrap();
+        for name in ["libva.so.2", "libva-drm.so.2", "libva-wayland.so.2"] {
+            std::fs::write(va.join("lib").join(name), []).unwrap();
+        }
+        std::fs::write(cxx.join("lib/libstdc++.so.6"), []).unwrap();
+
+        let value = nixos_va_preload_from_references(
+            &[va.clone(), cxx.clone()],
+            Some(std::ffi::OsString::from("/custom/libhook.so")),
+        )
+        .unwrap();
+        let libraries = std::env::split_paths(&value).collect::<Vec<_>>();
+
+        assert_eq!(
+            libraries,
+            [
+                va.join("lib/libva.so.2"),
+                va.join("lib/libva-drm.so.2"),
+                va.join("lib/libva-wayland.so.2"),
+                cxx.join("lib/libstdc++.so.6"),
+                std::path::PathBuf::from("/custom/libhook.so"),
+            ]
         );
     }
 }

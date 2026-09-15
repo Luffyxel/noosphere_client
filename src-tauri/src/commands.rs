@@ -308,6 +308,7 @@ fn sanitize_linux_external_command_for_appimage(
         "ARGV0",
         "LD_LIBRARY_PATH",
         "LD_PRELOAD",
+        "NOOSPHERE_REMOTE_LD_PRELOAD",
         "GDK_PIXBUF_MODULE_FILE",
         "GIO_EXTRA_MODULES",
         "GI_TYPELIB_PATH",

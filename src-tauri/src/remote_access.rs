@@ -319,6 +319,10 @@ fn start_host(state: &AppState, repository_id: u64, settings: Settings) -> Resul
         .stdin(Stdio::piped())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
+    #[cfg(target_os = "linux")]
+    if let Some(preload) = std::env::var_os("NOOSPHERE_REMOTE_LD_PRELOAD") {
+        command.env("LD_PRELOAD", preload);
+    }
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt as _;
