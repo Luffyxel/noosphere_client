@@ -92,11 +92,13 @@ fn linux_nixos_va_preload(driver_directory: &std::path::Path) -> Option<std::ffi
     .canonicalize()
     .ok()?;
     let package = nix_store_package_for(&driver, std::path::Path::new("/nix/store"))?;
-    let output = std::process::Command::new("/run/current-system/sw/bin/nix-store")
+    let mut command = std::process::Command::new("/run/current-system/sw/bin/nix-store");
+    command
         .args(["-q", "--references"])
         .arg(package)
-        .output()
-        .ok()?;
+        .env_remove("LD_LIBRARY_PATH")
+        .env_remove("LD_PRELOAD");
+    let output = command.output().ok()?;
     if !output.status.success() {
         return None;
     }
