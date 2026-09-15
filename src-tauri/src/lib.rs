@@ -58,6 +58,140 @@ pub fn prepare_linux_media_runtime() {
             unsafe { std::env::set_var(name, path) };
         }
     }
+
+    if let Some(driver_directory) = linux_va_driver_directory() {
+        prepend_linux_path("LIBVA_DRIVERS_PATH", &driver_directory);
+    }
+
+    if std::env::var_os("GST_REGISTRY").is_none()
+        && let Some(registry) = linux_media_registry_path()
+        && let Some(parent) = registry.parent()
+        && std::fs::create_dir_all(parent).is_ok()
+    {
+        // Keep the AppImage plugin registry separate from the host registry.
+        // The versioned name also forces a fresh hardware probe after updates.
+        unsafe { std::env::set_var("GST_REGISTRY", registry) };
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn linux_va_driver_directory() -> Option<std::path::PathBuf> {
+    first_linux_va_driver_directory([
+        "/run/opengl-driver/lib/dri",
+        "/usr/lib/x86_64-linux-gnu/dri",
+        "/usr/lib64/dri",
+        "/usr/lib/dri",
+    ])
+}
+
+#[cfg(target_os = "linux")]
+fn first_linux_va_driver_directory(
+    candidates: impl IntoIterator<Item = impl AsRef<std::path::Path>>,
+) -> Option<std::path::PathBuf> {
+    candidates
+        .into_iter()
+        .map(|path| path.as_ref().to_path_buf())
+        .find(|path| path.is_dir())
+}
+
+#[cfg(target_os = "linux")]
+fn prepend_linux_path(name: &str, path: &std::path::Path) {
+    if let Some(value) = prepend_linux_path_value(path, std::env::var_os(name)) {
+        unsafe { std::env::set_var(name, value) };
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn prepend_linux_path_value(
+    path: &std::path::Path,
+    current: Option<std::ffi::OsString>,
+) -> Option<std::ffi::OsString> {
+    let mut paths = vec![path.to_path_buf()];
+    if let Some(current) = current {
+        paths.extend(std::env::split_paths(&current));
+    }
+    paths.dedup();
+    std::env::join_paths(paths).ok()
+}
+
+#[cfg(target_os = "linux")]
+fn linux_media_registry_path() -> Option<std::path::PathBuf> {
+    linux_media_registry_path_for(
+        std::env::var_os("XDG_CACHE_HOME"),
+        std::env::var_os("HOME"),
+        env!("CARGO_PKG_VERSION"),
+    )
+}
+
+#[cfg(target_os = "linux")]
+fn linux_media_registry_path_for(
+    cache_home: Option<std::ffi::OsString>,
+    home: Option<std::ffi::OsString>,
+    version: &str,
+) -> Option<std::path::PathBuf> {
+    cache_home
+        .filter(|path| !path.is_empty())
+        .map(std::path::PathBuf::from)
+        .or_else(|| {
+            home.filter(|path| !path.is_empty())
+                .map(std::path::PathBuf::from)
+                .map(|path| path.join(".cache"))
+        })
+        .map(|path| {
+            path.join("noosphere")
+                .join(format!("gstreamer-registry-{version}.bin"))
+        })
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod linux_media_runtime_tests {
+    use super::*;
+
+    #[test]
+    fn nixos_va_driver_directory_is_selected() {
+        let temporary = tempfile::tempdir().unwrap();
+        let missing = temporary.path().join("missing");
+        let driver = temporary.path().join("run/opengl-driver/lib/dri");
+        std::fs::create_dir_all(&driver).unwrap();
+
+        assert_eq!(
+            first_linux_va_driver_directory([missing, driver.clone()]),
+            Some(driver)
+        );
+    }
+
+    #[test]
+    fn va_driver_path_keeps_existing_directories() {
+        let value = prepend_linux_path_value(
+            std::path::Path::new("/run/opengl-driver/lib/dri"),
+            Some(std::ffi::OsString::from("/custom/dri:/usr/lib/dri")),
+        )
+        .unwrap();
+        let paths = std::env::split_paths(&value).collect::<Vec<_>>();
+
+        assert_eq!(
+            paths,
+            [
+                std::path::PathBuf::from("/run/opengl-driver/lib/dri"),
+                std::path::PathBuf::from("/custom/dri"),
+                std::path::PathBuf::from("/usr/lib/dri"),
+            ]
+        );
+    }
+
+    #[test]
+    fn gstreamer_registry_is_scoped_to_noosphere_version() {
+        assert_eq!(
+            linux_media_registry_path_for(
+                Some(std::ffi::OsString::from("/tmp/cache")),
+                Some(std::ffi::OsString::from("/home/test")),
+                "0.1.43",
+            ),
+            Some(std::path::PathBuf::from(
+                "/tmp/cache/noosphere/gstreamer-registry-0.1.43.bin"
+            ))
+        );
+    }
 }
 
 #[cfg(windows)]

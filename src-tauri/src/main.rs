@@ -19,6 +19,25 @@ fn main() {
         return;
     }
     #[cfg(target_os = "linux")]
+    if mode.as_deref() == Some("--remote-linux-media-probe") {
+        let probe = noosphere_remote::capture::linux::probe();
+        println!(
+            "{}",
+            serde_json::json!({
+                "ready": probe.ready,
+                "encoder": probe.encoder,
+                "hardware": probe.hardware,
+                "unavailable": probe.unavailable,
+                "libvaDriversPath": std::env::var("LIBVA_DRIVERS_PATH").unwrap_or_default(),
+                "gstRegistry": std::env::var("GST_REGISTRY").unwrap_or_default(),
+            })
+        );
+        if !probe.ready {
+            std::process::exit(1);
+        }
+        return;
+    }
+    #[cfg(target_os = "linux")]
     if mode.as_deref() == Some("--remote-linux-capture-probe") {
         match noosphere_remote::diagnostic::linux_live_capture_probe_json() {
             Ok(report) => println!("{report}"),
