@@ -1,4 +1,5 @@
 mod app_update;
+mod background_host;
 mod commands;
 mod error;
 mod github;
@@ -432,16 +433,34 @@ pub fn run() {
     if !configure_linux_runtime() {
         return;
     }
-    let builder = tauri::Builder::<DesktopRuntime>::default();
+    let service_mode = background_host::service_mode();
+    let smoke_mode = std::env::var("NOOSPHERE_SMOKE_TEST").as_deref() == Ok("1");
+    let mut builder = tauri::Builder::<DesktopRuntime>::default();
+    if !smoke_mode {
+        builder = builder.plugin(tauri_plugin_single_instance::init(|app, arguments, _| {
+            if arguments
+                .iter()
+                .any(|argument| argument == background_host::SERVICE_ARGUMENT)
+            {
+                return;
+            }
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.show();
+                let _ = window.unminimize();
+                let _ = window.set_focus();
+            }
+        }));
+    }
     builder
+        .manage(background_host::BackgroundHost::new(service_mode))
         .manage(remote_access::RemoteAccess::default())
         .manage(remote_directory::RemoteDirectory::default())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
-        .setup(|app| {
-            let data_directory = if std::env::var("NOOSPHERE_SMOKE_TEST").as_deref() == Ok("1") {
+        .setup(move |app| {
+            let data_directory = if smoke_mode {
                 let path = std::env::var_os("NOOSPHERE_SMOKE_USER_DATA")
                     .map(std::path::PathBuf::from)
                     .filter(|path| path.is_absolute())
@@ -455,11 +474,61 @@ pub fn run() {
             };
             let profile = instance_profile::InstanceProfile::acquire(&data_directory)?;
             app.manage(state::AppState::new(profile)?);
+            if service_mode && let Some(window) = app.get_webview_window("main") {
+                window.hide()?;
+            }
+            let handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                loop {
+                    let background = handle.state::<background_host::BackgroundHost>();
+                    let visible = handle
+                        .get_webview_window("main")
+                        .and_then(|window| window.is_visible().ok())
+                        .unwrap_or(false);
+                    if background.enabled() && !visible {
+                        let state = handle.state::<state::AppState>();
+                        if state.session.read().await.is_none() {
+                            let _ = state.restore_session().await;
+                        }
+                        let viewer = state
+                            .session
+                            .read()
+                            .await
+                            .as_ref()
+                            .map(|session| session.viewer.clone());
+                        if let Some(viewer) = viewer {
+                            if state.identity.read().await.is_none() {
+                                let _ = state
+                                    .load_or_create_identity(viewer.id, viewer.repository.id, None)
+                                    .await;
+                            }
+                            if state.identity.read().await.is_some() {
+                                let _ = remote_directory::remote_sync_directory(
+                                    state,
+                                    handle.state::<remote_directory::RemoteDirectory>(),
+                                    handle.state::<remote_access::RemoteAccess>(),
+                                    false,
+                                )
+                                .await;
+                            }
+                        }
+                    }
+                    tokio::time::sleep(std::time::Duration::from_secs(4)).await;
+                }
+            });
             #[cfg(windows)]
             if let Some(window) = app.get_webview_window("main") {
                 allow_local_media_permissions(&window)?;
             }
             Ok(())
+        })
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event
+                && window.state::<background_host::BackgroundHost>().enabled()
+            {
+                api.prevent_close();
+                let _ = window.hide();
+            }
         })
         .invoke_handler(tauri::generate_handler![
             app_update::system_update_target,

@@ -183,11 +183,26 @@ export function RemoteAccessSettings({
                   label="Autoriser les demandes d’accès"
                   checked={data?.hostEnabled ?? false}
                   disabled={!data || remote.busy}
-                  onChange={(enabled) =>
-                    void remote.run((api) => api.setHost(enabled))
-                  }
+                  onChange={(enabled) => {
+                    if (!enabled && settings) {
+                      update({ ...settings, startWithSystem: false });
+                    }
+                    void remote.run((api) => api.setHost(enabled));
+                  }}
                 />
               </SettingRow>
+              {settings && (
+                <SettingRow title="Démarrer avec l’ordinateur">
+                  <Toggle
+                    label="Démarrer avec l’ordinateur"
+                    checked={settings.startWithSystem}
+                    disabled={!data?.hostEnabled || saving}
+                    onChange={(startWithSystem) =>
+                      update({ ...settings, startWithSystem })
+                    }
+                  />
+                </SettingRow>
+              )}
               <SettingRow title="Utilisateurs autorisés">
                 <Button
                   variant="ghost"

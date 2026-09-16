@@ -17,6 +17,7 @@ export type RemoteSettings = {
   display: number;
   video: RemoteVideoSettings;
   audio: boolean;
+  startWithSystem: boolean;
 };
 
 export type RemoteStatus = {

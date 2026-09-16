@@ -80,6 +80,11 @@ Cette version de validation n’est pas encore la V0.2.0 multiplateforme.
 La [documentation du moteur](docs/remote-desktop.md) précise l’état de
 l’implémentation et les benchmarks reproductibles.
 
+Le réglage « Démarrer avec l’ordinateur » garde l’hôte connecté après la
+fermeture de l’interface. Noosphere utilise le démarrage de l’utilisateur sous
+Windows et un service systemd utilisateur sous Linux, sans droit administrateur.
+La capture démarre dans la session graphique, où le GPU et les entrées sont disponibles.
+
 ## Linux
 
 La version Linux est disponible pour x86_64 dans trois formats :

@@ -70,6 +70,8 @@ pub struct Settings {
     pub display: u32,
     pub video: VideoSettings,
     pub audio: bool,
+    #[serde(default)]
+    pub start_with_system: bool,
 }
 
 impl Default for Settings {
@@ -85,6 +87,7 @@ impl Default for Settings {
                 codec: Codec::H264,
             },
             audio: true,
+            start_with_system: false,
         }
     }
 }

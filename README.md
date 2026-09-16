@@ -74,6 +74,11 @@ replacing the portable build triggers that approval again. This is a validation
 build rather than the cross-platform V0.2.0. See the [engine documentation](docs/remote-desktop.md)
 for implementation status and reproducible benchmarks.
 
+The “Start with the computer” setting keeps the signed-in host available after
+the interface is closed. It uses the current-user startup entry on Windows and
+a systemd user service on Linux, without administrator access. Desktop capture
+starts in the graphical user session, where GPU and input APIs are available.
+
 ## Linux
 
 The Linux release is available for x86_64 in three formats:

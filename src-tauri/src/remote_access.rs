@@ -579,6 +579,24 @@ pub(crate) fn load_settings(state: &AppState, repository_id: u64) -> Result<Sett
     Ok(settings)
 }
 
+pub(crate) fn store_settings(
+    state: &AppState,
+    repository_id: u64,
+    settings: &Settings,
+) -> Result<(), String> {
+    let account = state
+        .profile
+        .shared_account(&format!("remote-{repository_id}"))
+        .map_err(|e| e.to_string())?;
+    state
+        .blobs
+        .save(
+            &account,
+            SecretString::from(serde_json::to_string(settings).map_err(|e| e.to_string())?),
+        )
+        .map_err(|e| e.to_string())
+}
+
 fn start_host(state: &AppState, repository_id: u64, settings: Settings) -> Result<Host, String> {
     let id = uuid::Uuid::new_v4().simple().to_string();
     #[cfg(windows)]
@@ -780,8 +798,10 @@ pub(crate) async fn stop_live_if_running(remote: &RemoteAccess) -> Result<(), St
 pub async fn remote_status(
     state: State<'_, AppState>,
     remote: State<'_, RemoteAccess>,
+    background: State<'_, crate::background_host::BackgroundHost>,
 ) -> Result<Status, String> {
     let mut status = remote.status(&state).await?;
+    background.set_enabled(status.settings.start_with_system);
     let machine_id = machine_id(&state)?;
     if let Some(identity) = state.identity.read().await.as_ref() {
         status.owner = Some(
@@ -827,21 +847,20 @@ pub(crate) fn machine_id(state: &AppState) -> Result<uuid::Uuid, String> {
 pub async fn remote_save_settings(
     state: State<'_, AppState>,
     remote: State<'_, RemoteAccess>,
+    background: State<'_, crate::background_host::BackgroundHost>,
     settings: Settings,
 ) -> Result<Status, String> {
     settings.validate().map_err(|e| e.to_string())?;
     let id = repository_id(&state).await?;
-    let account = state
-        .profile
-        .shared_account(&format!("remote-{id}"))
-        .map_err(|e| e.to_string())?;
-    state
-        .blobs
-        .save(
-            &account,
-            SecretString::from(serde_json::to_string(&settings).map_err(|e| e.to_string())?),
-        )
-        .map_err(|e| e.to_string())?;
+    let start_with_system = settings.start_with_system;
+    let previous = load_settings(&state, id)?;
+    if previous.start_with_system != start_with_system {
+        tokio::task::spawn_blocking(move || crate::background_host::configure(start_with_system))
+            .await
+            .map_err(|_| "Le réglage de démarrage automatique a été interrompu.".to_owned())??;
+    }
+    store_settings(&state, id, &settings)?;
+    background.set_enabled(start_with_system);
     {
         let mut guard = remote.process.lock().await;
         if let Some(host) = guard.as_mut() {
@@ -849,7 +868,15 @@ pub async fn remote_save_settings(
         }
         *guard = None;
     }
-    remote.status(&state).await
+    let mut status = remote.status(&state).await?;
+    status.owner = state.identity.read().await.as_ref().and_then(|identity| {
+        let machine_id = machine_id(&state).ok()?;
+        crate::protocol::remote_identity(&identity.secret)
+            .ok()?
+            .principal(*machine_id.as_bytes())
+            .ok()
+    });
+    Ok(status)
 }
 
 #[tauri::command]
@@ -860,7 +887,14 @@ pub async fn remote_start_local_test(
 ) -> Result<(), String> {
     settings.validate().map_err(|e| e.to_string())?;
     let _operation = state.operations.lock().await;
-    let status = remote_status(state.clone(), remote.clone()).await?;
+    let mut status = remote.status(&state).await?;
+    let machine_id = machine_id(&state)?;
+    status.owner = state.identity.read().await.as_ref().and_then(|identity| {
+        crate::protocol::remote_identity(&identity.secret)
+            .ok()?
+            .principal(*machine_id.as_bytes())
+            .ok()
+    });
     let owner = status.owner.ok_or("Identité Noosphere indisponible.")?;
     let identity = state.identity.read().await;
     let identity = identity

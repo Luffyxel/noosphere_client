@@ -1010,6 +1010,7 @@ pub async fn remote_set_host(
     state: State<'_, AppState>,
     directory: State<'_, RemoteDirectory>,
     remote: State<'_, crate::remote_access::RemoteAccess>,
+    background: State<'_, crate::background_host::BackgroundHost>,
     enabled: bool,
 ) -> Result<DirectoryView> {
     let _operation = directory.operation.lock().await;
@@ -1027,6 +1028,19 @@ pub async fn remote_set_host(
         },
     );
     let mut failures = Vec::new();
+    if !enabled {
+        let mut settings = crate::remote_access::load_settings(&state, viewer.repository.id)?;
+        if settings.start_with_system {
+            settings.start_with_system = false;
+            tokio::task::spawn_blocking(|| crate::background_host::configure(false))
+                .await
+                .map_err(|_| {
+                    "Le réglage de démarrage automatique a été interrompu.".to_owned()
+                })??;
+            crate::remote_access::store_settings(&state, viewer.repository.id, &settings)?;
+        }
+        background.set_enabled(false);
+    }
     if enabled && let Some(failure) = ensure_firewall(&mut data, true).await {
         failures.push(failure);
     }

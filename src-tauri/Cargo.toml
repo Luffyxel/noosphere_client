@@ -1,6 +1,6 @@
 [package]
 name = "noosphere-desktop"
-version = "0.1.47"
+version = "0.1.48"
 description = "Noosphere desktop application"
 authors = ["Noosphere contributors"]
 edition = "2024"
@@ -37,6 +37,7 @@ tauri = { version = "=2.11.5", default-features = false, features = [] }
 tauri-plugin-notification = "=2.4.0"
 tauri-plugin-opener = "=2.5.5"
 tauri-plugin-process = "=2.3.1"
+tauri-plugin-single-instance = "=2.3.6"
 tauri-plugin-updater = "=2.11.0"
 thiserror = "=2.0.20"
 time = { version = "=0.3.55", features = ["formatting", "parsing"] }
