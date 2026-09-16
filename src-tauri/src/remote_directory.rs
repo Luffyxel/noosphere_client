@@ -1784,11 +1784,12 @@ mod tests {
             .unwrap();
         let session_id = [9; 32];
         let hello = GuestHello {
-            version: 1,
+            version: 2,
             session_id,
             guest,
             host,
             guest_certificate_der: vec![1; 256],
+            addresses: vec!["127.0.0.1:41000".into()],
             permissions: Permissions {
                 screen: true,
                 ..Default::default()

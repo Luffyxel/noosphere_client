@@ -193,3 +193,96 @@ async fn valid_tls_certificate_cannot_substitute_another_noosphere_identity() {
     .await
     .unwrap();
 }
+
+#[tokio::test]
+async fn host_can_open_the_quic_path_when_guest_cannot_reach_it() {
+    tokio::time::timeout(Duration::from_secs(10), async {
+        let host = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
+        let guest = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
+        let host_der: CertificateDer<'static> = host.cert.into();
+        let guest_der: CertificateDer<'static> = guest.cert.into();
+        let guest_config = transport::server_config(
+            guest_der.clone(),
+            PrivatePkcs8KeyDer::from(guest.signing_key.serialize_der()).into(),
+            host_der.clone(),
+            CongestionControl::Cubic,
+        )
+        .unwrap();
+        let host_config = transport::client_config(
+            host_der.clone(),
+            PrivatePkcs8KeyDer::from(host.signing_key.serialize_der()).into(),
+            guest_der.clone(),
+            CongestionControl::Cubic,
+        )
+        .unwrap();
+        let guest_endpoint =
+            quinn::Endpoint::server(guest_config, "127.0.0.1:0".parse().unwrap()).unwrap();
+        let mut host_endpoint = quinn::Endpoint::client("127.0.0.1:0".parse().unwrap()).unwrap();
+        host_endpoint.set_default_client_config(host_config);
+        let connecting = host_endpoint
+            .connect(guest_endpoint.local_addr().unwrap(), "localhost")
+            .unwrap();
+        let (guest_connection, host_connection) = tokio::join!(
+            async { guest_endpoint.accept().await.unwrap().await.unwrap() },
+            connecting
+        );
+        let host_connection = host_connection.unwrap();
+        let host_identity = Identity::new(42);
+        let guest_identity = Identity::new(99);
+        let digest = |cert: &CertificateDer<'_>| {
+            ring::digest::digest(&ring::digest::SHA256, cert)
+                .as_ref()
+                .try_into()
+                .unwrap()
+        };
+        let binding = SessionBinding {
+            session_id: [8; 32],
+            host: host_identity.principal(42),
+            guest: guest_identity.principal(99),
+            host_certificate_sha256: digest(&host_der),
+            guest_certificate_sha256: digest(&guest_der),
+            expires_at: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_secs()
+                + 60,
+        };
+        let permissions = Permissions {
+            screen: true,
+            ..Permissions::default()
+        };
+        let (host_session, guest_session) = tokio::join!(
+            AuthenticatedTransport::establish(
+                host_connection,
+                &binding,
+                true,
+                &host_identity,
+                permissions,
+            ),
+            AuthenticatedTransport::establish(
+                guest_connection,
+                &binding,
+                false,
+                &guest_identity,
+                permissions,
+            )
+        );
+        let host_session = host_session.unwrap();
+        let mut guest_session = guest_session.unwrap();
+        let packet = packetize(
+            Bytes::from_static(b"reverse-path"),
+            1,
+            1,
+            0,
+            30_000,
+            true,
+            1200,
+        )
+        .unwrap()
+        .remove(0);
+        host_session.send(packet.clone(), 10).unwrap();
+        assert_eq!(guest_session.receive(|| 20).await.unwrap(), Some(packet));
+    })
+    .await
+    .unwrap();
+}

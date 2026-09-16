@@ -28,6 +28,7 @@ pub struct GuestHello {
     pub guest: Principal,
     pub host: Principal,
     pub guest_certificate_der: Vec<u8>,
+    pub addresses: Vec<String>,
     pub permissions: Permissions,
     pub created_at: u64,
     pub expires_at: u64,
@@ -66,17 +67,23 @@ impl GuestHello {
     pub fn validate(&self, time: u64) -> Result<()> {
         self.guest.validate()?;
         self.host.validate()?;
-        if self.version != 1
+        if self.version != 2
             || self.session_id == [0; 32]
             || self.guest == self.host
             || self.guest.machine_id == self.host.machine_id
             || self.guest_certificate_der.len() > 4096
             || self.guest_certificate_der.len() < 128
+            || self.addresses.is_empty()
+            || self.addresses.len() > 8
             || !self.permissions.screen
             || self.created_at > time.saturating_add(30)
             || self.expires_at <= time
             || self.expires_at <= self.created_at
             || self.expires_at - self.created_at > 120
+            || self
+                .addresses
+                .iter()
+                .any(|address| address.len() > 64 || address.parse::<SocketAddr>().is_err())
         {
             return Err(Error::Authentication);
         }
@@ -88,7 +95,7 @@ impl HostOffer {
     pub fn validate(&self, hello: &GuestHello, time: u64) -> Result<()> {
         hello.validate(time)?;
         self.settings.validate()?;
-        if self.version != 1
+        if self.version != 2
             || self.session_id != hello.session_id
             || self.guest != hello.guest
             || self.host != hello.host
@@ -145,6 +152,7 @@ struct PendingGuest {
     hello: GuestHello,
     certificate_der: Vec<u8>,
     private_key_der: Vec<u8>,
+    socket: UdpSocket,
     credentials: Credentials,
 }
 
@@ -213,13 +221,18 @@ impl Worker {
         let certificate = rcgen::generate_simple_self_signed(vec!["localhost".into()])
             .map_err(|_| Error::Authentication)?;
         let certificate_der: CertificateDer<'static> = certificate.cert.into();
+        let socket = UdpSocket::bind("0.0.0.0:0")?;
+        let port = socket.local_addr()?.port();
+        let mapped = stun_address(&socket);
+        socket.set_nonblocking(true)?;
         let created_at = now();
         let hello = GuestHello {
-            version: 1,
+            version: 2,
             session_id: random_id()?,
             guest,
             host,
             guest_certificate_der: certificate_der.to_vec(),
+            addresses: local_addresses(port, mapped),
             permissions,
             created_at,
             expires_at: created_at + 120,
@@ -229,6 +242,7 @@ impl Worker {
             hello: hello.clone(),
             certificate_der: certificate_der.to_vec(),
             private_key_der: certificate.signing_key.serialize_der(),
+            socket,
             credentials,
         });
         *self.state.lock().unwrap_or_else(|e| e.into_inner()) = State::Preparing;
@@ -437,6 +451,64 @@ fn stun_address(socket: &UdpSocket) -> Option<SocketAddr> {
     crate::nat::mapped_address(&response[..length], transaction).ok()
 }
 
+async fn accept_until_connected(endpoint: &quinn::Endpoint) -> quinn::Connection {
+    loop {
+        if let Some(incoming) = endpoint.accept().await
+            && let Ok(connection) = incoming.await
+        {
+            return connection;
+        }
+    }
+}
+
+async fn connect_round(
+    endpoint: &quinn::Endpoint,
+    addresses: &[String],
+) -> Option<quinn::Connection> {
+    let mut attempts = tokio::task::JoinSet::new();
+    for address in addresses {
+        let Ok(candidate) = address.parse::<SocketAddr>() else {
+            continue;
+        };
+        if let Ok(attempt) = endpoint.connect(candidate, "localhost") {
+            attempts.spawn(async move { attempt.await.ok() });
+        }
+    }
+    let connection = tokio::time::timeout(Duration::from_secs(3), async {
+        while let Some(result) = attempts.join_next().await {
+            if let Ok(Some(connection)) = result {
+                return Some(connection);
+            }
+        }
+        None
+    })
+    .await
+    .ok()
+    .flatten();
+    attempts.abort_all();
+    connection
+}
+
+async fn connect_until_connected(
+    endpoint: &quinn::Endpoint,
+    addresses: &[String],
+    delay: Duration,
+) -> quinn::Connection {
+    tokio::time::sleep(delay).await;
+    loop {
+        if let Some(connection) = connect_round(endpoint, addresses).await {
+            return connection;
+        }
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    }
+}
+
+async fn cancelled(cancel: &AtomicBool) {
+    while !cancel.load(Ordering::Relaxed) {
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+}
+
 async fn host_session(
     settings: Settings,
     identity: crate::identity::SignalIdentity,
@@ -449,9 +521,16 @@ async fn host_session(
     let certificate = rcgen::generate_simple_self_signed(vec!["localhost".into()])
         .map_err(|_| Error::Authentication)?;
     let certificate_der: CertificateDer<'static> = certificate.cert.into();
-    let config = transport::server_config(
+    let private_key_der = certificate.signing_key.serialize_der();
+    let server_config = transport::server_config(
         certificate_der.clone(),
-        PrivatePkcs8KeyDer::from(certificate.signing_key.serialize_der()).into(),
+        PrivatePkcs8KeyDer::from(private_key_der.clone()).into(),
+        CertificateDer::from(hello.guest_certificate_der.clone()),
+        CongestionControl::Cubic,
+    )?;
+    let client_config = transport::client_config(
+        certificate_der.clone(),
+        PrivatePkcs8KeyDer::from(private_key_der).into(),
         CertificateDer::from(hello.guest_certificate_der.clone()),
         CongestionControl::Cubic,
     )?;
@@ -461,14 +540,15 @@ async fn host_session(
     socket.set_nonblocking(true)?;
     let runtime = quinn::default_runtime()
         .ok_or_else(|| Error::Unavailable("Runtime réseau QUIC indisponible.".into()))?;
-    let endpoint = quinn::Endpoint::new(
+    let mut endpoint = quinn::Endpoint::new(
         quinn::EndpointConfig::default(),
-        Some(config),
+        Some(server_config),
         socket,
         runtime,
     )?;
+    endpoint.set_default_client_config(client_config);
     let offer = HostOffer {
-        version: 1,
+        version: 2,
         session_id: hello.session_id,
         guest: hello.guest.clone(),
         host: hello.host.clone(),
@@ -484,27 +564,26 @@ async fn host_session(
     offer_tx
         .send(Ok(offer))
         .map_err(|_| Error::Unavailable("session offer receiver closed".into()))?;
-    let deadline = std::time::Instant::now() + Duration::from_secs(120);
-    let incoming = loop {
-        if cancel.load(Ordering::Relaxed) {
-            return Ok(());
+    let connection = tokio::time::timeout(Duration::from_secs(120), async {
+        tokio::select! {
+            biased;
+            connection = accept_until_connected(&endpoint) => Some(connection),
+            connection = connect_until_connected(
+                &endpoint,
+                &hello.addresses,
+                Duration::from_millis(1500),
+            ) => Some(connection),
+            _ = cancelled(&cancel) => None,
         }
-        if std::time::Instant::now() >= deadline {
-            return Err(Error::Unavailable(
-                "La demande de connexion a expiré.".into(),
-            ));
-        }
-        match tokio::time::timeout(Duration::from_millis(100), endpoint.accept()).await {
-            Ok(Some(incoming)) => break incoming,
-            Ok(None) => return Err(Error::Unavailable("Le port QUIC est fermé.".into())),
-            Err(_) => {}
-        }
+    })
+    .await
+    .map_err(|_| Error::Unavailable("La demande de connexion a expiré.".into()))?;
+    let Some(connection) = connection else {
+        return Ok(());
     };
-    let incoming = incoming
-        .await
-        .map_err(|error| Error::Unavailable(format!("Connexion QUIC : {error}")))?;
     let session =
-        AuthenticatedTransport::establish(incoming, &binding, true, &identity, permissions).await?;
+        AuthenticatedTransport::establish(connection, &binding, true, &identity, permissions)
+            .await?;
     *state.lock().unwrap_or_else(|e| e.into_inner()) = State::Streaming {
         peer: hello.guest.clone(),
         frames: 0,
@@ -520,38 +599,49 @@ async fn guest_session(
     cancel: Arc<AtomicBool>,
     state: Arc<Mutex<State>>,
 ) -> Result<()> {
-    let config = transport::client_config(
+    let server_config = transport::server_config(
+        CertificateDer::from(pending.certificate_der.clone()),
+        PrivatePkcs8KeyDer::from(pending.private_key_der.clone()).into(),
+        CertificateDer::from(offer.host_certificate_der.clone()),
+        CongestionControl::Cubic,
+    )?;
+    let client_config = transport::client_config(
         CertificateDer::from(pending.certificate_der.clone()),
         PrivatePkcs8KeyDer::from(pending.private_key_der).into(),
         CertificateDer::from(offer.host_certificate_der.clone()),
         CongestionControl::Cubic,
     )?;
-    let mut endpoint = quinn::Endpoint::client("0.0.0.0:0".parse().unwrap())?;
-    endpoint.set_default_client_config(config);
-    let mut attempts = tokio::task::JoinSet::new();
-    for address in &offer.addresses {
-        let candidate: SocketAddr = address.parse().map_err(|_| Error::InvalidPacket)?;
-        if let Ok(attempt) = endpoint.connect(candidate, "localhost") {
-            attempts.spawn(async move { attempt.await.ok() });
+    let runtime = quinn::default_runtime()
+        .ok_or_else(|| Error::Unavailable("Runtime réseau QUIC indisponible.".into()))?;
+    let mut endpoint = quinn::Endpoint::new(
+        quinn::EndpointConfig::default(),
+        Some(server_config),
+        pending.socket,
+        runtime,
+    )?;
+    endpoint.set_default_client_config(client_config);
+    let connection = tokio::time::timeout(Duration::from_secs(12), async {
+        tokio::select! {
+            biased;
+            connection = connect_until_connected(
+                &endpoint,
+                &offer.addresses,
+                Duration::ZERO,
+            ) => Some(connection),
+            connection = accept_until_connected(&endpoint) => Some(connection),
+            _ = cancelled(&cancel) => None,
         }
-    }
-    // Race all ICE-style candidates. Virtual adapters and an unreachable public
-    // mapping must never delay a working LAN route by several seconds each.
-    let connection = tokio::time::timeout(Duration::from_secs(6), async {
-        while let Some(result) = attempts.join_next().await {
-            if let Ok(Some(connection)) = result {
-                return Some(connection);
-            }
-        }
-        None
     })
     .await
-    .ok()
-    .flatten();
-    attempts.abort_all();
-    let connection = connection.ok_or_else(|| {
-        Error::Unavailable("Aucun chemin UDP direct n’a répondu. Un relais sera nécessaire.".into())
+    .map_err(|_| {
+        Error::Unavailable(
+            "Aucun chemin UDP direct n’a répondu dans les deux sens. Un relais sera nécessaire."
+                .into(),
+        )
     })?;
+    let Some(connection) = connection else {
+        return Ok(());
+    };
     let binding = offer.binding(&pending.certificate_der);
     let session = AuthenticatedTransport::establish(
         connection,
@@ -1321,11 +1411,12 @@ mod tests {
     fn offers_are_bound_to_the_exact_hello_and_permissions() {
         let time = now();
         let hello = GuestHello {
-            version: 1,
+            version: 2,
             session_id: [3; 32],
             guest: principal(42, 2),
             host: principal(42, 1),
             guest_certificate_der: vec![1; 256],
+            addresses: vec!["127.0.0.1:41000".into()],
             permissions: Permissions {
                 screen: true,
                 mouse: true,
@@ -1336,7 +1427,7 @@ mod tests {
         };
         hello.validate(time).unwrap();
         let mut offer = HostOffer {
-            version: 1,
+            version: 2,
             session_id: hello.session_id,
             guest: hello.guest.clone(),
             host: hello.host.clone(),
