@@ -85,8 +85,10 @@ capture Wayland affiche le sélecteur d’écran sécurisé du bureau.
 
 Sous NixOS/Hyprland, importez
 [`packaging/nixos/remote-test.nix`](../../packaging/nixos/remote-test.nix) ou
-activez les mêmes services PipeWire, WirePlumber et portails. Vérifiez ensuite
-la chaîne média avec `./scripts/test-linux-remote.sh`.
+activez les mêmes services PipeWire, WirePlumber, portails et la plage UDP
+49720-49739. Noosphere demande automatiquement l’autorisation polkit lorsque
+le pare-feu actif ne contient pas encore cette règle. Vérifiez ensuite la chaîne
+média avec `./scripts/test-linux-remote.sh`.
 
 Si Hyprland est lancé par un script personnalisé, importez son environnement dans
 les services utilisateur avant Noosphere :

@@ -348,7 +348,7 @@ async fn ensure_firewall(data: &mut StoredDirectory, retry: bool) -> Option<Stri
     }
     let executable = crate::remote_access::firewall_executable()?;
     if data.firewall_executable.as_deref() == Some(&executable)
-        && now().saturating_sub(data.firewall_last_check) < 300
+        && (cfg!(target_os = "linux") || now().saturating_sub(data.firewall_last_check) < 300)
     {
         return None;
     }
@@ -372,13 +372,13 @@ async fn ensure_firewall(data: &mut StoredDirectory, retry: bool) -> Option<Stri
                 data,
                 "success",
                 "firewall",
-                "Pare-feu Windows configuré pour le transport UDP de Noosphere.",
+                "Pare-feu configuré pour le transport UDP de Noosphere.",
             );
             None
         }
         Ok(()) => {
             let failure =
-                "Windows n’a pas conservé la règle UDP de Noosphere après l’autorisation."
+                "Le système n’a pas conservé la règle UDP de Noosphere après l’autorisation."
                     .to_owned();
             log_event(data, "error", "firewall", &failure);
             Some(failure)

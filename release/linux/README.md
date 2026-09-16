@@ -82,8 +82,10 @@ capture opens the desktop's secure screen picker.
 
 For NixOS/Hyprland, import
 [`packaging/nixos/remote-test.nix`](../../packaging/nixos/remote-test.nix) or
-enable the same PipeWire, WirePlumber and portal services. Run
-`./scripts/test-linux-remote.sh` to verify the media path.
+enable the same PipeWire, WirePlumber and portal services together with UDP
+ports 49720-49739. Noosphere requests polkit authorization when the active
+firewall does not already contain the rule. Run `./scripts/test-linux-remote.sh`
+to verify the media path.
 
 If Hyprland is started by a custom script, import its environment into the user
 services before Noosphere starts:

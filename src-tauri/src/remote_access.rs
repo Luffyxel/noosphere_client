@@ -15,6 +15,12 @@ use tauri::State;
 use tokio::sync::Mutex;
 use zeroize::Zeroize as _;
 
+#[cfg(target_os = "linux")]
+use std::{
+    path::{Path, PathBuf},
+    sync::atomic::{AtomicBool, Ordering},
+};
+
 #[cfg(windows)]
 const FIREWALL_INSTALL_ARGUMENT: &str = "--remote-firewall-install";
 
@@ -199,7 +205,273 @@ pub(crate) fn firewall_executable() -> Option<String> {
         .map(|path| path.to_string_lossy().into_owned())
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
+static LINUX_FIREWALL_CONFIGURED: AtomicBool = AtomicBool::new(false);
+
+#[cfg(target_os = "linux")]
+#[derive(Clone)]
+enum LinuxFirewall {
+    Firewalld(PathBuf),
+    Ufw(PathBuf),
+    NixOs(PathBuf),
+}
+
+#[cfg(target_os = "linux")]
+fn command_path(name: &str) -> Option<PathBuf> {
+    let executable = Path::new(name);
+    if executable.is_absolute() && executable.is_file() {
+        return Some(executable.to_owned());
+    }
+    if let Some(paths) = std::env::var_os("PATH") {
+        for directory in std::env::split_paths(&paths) {
+            let candidate = directory.join(name);
+            if candidate.is_file() {
+                return Some(candidate);
+            }
+        }
+    }
+    for directory in [
+        "/run/current-system/sw/bin",
+        "/run/wrappers/bin",
+        "/usr/bin",
+        "/usr/sbin",
+        "/sbin",
+    ] {
+        let candidate = Path::new(directory).join(name);
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+    }
+    None
+}
+
+#[cfg(target_os = "linux")]
+fn nixos_iptables() -> Option<PathBuf> {
+    if let Some(path) = command_path("iptables") {
+        return Some(path);
+    }
+    let unit = std::fs::read_to_string("/etc/systemd/system/firewall.service").ok()?;
+    unit.lines()
+        .find_map(|line| line.strip_prefix("Environment=\"PATH="))
+        .and_then(|path| path.strip_suffix('"'))
+        .and_then(|path| {
+            path.split(':')
+                .map(|directory| Path::new(directory).join("iptables"))
+                .find(|candidate| candidate.is_file())
+        })
+}
+
+#[cfg(target_os = "linux")]
+fn nixos_firewall_script() -> Option<String> {
+    let unit = std::fs::read_to_string("/etc/systemd/system/firewall.service").ok()?;
+    let executable = unit
+        .lines()
+        .find_map(|line| line.strip_prefix("ExecStart=@"))?
+        .split_whitespace()
+        .next()?;
+    std::fs::read_to_string(executable).ok()
+}
+
+#[cfg(target_os = "linux")]
+fn script_allows_remote_ports(script: &str) -> bool {
+    script.contains("-p udp")
+        && script.contains(&format!(
+            "--dport {}:{}",
+            noosphere_remote::live::UDP_PORT_START,
+            noosphere_remote::live::UDP_PORT_END
+        ))
+}
+
+#[cfg(target_os = "linux")]
+fn command_succeeds(command: &Path, arguments: &[&str]) -> bool {
+    Command::new(command)
+        .args(arguments)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .is_ok_and(|status| status.success())
+}
+
+#[cfg(target_os = "linux")]
+fn linux_firewall() -> Option<LinuxFirewall> {
+    if let Some(command) = command_path("firewall-cmd")
+        && command_succeeds(&command, &["--state"])
+    {
+        return Some(LinuxFirewall::Firewalld(command));
+    }
+    if let Some(command) = command_path("ufw") {
+        let active = Command::new(&command)
+            .arg("status")
+            .output()
+            .ok()
+            .is_some_and(|output| {
+                String::from_utf8_lossy(&output.stdout)
+                    .to_ascii_lowercase()
+                    .contains("status: active")
+            });
+        let service_active = command_path("systemctl").is_some_and(|systemctl| {
+            command_succeeds(&systemctl, &["is-active", "--quiet", "ufw.service"])
+        });
+        if active || service_active {
+            return Some(LinuxFirewall::Ufw(command));
+        }
+    }
+    let os_release = std::fs::read_to_string("/etc/os-release").unwrap_or_default();
+    let nixos = os_release
+        .lines()
+        .filter_map(|line| line.split_once('='))
+        .any(|(name, value)| {
+            matches!(name, "ID" | "ID_LIKE")
+                && value
+                    .trim_matches('"')
+                    .split_whitespace()
+                    .any(|id| id == "nixos")
+        });
+    if !nixos {
+        return None;
+    }
+    if let Some(systemctl) = command_path("systemctl")
+        && !command_succeeds(&systemctl, &["is-active", "--quiet", "firewall.service"])
+    {
+        return None;
+    }
+    nixos_iptables().map(LinuxFirewall::NixOs)
+}
+
+#[cfg(target_os = "linux")]
+fn linux_firewall_key() -> String {
+    use sha2::{Digest as _, Sha256};
+
+    let boot = std::fs::read_to_string("/proc/sys/kernel/random/boot_id").unwrap_or_default();
+    let generation = std::fs::read_link("/etc/systemd/system/firewall.service")
+        .map(|path| path.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let digest = hex::encode(Sha256::digest(format!("{boot}:{generation}").as_bytes()));
+    format!(
+        "linux-udp-{}-{}-{}",
+        noosphere_remote::live::UDP_PORT_START,
+        noosphere_remote::live::UDP_PORT_END,
+        &digest[..16]
+    )
+}
+
+#[cfg(target_os = "linux")]
+fn pkexec(command: &Path, arguments: &[&str]) -> Result<(), String> {
+    let pkexec = command_path("pkexec").ok_or_else(|| {
+        "L’autorisation système polkit est indisponible pour configurer le pare-feu.".to_owned()
+    })?;
+    let status = Command::new(pkexec)
+        .arg(command)
+        .args(arguments)
+        .stdin(Stdio::null())
+        .status()
+        .map_err(|error| format!("Impossible d’ouvrir l’autorisation système : {error}"))?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err("L’autorisation du pare-feu Linux a été refusée.".into())
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn configure_linux_firewall() -> Result<(), String> {
+    let Some(firewall) = linux_firewall() else {
+        LINUX_FIREWALL_CONFIGURED.store(true, Ordering::Relaxed);
+        return Ok(());
+    };
+    let start = noosphere_remote::live::UDP_PORT_START.to_string();
+    let end = noosphere_remote::live::UDP_PORT_END.to_string();
+    match firewall {
+        LinuxFirewall::Firewalld(command) => {
+            let range = format!("{start}-{end}/udp");
+            let add = format!("--add-port={range}");
+            pkexec(&command, &["--permanent", &add])?;
+            pkexec(&command, &[&add])?;
+        }
+        LinuxFirewall::Ufw(command) => {
+            let range = format!("{start}:{end}/udp");
+            pkexec(
+                &command,
+                &[
+                    "--force",
+                    "allow",
+                    &range,
+                    "comment",
+                    "Noosphere Remote Desktop",
+                ],
+            )?;
+        }
+        LinuxFirewall::NixOs(command) => {
+            let shell = Path::new("/bin/sh");
+            let script = "\"$1\" -C nixos-fw -p udp --dport \"$2:$3\" -m comment --comment \"Noosphere Remote Desktop\" -j ACCEPT 2>/dev/null || \"$1\" -I nixos-fw 1 -p udp --dport \"$2:$3\" -m comment --comment \"Noosphere Remote Desktop\" -j ACCEPT";
+            let command = command
+                .to_str()
+                .ok_or_else(|| "Le gestionnaire du pare-feu NixOS est invalide.".to_owned())?;
+            pkexec(
+                shell,
+                &["-c", script, "noosphere-firewall", command, &start, &end],
+            )?;
+        }
+    }
+    LINUX_FIREWALL_CONFIGURED.store(true, Ordering::Relaxed);
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn linux_firewall_is_configured() -> bool {
+    if LINUX_FIREWALL_CONFIGURED.load(Ordering::Relaxed) {
+        return true;
+    }
+    let start = noosphere_remote::live::UDP_PORT_START.to_string();
+    let end = noosphere_remote::live::UDP_PORT_END.to_string();
+    match linux_firewall() {
+        None => true,
+        Some(LinuxFirewall::Firewalld(command)) => {
+            let range = format!("{start}-{end}/udp");
+            let query = format!("--query-port={range}");
+            command_succeeds(&command, &[&query])
+        }
+        Some(LinuxFirewall::Ufw(command)) => Command::new(command)
+            .arg("status")
+            .output()
+            .ok()
+            .is_some_and(|output| {
+                let output = String::from_utf8_lossy(&output.stdout);
+                output.contains(&format!("{start}:{end}/udp"))
+                    || output.contains(&format!("{start}-{end}/udp"))
+            }),
+        Some(LinuxFirewall::NixOs(command)) => {
+            nixos_firewall_script()
+                .as_deref()
+                .is_some_and(script_allows_remote_ports)
+                || command_succeeds(
+                    &command,
+                    &[
+                        "-C",
+                        "nixos-fw",
+                        "-p",
+                        "udp",
+                        "--dport",
+                        &format!("{start}:{end}"),
+                        "-m",
+                        "comment",
+                        "--comment",
+                        "Noosphere Remote Desktop",
+                        "-j",
+                        "ACCEPT",
+                    ],
+                )
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
+pub(crate) fn firewall_executable() -> Option<String> {
+    Some(linux_firewall_key())
+}
+
+#[cfg(not(any(windows, target_os = "linux")))]
 pub(crate) fn firewall_executable() -> Option<String> {
     None
 }
@@ -218,12 +490,26 @@ pub(crate) async fn firewall_is_configured(executable: String) -> bool {
         .unwrap_or(false)
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
+pub(crate) async fn configure_firewall(_executable: String) -> Result<(), String> {
+    tokio::task::spawn_blocking(configure_linux_firewall)
+        .await
+        .map_err(|error| error.to_string())?
+}
+
+#[cfg(target_os = "linux")]
+pub(crate) async fn firewall_is_configured(_executable: String) -> bool {
+    tokio::task::spawn_blocking(linux_firewall_is_configured)
+        .await
+        .unwrap_or(false)
+}
+
+#[cfg(not(any(windows, target_os = "linux")))]
 pub(crate) async fn configure_firewall(_executable: String) -> Result<(), String> {
     Ok(())
 }
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "linux")))]
 pub(crate) async fn firewall_is_configured(_executable: String) -> bool {
     true
 }
@@ -632,5 +918,19 @@ mod windows_firewall_tests {
             firewall_rule_name(r"C:\Apps\Noosphere.exe"),
             firewall_rule_name(r"D:\Portable\Noosphere.exe")
         );
+    }
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod linux_firewall_tests {
+    use super::script_allows_remote_ports;
+
+    #[test]
+    fn generated_nixos_rule_is_detected_without_elevation() {
+        let script = "ip46tables -A nixos-fw -p udp --dport 49720:49739 -j nixos-fw-accept";
+        assert!(script_allows_remote_ports(script));
+        assert!(!script_allows_remote_ports(
+            "ip46tables -A nixos-fw -p tcp --dport 49720:49739 -j nixos-fw-accept"
+        ));
     }
 }

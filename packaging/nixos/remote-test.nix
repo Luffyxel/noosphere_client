@@ -4,6 +4,13 @@
   programs.hyprland.enable = true;
   security.polkit.enable = true;
 
+  networking.firewall.allowedUDPPortRanges = [
+    {
+      from = 49720;
+      to = 49739;
+    }
+  ];
+
   services.pipewire = {
     enable = true;
     audio.enable = true;

@@ -20,6 +20,22 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
+pub const UDP_PORT_START: u16 = 49_720;
+pub const UDP_PORT_END: u16 = 49_739;
+
+fn bind_session_socket() -> Result<UdpSocket> {
+    for port in UDP_PORT_START..=UDP_PORT_END {
+        match UdpSocket::bind(("0.0.0.0", port)) {
+            Ok(socket) => return Ok(socket),
+            Err(error) if error.kind() == std::io::ErrorKind::AddrInUse => {}
+            Err(error) => return Err(error.into()),
+        }
+    }
+    Err(Error::Unavailable(format!(
+        "Les ports UDP {UDP_PORT_START} à {UDP_PORT_END} sont déjà utilisés."
+    )))
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct GuestHello {
@@ -221,7 +237,7 @@ impl Worker {
         let certificate = rcgen::generate_simple_self_signed(vec!["localhost".into()])
             .map_err(|_| Error::Authentication)?;
         let certificate_der: CertificateDer<'static> = certificate.cert.into();
-        let socket = UdpSocket::bind("0.0.0.0:0")?;
+        let socket = bind_session_socket()?;
         let port = socket.local_addr()?.port();
         let mapped = stun_address(&socket);
         socket.set_nonblocking(true)?;
@@ -534,7 +550,7 @@ async fn host_session(
         CertificateDer::from(hello.guest_certificate_der.clone()),
         CongestionControl::Cubic,
     )?;
-    let socket = UdpSocket::bind("0.0.0.0:0")?;
+    let socket = bind_session_socket()?;
     let port = socket.local_addr()?.port();
     let mapped = stun_address(&socket);
     socket.set_nonblocking(true)?;
@@ -1456,5 +1472,12 @@ mod tests {
         unique.sort();
         unique.dedup();
         assert_eq!(unique.len(), addresses.len());
+    }
+
+    #[test]
+    fn session_socket_uses_the_documented_firewall_range() {
+        let socket = bind_session_socket().unwrap();
+        let port = socket.local_addr().unwrap().port();
+        assert!((UDP_PORT_START..=UDP_PORT_END).contains(&port));
     }
 }
