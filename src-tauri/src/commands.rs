@@ -2559,6 +2559,125 @@ fn remove_friend_records(
 mod friend_removal_tests {
     use super::*;
 
+    #[tokio::test]
+    async fn a_retried_message_id_does_not_advance_the_ratchet() {
+        let temporary = tempfile::tempdir().unwrap();
+        let state = AppState::new(
+            crate::instance_profile::InstanceProfile::acquire(temporary.path()).unwrap(),
+        )
+        .unwrap();
+        state.load_or_create_identity(42, 420, None).await.unwrap();
+        *state.session.write().await = Some(crate::state::Session {
+            access_token: secrecy::SecretString::from("test-token".to_owned()),
+            refresh_token: None,
+            token_expires_at: None,
+            refresh_expires_at: None,
+            viewer: GitHubViewer {
+                id: 42,
+                login: "octocat".into(),
+                name: None,
+                avatar_url: String::new(),
+                repository: RepositorySummary {
+                    id: 420,
+                    name: "noosphere_user_octocat".into(),
+                    url: "https://github.com/octocat/noosphere_user_octocat".into(),
+                    created: false,
+                },
+            },
+        });
+        let (_, profile) = crate::protocol::create_identity(99, 990).unwrap();
+        let secret = state.identity.read().await.as_ref().unwrap().secret.clone();
+        let conversation_id = "dm-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let (secret, envelope) = crate::protocol::create_invitation_owned(
+            secret,
+            crate::protocol::OwnedHandshake {
+                peer_profile: profile.clone(),
+                peer_github_user_id: 99,
+                peer_repository_id: 990,
+                conversation_id: conversation_id.into(),
+                created_at: "2026-09-08T12:00:00Z".into(),
+            },
+        )
+        .unwrap();
+        state.identity.write().await.as_mut().unwrap().secret = secret;
+        state
+            .social
+            .write()
+            .await
+            .conversations
+            .push(ConversationState {
+                id: conversation_id.into(),
+                created_at: "2026-09-08T12:00:00Z".into(),
+                handshake_envelope: envelope.clone(),
+                peer: PeerState {
+                    user: NoosphereUser {
+                        id: 99,
+                        login: "friend".into(),
+                        name: None,
+                        avatar_url: String::new(),
+                        repository: "noosphere_user_friend".into(),
+                    },
+                    repository_id: 990,
+                    profile,
+                },
+            });
+        let message = Message {
+            version: 1,
+            id: "msg-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".into(),
+            conversation_id: conversation_id.into(),
+            sent_at: "2026-09-08T12:01:00Z".into(),
+            text: "hello".into(),
+            sender_id: 42,
+            own: true,
+        };
+        state
+            .record_message(LocalMessageState {
+                message: message.clone(),
+                envelope,
+                published: true,
+            })
+            .await
+            .unwrap();
+        state.persist_social(420).await.unwrap();
+        let before = crate::protocol::serialize_identity(
+            &state.identity.read().await.as_ref().unwrap().secret,
+        )
+        .unwrap();
+        let retried = send_message(
+            &state,
+            conversation_id.into(),
+            "hello".into(),
+            message.id.clone(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(retried.message, message);
+        assert!(retried.published);
+        assert_eq!(state.social.read().await.messages.len(), 1);
+        assert_eq!(
+            before.expose_secret(),
+            crate::protocol::serialize_identity(
+                &state.identity.read().await.as_ref().unwrap().secret
+            )
+            .unwrap()
+            .expose_secret()
+        );
+        assert!(matches!(
+            send_message(&state, conversation_id.into(), "changed".into(), message.id).await,
+            Err(Error::InvalidData)
+        ));
+        state
+            .social
+            .write()
+            .await
+            .seen_message_ids
+            .push("invalid".into());
+        assert!(state.persist_social(420).await.is_err());
+        assert_eq!(state.social.read().await.messages.len(), 1);
+        assert_eq!(state.social.read().await.seen_message_ids.len(), 1);
+        assert!(state.identity.read().await.is_some());
+    }
+
     #[test]
     fn message_trees_accept_long_histories_and_reject_truncation() {
         let entries: Vec<_> = (0..1501).map(|index| serde_json::json!({"type": "blob", "path": format!("msg-{index:032x}.enc.json")})).collect();

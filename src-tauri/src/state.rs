@@ -372,6 +372,7 @@ impl AppState {
             validate_social(&stored.social, Some(github_user_id))?;
             *self.identity.write().await = Some(IdentityState { secret });
             *self.social.write().await = stored.social.clone();
+            self.cleanup_legacy_account(repository_id)?;
             return Ok(profile);
         }
         let identity_kind = format!("identity-{repository_id}");
@@ -452,24 +453,26 @@ impl AppState {
         });
         *self.social.write().await = social;
         self.persist_social(repository_id).await?;
-        self.blobs.remove(&shared_account)?;
-        self.blobs.remove(
-            &self
-                .profile
-                .shared_account(&format!("social-{repository_id}"))?,
-        )?;
-        if let IdentitySource::Legacy(slot) = identity.source {
-            let store = SecureBlobStore::new(&self.profile.directory_for_slot(slot)?)?;
-            store.remove(&InstanceProfile::secret_account_for_slot(
-                slot,
-                &identity_kind,
-            )?)?;
-            store.remove(&InstanceProfile::secret_account_for_slot(
-                slot,
-                &format!("social-{repository_id}"),
-            )?)?;
-        }
+        self.cleanup_legacy_account(repository_id)?;
         Ok(profile)
+    }
+
+    fn cleanup_legacy_account(&self, repository_id: u64) -> Result<()> {
+        for kind in [
+            format!("identity-{repository_id}"),
+            format!("social-{repository_id}"),
+        ] {
+            self.blobs.remove(&self.profile.shared_account(&kind)?)?;
+            for slot in 0..crate::instance_profile::MAX_INSTANCE_PROFILES {
+                let directory = self.profile.directory_for_slot(slot)?;
+                if !directory.exists() {
+                    continue;
+                }
+                let store = SecureBlobStore::new(&directory)?;
+                store.remove(&InstanceProfile::secret_account_for_slot(slot, &kind)?)?;
+            }
+        }
+        Ok(())
     }
 
     async fn ensure_account_lock(&self, repository_id: u64) -> Result<()> {

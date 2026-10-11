@@ -551,8 +551,8 @@ struct Host {
 
 impl Drop for Host {
     fn drop(&mut self) {
-        // Closing the UI leaves the bounded diagnostic alive. The daemon owns its
-        // input cleanup and exits after its idle timeout; no signing key is saved.
+        let _ = self.child.kill();
+        let _ = self.child.wait();
         self.key.zeroize();
     }
 }
