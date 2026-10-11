@@ -774,10 +774,19 @@ fn merge_remote(
     let mut changed = BTreeSet::new();
     for (path, remote) in values {
         if path == MARKER {
-            validate_marker(
-                remote.as_deref().ok_or(Error::InvalidData)?,
-                cache.index.owner_id,
-            )?;
+            if let Some(remote) = &remote {
+                validate_marker(remote, cache.index.owner_id)?;
+            } else {
+                let local = cache
+                    .documents
+                    .get(MARKER)
+                    .filter(|document| {
+                        document.base.is_none() && cache.index.dirty.contains(MARKER)
+                    })
+                    .and_then(|document| document.local.as_deref())
+                    .ok_or(Error::NoosnoteRepositoryMismatch)?;
+                validate_marker(local, cache.index.owner_id)?;
+            }
         } else if let Some(value) = &remote {
             validate_file(&path, value)?;
         }
@@ -1617,86 +1626,87 @@ pub async fn noosnote_sync(state: State<'_, AppState>) -> CommandResult<Snapshot
     result.map_err(|error| error.to_string())
 }
 
+async fn load_page(state: &AppState, workspace_id: &str, page_id: &str) -> Result<Snapshot> {
+    if !uuid(workspace_id) || !uuid(page_id) {
+        return Err(Error::InvalidData);
+    }
+    let viewer = commands::session_viewer(state).await?;
+    let path = format!("notes/{workspace_id}/pages/{page_id}.json");
+    let initial = cached(state, viewer.id).await?;
+    let mut fetched = false;
+    let document = if let Some(document) = initial.documents.get(&path) {
+        document.clone()
+    } else if let Some(key) = initial.index.blobs.get(&path) {
+        let store = state.blobs.clone();
+        let path = path.clone();
+        let key = key.clone();
+        tokio::task::spawn_blocking(move || load_document(&store, viewer.id, &path, &key))
+            .await
+            .map_err(|_| Error::Local)??
+    } else {
+        let repository = initial
+            .index
+            .repository
+            .as_ref()
+            .ok_or(Error::NoosnotePageUnavailable)?;
+        let hash = initial
+            .index
+            .hashes
+            .get(&path)
+            .ok_or(Error::NoosnotePageUnavailable)?;
+        let token = state.access_token().await?;
+        let hashes = BTreeMap::from([(path.clone(), hash.clone())]);
+        let values = read_documents(
+            state,
+            &token,
+            &viewer,
+            repository,
+            &hashes,
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+        )
+        .await?;
+        let value = values
+            .get(&path)
+            .cloned()
+            .flatten()
+            .ok_or(Error::NoosnotePageUnavailable)?;
+        validate_file(&path, &value)?;
+        fetched = true;
+        Document {
+            owner_id: viewer.id,
+            path: path.clone(),
+            local: Some(value.clone()),
+            base: Some(value),
+            base_sha: Some(hash.clone()),
+            conflict: None,
+        }
+    };
+    let mut current = state.notes.lock().await;
+    let mut cache = current
+        .as_ref()
+        .filter(|cache| cache.index.owner_id == viewer.id)
+        .cloned()
+        .ok_or(Error::SessionExpired)?;
+    cache.documents.entry(path.clone()).or_insert(document);
+    touch_page(&mut cache, &path);
+    let changed = BTreeSet::from([path.clone()]);
+    if fetched {
+        install_cache(state, &mut cache, &changed).await?;
+    }
+    evict_pages(&mut cache);
+    let snapshot = cache.snapshot(Some(&changed), "ready");
+    *current = Some(cache);
+    Ok(snapshot)
+}
+
 #[tauri::command]
 pub async fn noosnote_page(
     state: State<'_, AppState>,
     workspace_id: String,
     page_id: String,
 ) -> CommandResult<Snapshot> {
-    async fn page(state: &AppState, workspace_id: &str, page_id: &str) -> Result<Snapshot> {
-        if !uuid(workspace_id) || !uuid(page_id) {
-            return Err(Error::InvalidData);
-        }
-        let viewer = commands::session_viewer(state).await?;
-        let path = format!("notes/{workspace_id}/pages/{page_id}.json");
-        let initial = cached(state, viewer.id).await?;
-        let mut fetched = false;
-        let document = if let Some(document) = initial.documents.get(&path) {
-            document.clone()
-        } else if let Some(key) = initial.index.blobs.get(&path) {
-            let store = state.blobs.clone();
-            let path = path.clone();
-            let key = key.clone();
-            tokio::task::spawn_blocking(move || load_document(&store, viewer.id, &path, &key))
-                .await
-                .map_err(|_| Error::Local)??
-        } else {
-            let repository = initial
-                .index
-                .repository
-                .as_ref()
-                .ok_or(Error::NoosnotePageUnavailable)?;
-            let hash = initial
-                .index
-                .hashes
-                .get(&path)
-                .ok_or(Error::NoosnotePageUnavailable)?;
-            let token = state.access_token().await?;
-            let hashes = BTreeMap::from([(path.clone(), hash.clone())]);
-            let values = read_documents(
-                state,
-                &token,
-                &viewer,
-                repository,
-                &hashes,
-                &BTreeMap::new(),
-                &BTreeMap::new(),
-            )
-            .await?;
-            let value = values
-                .get(&path)
-                .cloned()
-                .flatten()
-                .ok_or(Error::NoosnotePageUnavailable)?;
-            validate_file(&path, &value)?;
-            fetched = true;
-            Document {
-                owner_id: viewer.id,
-                path: path.clone(),
-                local: Some(value.clone()),
-                base: Some(value),
-                base_sha: Some(hash.clone()),
-                conflict: None,
-            }
-        };
-        let mut current = state.notes.lock().await;
-        let mut cache = current
-            .as_ref()
-            .filter(|cache| cache.index.owner_id == viewer.id)
-            .cloned()
-            .ok_or(Error::SessionExpired)?;
-        cache.documents.entry(path.clone()).or_insert(document);
-        touch_page(&mut cache, &path);
-        let changed = BTreeSet::from([path.clone()]);
-        if fetched {
-            install_cache(state, &mut cache, &changed).await?;
-        }
-        evict_pages(&mut cache);
-        let snapshot = cache.snapshot(Some(&changed), "ready");
-        *current = Some(cache);
-        Ok(snapshot)
-    }
-    page(&state, &workspace_id, &page_id)
+    load_page(&state, &workspace_id, &page_id)
         .await
         .map_err(|error| error.to_string())
 }
@@ -1978,5 +1988,285 @@ mod tests {
         let b = Uuid::new_v4().to_string();
         let value = json!({"version":1,"kind":"workspace","id":workspace,"title":"École","icon":"📚","color":"#78b89b","pages":[{"id":a,"title":"Anglais","icon":"","parentId":b},{"id":b,"title":"Français","icon":"","parentId":a}]});
         assert!(validate_file(&format!("notes/{workspace}/workspace.json"), &value).is_err());
+    }
+
+    type HttpRequest = (String, Value);
+    type HttpResponses = Vec<(&'static str, u16, Value)>;
+
+    fn http_fixture(
+        responses: HttpResponses,
+    ) -> (url::Url, std::thread::JoinHandle<Vec<HttpRequest>>) {
+        use std::io::{Read as _, Write as _};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let origin =
+            url::Url::parse(&format!("http://{}/", listener.local_addr().unwrap())).unwrap();
+        let worker = std::thread::spawn(move || {
+            let mut requests = Vec::new();
+            for (expected, status, response) in responses {
+                let (mut stream, _) = listener.accept().unwrap();
+                stream
+                    .set_read_timeout(Some(std::time::Duration::from_secs(5)))
+                    .unwrap();
+                let mut bytes = Vec::new();
+                while !bytes.ends_with(b"\r\n\r\n") {
+                    let mut byte = [0];
+                    stream.read_exact(&mut byte).unwrap();
+                    bytes.push(byte[0]);
+                    assert!(bytes.len() < 16 * 1024);
+                }
+                let headers = String::from_utf8(bytes).unwrap();
+                let first = headers
+                    .lines()
+                    .next()
+                    .unwrap()
+                    .strip_suffix(" HTTP/1.1")
+                    .unwrap()
+                    .to_owned();
+                assert_eq!(first, expected);
+                let length = headers
+                    .lines()
+                    .find_map(|line| {
+                        line.to_ascii_lowercase()
+                            .strip_prefix("content-length: ")
+                            .and_then(|value| value.parse::<usize>().ok())
+                    })
+                    .unwrap_or(0);
+                assert!(length <= 4 * 1024 * 1024);
+                let mut body = vec![0; length];
+                stream.read_exact(&mut body).unwrap();
+                requests.push((
+                    first,
+                    if body.is_empty() {
+                        Value::Null
+                    } else {
+                        serde_json::from_slice(&body).unwrap()
+                    },
+                ));
+                let body = serde_json::to_string(&response).unwrap();
+                write!(stream,"HTTP/1.1 {status} Fixture\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",body.len()).unwrap();
+            }
+            requests
+        });
+        (origin, worker)
+    }
+
+    fn viewer() -> GitHubViewer {
+        GitHubViewer {
+            id: 42,
+            login: "octocat".into(),
+            avatar_url: String::new(),
+            name: None,
+            repository: crate::models::RepositorySummary {
+                id: 420,
+                name: "noosphere_user_octocat".into(),
+                url: "https://github.com/octocat/noosphere_user_octocat".into(),
+                created: false,
+            },
+        }
+    }
+
+    async fn state(directory: &std::path::Path, origin: url::Url) -> AppState {
+        let mut state =
+            AppState::new(crate::instance_profile::InstanceProfile::acquire(directory).unwrap())
+                .unwrap();
+        state.github.test_origin = Some(origin);
+        *state.session.write().await = Some(crate::state::Session {
+            access_token: SecretString::from("A".repeat(64)),
+            refresh_token: None,
+            token_expires_at: None,
+            refresh_expires_at: None,
+            viewer: viewer(),
+        });
+        state
+    }
+
+    fn repository() -> Value {
+        json!({"id":421,"name":"noosnote_42","private":true,"owner":{"id":42,"login":"octocat"},"default_branch":"main","description":DESCRIPTION})
+    }
+
+    fn workspace(page: &Value) -> (String, Value) {
+        let id = page["workspaceId"].as_str().unwrap();
+        (
+            format!("notes/{id}/workspace.json"),
+            json!({"version":1,"kind":"workspace","id":id,"title":"École","icon":"📚","color":"#78b89b","pages":[{"id":page["id"],"title":page["title"],"icon":"","parentId":null}]}),
+        )
+    }
+
+    async fn publish_fixture(status: u16) -> (Snapshot, Cache, Vec<HttpRequest>) {
+        let (origin, server) = http_fixture(vec![
+            (
+                "GET /repos/octocat/noosnote_42",
+                404,
+                json!({"message":"Not Found"}),
+            ),
+            ("POST /user/repos", 201, repository()),
+            (
+                "GET /repos/octocat/noosnote_42/contents/.noosnote.json",
+                404,
+                json!({"message":"Not Found"}),
+            ),
+            ("GET /repos/octocat/noosnote_42", 200, repository()),
+            (
+                "GET /repos/octocat/noosnote_42/git/ref/heads/main",
+                200,
+                json!({"object":{"sha":"a".repeat(40)}}),
+            ),
+            (
+                "GET /repos/octocat/noosnote_42/git/trees/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa?recursive=1",
+                200,
+                json!({"sha":"b".repeat(40),"truncated":false,"tree":[]}),
+            ),
+            (
+                "POST /repos/octocat/noosnote_42/git/trees",
+                201,
+                json!({"sha":"c".repeat(40)}),
+            ),
+            (
+                "POST /repos/octocat/noosnote_42/git/commits",
+                201,
+                json!({"sha":"d".repeat(40)}),
+            ),
+            (
+                "PATCH /repos/octocat/noosnote_42/git/refs/heads/main",
+                status,
+                json!({"message":"fixture"}),
+            ),
+        ]);
+        let temporary = tempfile::tempdir().unwrap();
+        let state = state(temporary.path(), origin).await;
+        assert_eq!(prepare(&state, true).await.unwrap().setup, "ready");
+        let (page_path, page) = page();
+        let (workspace_path, workspace) = workspace(&page);
+        let mut cache = cached(&state, 42).await.unwrap();
+        let changed = apply_changes(
+            &mut cache,
+            vec![
+                Change {
+                    path: page_path.clone(),
+                    value: Some(page),
+                },
+                Change {
+                    path: workspace_path,
+                    value: Some(workspace),
+                },
+            ],
+        )
+        .unwrap();
+        install_cache(&state, &mut cache, &changed).await.unwrap();
+        *state.notes.lock().await = Some(cache);
+        let result = sync(&state).await;
+        let snapshot = if status == 200 {
+            result.unwrap()
+        } else {
+            assert!(matches!(result, Err(Error::NoosnoteConcurrentUpdate)));
+            state
+                .notes
+                .lock()
+                .await
+                .as_ref()
+                .unwrap()
+                .snapshot(None, "ready")
+        };
+        let persisted = load_cache(&state.blobs, 42).unwrap();
+        (snapshot, persisted, server.join().unwrap())
+    }
+
+    #[tokio::test]
+    async fn first_note_creates_one_private_repository_and_commits_related_files_together() {
+        let (snapshot, cache, requests) = publish_fixture(200).await;
+        assert_eq!(snapshot.dirty_count, 0);
+        assert!(cache.index.dirty.is_empty());
+        assert_eq!(requests[1].1["private"], true);
+        assert_eq!(requests[1].1["name"], "noosnote_42");
+        assert_eq!(requests[6].1["tree"].as_array().unwrap().len(), 3);
+        assert_eq!(requests[7].1["parents"], json!(["a".repeat(40)]));
+        assert_eq!(requests[8].1["force"], false);
+    }
+
+    #[tokio::test]
+    async fn a_concurrent_github_commit_preserves_every_protected_draft() {
+        let (snapshot, cache, requests) = publish_fixture(409).await;
+        assert_eq!(snapshot.dirty_count, 3);
+        assert_eq!(cache.index.dirty.len(), 3);
+        assert!(
+            cache
+                .documents
+                .values()
+                .all(|document| document.local.is_some())
+        );
+        assert_eq!(requests[8].1["force"], false);
+    }
+
+    fn blob(hash: &str, value: &Value) -> Value {
+        let text = serde_json::to_string(value).unwrap();
+        json!({"oid":hash,"byteSize":text.len(),"text":text,"isTruncated":false})
+    }
+
+    #[tokio::test]
+    async fn another_machine_reuses_the_repository_and_fetches_pages_only_when_opened() {
+        let (page_path, page) = page();
+        let (workspace_path, workspace) = workspace(&page);
+        let marker = json!({"version":1,"ownerId":42});
+        let marker_hash = "c".repeat(40);
+        let workspace_hash = "d".repeat(40);
+        let page_hash = "e".repeat(40);
+        let tree = json!({"sha":"b".repeat(40),"truncated":false,"tree":[{"path":MARKER,"sha":marker_hash,"mode":"100644","type":"blob","size":100},{"path":workspace_path,"sha":workspace_hash,"mode":"100644","type":"blob","size":1000},{"path":page_path,"sha":page_hash,"mode":"100644","type":"blob","size":1000}]});
+        let (origin, server) = http_fixture(vec![
+            ("GET /repos/octocat/noosnote_42", 200, repository()),
+            (
+                "GET /repos/octocat/noosnote_42/contents/.noosnote.json",
+                200,
+                json!({"type":"file","encoding":"base64","size":serde_json::to_vec(&marker).unwrap().len(),"content":STANDARD.encode(serde_json::to_vec(&marker).unwrap())}),
+            ),
+            ("GET /repos/octocat/noosnote_42", 200, repository()),
+            (
+                "GET /repos/octocat/noosnote_42/git/ref/heads/main",
+                200,
+                json!({"object":{"sha":"a".repeat(40)}}),
+            ),
+            (
+                "GET /repos/octocat/noosnote_42/git/trees/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa?recursive=1",
+                200,
+                tree,
+            ),
+            (
+                "POST /graphql",
+                200,
+                json!({"data":{"repository":{"databaseId":421,"isPrivate":true,"f0":blob(&marker_hash,&marker),"f1":blob(&workspace_hash,&workspace)}}}),
+            ),
+            (
+                "POST /graphql",
+                200,
+                json!({"data":{"repository":{"databaseId":421,"isPrivate":true,"f0":blob(&page_hash,&page)}}}),
+            ),
+        ]);
+        let temporary = tempfile::tempdir().unwrap();
+        let state = state(temporary.path(), origin).await;
+        assert_eq!(prepare(&state, false).await.unwrap().setup, "ready");
+        let snapshot = sync(&state).await.unwrap();
+        assert!(snapshot.files.contains_key(&workspace_path));
+        assert!(!snapshot.files.contains_key(&page_path));
+        let loaded = load_page(
+            &state,
+            page["workspaceId"].as_str().unwrap(),
+            page["id"].as_str().unwrap(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(loaded.files[&page_path].as_ref(), &page);
+        let requests = server.join().unwrap();
+        assert!(!requests.iter().any(|(path, _)| path == "POST /user/repos"));
+        assert!(
+            !requests[5].1["query"]
+                .as_str()
+                .unwrap()
+                .contains(&page_hash)
+        );
+        assert!(
+            requests[6].1["query"]
+                .as_str()
+                .unwrap()
+                .contains(&page_hash)
+        );
     }
 }

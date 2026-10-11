@@ -44,6 +44,17 @@ jobs:
         run: npm run lint
       - name: Test
         run: npm test
+      - name: Install Noosnote test browser
+        run: npx playwright install --with-deps --only-shell chromium
+      - name: Test Noosnote interface
+        run: npm run test:noosnote-ui
+      - name: Store Noosnote interface results
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: noosnote-ui-${{ matrix.os }}
+          path: remote-test-results/noosnote-ui/**
+          if-no-files-found: ignore
       - name: Test Linux remote desktop backends
         if: runner.os == 'Linux'
         run: bash scripts/test-linux-remote.sh

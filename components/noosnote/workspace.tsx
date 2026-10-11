@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { lazy, Suspense, useEffect, useState } from 'react';
 import {
   ArrowLeft,
   Check,
@@ -44,7 +44,9 @@ import {
   workspaces,
 } from '@/lib/noosnote/model';
 import { downloadFile, errorMessage, NoteContext, NoteDialog } from './context';
-import { NoteEditor } from './editor';
+const NoteEditor = lazy(() =>
+  import('./editor').then((module) => ({ default: module.NoteEditor })),
+);
 
 export function NoosnoteRail({
   notes,
@@ -874,7 +876,13 @@ export function NoosnoteWorkspace({
                     )
                   }
                 />
-                <NoteEditor key={page.id} page={page} />
+                <Suspense
+                  fallback={
+                    <p className="note-muted">Ouverture de l’éditeur…</p>
+                  }
+                >
+                  <NoteEditor key={page.id} page={page} />
+                </Suspense>
               </article>
             ) : pageLoading ? (
               <div className="note-welcome">

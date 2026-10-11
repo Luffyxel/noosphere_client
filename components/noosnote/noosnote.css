@@ -636,6 +636,25 @@
   flex: 1;
   font-weight: 500;
 }
+.note-title-cell .note-title-open {
+  flex: 1;
+  justify-content: space-between;
+  text-align: left;
+  color: #d6d6dc;
+  font-weight: 500;
+  padding: 7px 0;
+  min-width: 0;
+}
+.note-title-open > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.note-title-open > svg {
+  flex: none;
+  color: #82828f;
+  margin-left: 8px;
+}
 .note-title-cell > button {
   padding: 4px;
   color: #8e8e9b;

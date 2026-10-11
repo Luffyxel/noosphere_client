@@ -60,7 +60,7 @@ void test(
       assert.equal(report.ld, '/opt/host/lib');
       assert.equal(report.path, hostPath);
       assert.equal(report.scanner, undefined);
-      assert.match(result.stderr, /Noosphere 0\.1\.54/);
+      assert.match(result.stderr, /Noosphere 0\.2\.0/);
       assert.match(
         result.stderr,
         /removed inherited AppImage paths from LD_LIBRARY_PATH \(3\)/,

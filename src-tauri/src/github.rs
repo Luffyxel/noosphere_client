@@ -80,6 +80,8 @@ pub struct GitHubClient {
     client: Client,
     budget: Arc<Mutex<RequestBudget>>,
     cache: Arc<Mutex<ResponseCache>>,
+    #[cfg(test)]
+    pub(crate) test_origin: Option<Url>,
 }
 
 #[derive(Clone)]
@@ -167,6 +169,8 @@ impl GitHubClient {
             client,
             budget: Arc::new(Mutex::new(RequestBudget::default())),
             cache: Arc::new(Mutex::new(ResponseCache::default())),
+            #[cfg(test)]
+            test_origin: None,
         })
     }
 
@@ -222,6 +226,14 @@ impl GitHubClient {
         accept: &'static str,
     ) -> Result<ApiResponse<T>> {
         let url = fixed_origin_url(API_ORIGIN, endpoint)?;
+        #[cfg(test)]
+        let url = self
+            .test_origin
+            .as_ref()
+            .map(|origin| origin.join(endpoint))
+            .transpose()
+            .map_err(|_| Error::InvalidData)?
+            .unwrap_or(url);
         if let Some(token) = access_token {
             validate_token(token)?;
         }

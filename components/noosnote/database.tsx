@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import {
   ArrowUpRight,
   CalendarDays,
@@ -10,6 +10,7 @@ import {
   LayoutGrid,
   List,
   Plus,
+  Pencil,
   Search,
   Settings2,
   Table2,
@@ -91,6 +92,7 @@ function Cell({
   const { notes, workspaceId, openPage, report } = useNoteContext();
   const title = rowPageTitle(notes.files, database, row);
   const [titleDraft, setTitleDraft] = useState<string | null>(null);
+  const titleInput = useRef<HTMLInputElement>(null);
   function write(value: CellValue) {
     const current = getDatabase(
       notes.filesRef.current.files,
@@ -112,40 +114,59 @@ function Cell({
   if (column.type === 'title')
     return (
       <div className="note-title-cell">
-        <input
-          aria-label="Nom de l’élément"
-          maxLength={512}
-          value={titleDraft ?? title}
-          placeholder="Sans titre"
-          onChange={(event) => setTitleDraft(event.target.value)}
-          onBlur={() => {
-            if (titleDraft === null) return;
-            const value = titleDraft.trim() || 'Sans titre';
-            void notes
-              .loadPage(workspaceId, row.pageId)
-              .then(() => {
-                notes.edit(
-                  renamePage(
-                    notes.filesRef.current.files,
-                    workspaceId,
-                    row.pageId,
-                    value,
-                  ),
-                );
-                setTitleDraft(null);
-              })
-              .catch(report);
-          }}
-          onKeyDown={(event) => {
-            if (event.key === 'Enter') event.currentTarget.blur();
-          }}
-        />
+        {titleDraft === null ? (
+          <button
+            className="note-title-open"
+            title={`Ouvrir ${title}`}
+            aria-label={`Ouvrir ${title}`}
+            onClick={() => openPage(row.pageId)}
+          >
+            <span>{title}</span>
+            <ArrowUpRight size={14} />
+          </button>
+        ) : (
+          <input
+            ref={titleInput}
+            aria-label="Nom de l’élément"
+            maxLength={512}
+            value={titleDraft}
+            placeholder="Sans titre"
+            onChange={(event) => setTitleDraft(event.target.value)}
+            onBlur={() => {
+              if (titleDraft === null) return;
+              const value = titleDraft.trim() || 'Sans titre';
+              void notes
+                .loadPage(workspaceId, row.pageId)
+                .then(() => {
+                  notes.edit(
+                    renamePage(
+                      notes.filesRef.current.files,
+                      workspaceId,
+                      row.pageId,
+                      value,
+                    ),
+                  );
+                  setTitleDraft(null);
+                })
+                .catch(report);
+            }}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter') event.currentTarget.blur();
+            }}
+          />
+        )}
         <button
-          title={`Ouvrir ${title}`}
-          aria-label={`Ouvrir ${title}`}
-          onClick={() => openPage(row.pageId)}
+          title={`Renommer ${title}`}
+          aria-label={`Renommer ${title}`}
+          onClick={() => {
+            setTitleDraft(title);
+            requestAnimationFrame(() => {
+              titleInput.current?.focus();
+              titleInput.current?.select();
+            });
+          }}
         >
-          <ArrowUpRight size={15} />
+          <Pencil size={12} />
         </button>
       </div>
     );

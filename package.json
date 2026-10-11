@@ -39,7 +39,8 @@
     "check": "tsc --noEmit && node scripts/native-toolchain.mjs cargo check --manifest-path src-tauri/Cargo.toml --workspace",
     "lint": "oxlint app components src lib scripts tests && node scripts/native-toolchain.mjs cargo clippy --manifest-path src-tauri/Cargo.toml --workspace --all-targets -- -D warnings",
     "format": "oxfmt && node scripts/native-toolchain.mjs cargo fmt --manifest-path src-tauri/Cargo.toml -p noosphere-desktop -p noosphere-remote",
-    "format:check": "oxfmt --check && node scripts/native-toolchain.mjs cargo fmt --manifest-path src-tauri/Cargo.toml -p noosphere-desktop -p noosphere-remote -- --check"
+    "format:check": "oxfmt --check && node scripts/native-toolchain.mjs cargo fmt --manifest-path src-tauri/Cargo.toml -p noosphere-desktop -p noosphere-remote -- --check",
+    "test:noosnote-ui": "node scripts/test-noosnote-ui.mjs"
   },
   "dependencies": {
     "@base-ui/react": "1.7.0",
@@ -70,9 +71,14 @@
     "oxfmt": "0.61.0",
     "oxlint": "1.76.0",
     "oxlint-tsgolint": "7.0.2001",
+    "playwright": "1.64.0",
     "tailwindcss": "4.2.1",
     "typescript": "5.9.3",
     "vite": "8.2.2"
   },
-  "type": "module"
+  "type": "module",
+  "overrides": {
+    "tinypool": "2.1.2",
+    "source-map-js": "1.2.2"
+  }
 }
