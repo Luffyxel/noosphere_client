@@ -643,13 +643,13 @@ fn persist_cache(
     })();
     if let Err(error) = result {
         for key in written {
-            let _ = store.remove(&key);
+            let _ = store.discard(&key);
         }
         return Err(error);
     }
     cache.index = index;
     for old in obsolete {
-        let _ = store.remove(&old);
+        let _ = store.discard(&old);
     }
     Ok(())
 }
@@ -2054,6 +2054,40 @@ mod tests {
         assert_ne!(document_prefix(42, &path), document_prefix(99, &path));
         let restored = load_cache(&store, u64::MAX).unwrap();
         assert_eq!(restored.documents[&path].local.as_deref(), Some(&value));
+    }
+
+    #[test]
+    fn repeated_checkpoints_keep_one_protected_copy_per_document() {
+        let temporary = tempfile::tempdir().unwrap();
+        let store = SecureBlobStore::new(temporary.path()).unwrap();
+        let (path, mut value) = page();
+        let mut cache = Cache::empty(42);
+        for revision in 0..10 {
+            value["title"] = json!(format!("Cours {revision}"));
+            let changed = apply_changes(
+                &mut cache,
+                vec![Change {
+                    path: path.clone(),
+                    value: Some(value.clone()),
+                    base: None,
+                }],
+            )
+            .unwrap();
+            persist_cache(&store, &mut cache, &changed).unwrap();
+        }
+        let prefix = document_prefix(42, &path);
+        let copies = std::fs::read_dir(temporary.path().join("protected"))
+            .unwrap()
+            .filter_map(|entry| entry.ok())
+            .filter(|entry| entry.file_name().to_string_lossy().starts_with(&prefix))
+            .count();
+        assert_eq!(copies, 1);
+        assert_eq!(
+            load_cache(&store, 42).unwrap().documents[&path]
+                .local
+                .as_deref(),
+            Some(&value)
+        );
     }
 
     #[test]

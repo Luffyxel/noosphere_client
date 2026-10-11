@@ -73,6 +73,45 @@ try {
     fullPage: true,
   });
   await page
+    .locator('.note-table th')
+    .getByRole('button', { name: 'Catégorie', exact: true })
+    .click();
+  await page
+    .getByRole('dialog')
+    .getByRole('combobox', { name: 'Type', exact: true })
+    .selectOption('multiSelect');
+  await page
+    .getByRole('dialog')
+    .getByRole('button', { name: 'Enregistrer', exact: true })
+    .click();
+  await page.locator('.note-cell-picker').first().click();
+  const choices = page.getByRole('dialog', { name: 'Catégorie', exact: true });
+  await choices.getByRole('checkbox', { name: 'Cours', exact: true }).waitFor();
+  assert.equal(
+    await choices
+      .getByRole('checkbox', { name: 'Cours', exact: true })
+      .isChecked(),
+    true,
+  );
+  assert.equal(
+    await page.locator('.note-table-scroll .note-cell-options').count(),
+    0,
+  );
+  await page.keyboard.press('Escape');
+  await choices.waitFor({ state: 'hidden' });
+  await page
+    .locator('.note-table th')
+    .getByRole('button', { name: 'Catégorie', exact: true })
+    .click();
+  await page
+    .getByRole('dialog')
+    .getByRole('combobox', { name: 'Type', exact: true })
+    .selectOption('select');
+  await page
+    .getByRole('dialog')
+    .getByRole('button', { name: 'Enregistrer', exact: true })
+    .click();
+  await page
     .getByRole('button', { name: 'Ouvrir Anglais', exact: true })
     .click();
   await page
@@ -212,6 +251,7 @@ try {
         nestedDatabase: true,
         lessonText: true,
         editableCategories: true,
+        multiSelectOverlay: true,
         dateProperty: true,
         calendar: true,
         multipleWorkspaces: true,

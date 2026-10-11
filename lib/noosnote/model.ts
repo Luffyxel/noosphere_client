@@ -404,6 +404,10 @@ export function duplicatePage(
   const source = getPage(files, workspaceId, pageId);
   if (!workspace || !source) throw new Error('Page introuvable.');
   const copied = descendants(workspace, pageId);
+  if (workspace.pages.length + copied.size > 4096)
+    throw new Error(
+      'Cette copie dépasse la limite de 4 096 pages du Noosnote.',
+    );
   const pageIds = new Map([...copied].map((pageId) => [pageId, id()]));
   const sourceDatabases = databases(files, workspaceId).filter((database) =>
     copied.has(database.pageId),

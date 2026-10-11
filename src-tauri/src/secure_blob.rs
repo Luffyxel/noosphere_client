@@ -132,6 +132,15 @@ impl SecureBlobStore {
         }
     }
 
+    pub fn discard(&self, account: &str) -> Result<()> {
+        validate_account(account)?;
+        match std::fs::remove_file(self.path(account)) {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(_) => Err(Error::SecureStorageUnavailable),
+        }
+    }
+
     fn path(&self, account: &str) -> PathBuf {
         self.directory.join(format!("{account}.bin"))
     }
