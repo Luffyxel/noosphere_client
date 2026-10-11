@@ -1332,10 +1332,9 @@ function NoosphereApp({
     (notification: AppNotification) => {
       addNotification(notification);
       if (document.hidden || !document.hasFocus()) {
-        void window.noosphereDesktop?.system.notify(
-          notification.title,
-          notification.detail,
-        );
+        void window.noosphereDesktop?.system
+          .notify(notification.title, notification.detail)
+          .catch(() => undefined);
       }
     },
     [addNotification],
