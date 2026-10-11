@@ -1,5 +1,11 @@
 #[cfg(any(target_os = "linux", test))]
 use std::collections::BTreeSet;
+use std::io::Write as _;
+
+pub(crate) fn write_log(arguments: std::fmt::Arguments<'_>) {
+    let line = format!("{arguments}\n");
+    let _ = std::io::stderr().lock().write_all(line.as_bytes());
+}
 
 pub fn version() -> String {
     format!(
@@ -22,7 +28,7 @@ pub fn log() {
     if subprocess.is_some() && !verbose() {
         return;
     }
-    eprintln!(
+    write_log(format_args!(
         "[startup] {}",
         serde_json::json!({
             "version": env!("CARGO_PKG_VERSION"),
@@ -40,8 +46,8 @@ pub fn log() {
             "desktop": std::env::var("XDG_CURRENT_DESKTOP").ok(),
             "engine": if cfg!(target_os = "linux") { "CEF/Chromium" } else { "WebView" },
         })
-    );
-    if !verbose() {
+    ));
+    if !verbose() || subprocess.is_some() {
         return;
     }
     for name in [
@@ -64,12 +70,14 @@ pub fn log() {
         "XKB_CONFIG_ROOT",
     ] {
         if let Ok(value) = std::env::var(name) {
-            eprintln!("[startup] inheritedEnvironment {name}={value:?}");
+            write_log(format_args!(
+                "[startup] inheritedEnvironment {name}={value:?}"
+            ));
         }
     }
     #[cfg(target_os = "linux")]
     if let Ok(kernel) = std::fs::read_to_string("/proc/sys/kernel/osrelease") {
-        eprintln!("[startup] kernel {}", kernel.trim());
+        write_log(format_args!("[startup] kernel {}", kernel.trim()));
     }
     #[cfg(target_os = "linux")]
     if let Ok(cards) = std::fs::read_dir("/sys/class/drm") {
@@ -92,10 +100,10 @@ pub fn log() {
                     path.file_name()
                         .map(|name| name.to_string_lossy().into_owned())
                 });
-            eprintln!(
+            write_log(format_args!(
                 "[startup] gpu {}",
                 serde_json::json!({"card": name, "vendor": identifier("vendor"), "device": identifier("device"), "driver": driver})
-            );
+            ));
         }
     }
     #[cfg(target_os = "linux")]
@@ -104,12 +112,12 @@ pub fn log() {
             .lines()
             .find(|line| line.starts_with("PRETTY_NAME="))
     {
-        eprintln!("[startup] distribution {}", &line[12..]);
+        write_log(format_args!("[startup] distribution {}", &line[12..]));
     }
     #[cfg(target_os = "linux")]
     if let Ok(maps) = std::fs::read_to_string("/proc/self/maps") {
         for library in loaded_libraries(&maps) {
-            eprintln!("[startup] loadedLibrary {library:?}");
+            write_log(format_args!("[startup] loadedLibrary {library:?}"));
         }
     }
 }

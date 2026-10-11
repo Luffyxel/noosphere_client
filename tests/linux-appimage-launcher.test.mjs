@@ -29,7 +29,7 @@ void test(
       await chmod(path.join(app, 'AppRun'), 0o755);
       await writeFile(
         path.join(app, 'usr/lib/Noosphere/noosphere-version'),
-        '0.1.52\n',
+        '0.1.53\n',
       );
       await writeFile(
         path.join(app, 'AppRun.bin'),
@@ -60,7 +60,7 @@ void test(
       assert.equal(report.ld, '/opt/host/lib');
       assert.equal(report.path, hostPath);
       assert.equal(report.scanner, undefined);
-      assert.match(result.stderr, /Noosphere 0\.1\.52/);
+      assert.match(result.stderr, /Noosphere 0\.1\.53/);
       assert.match(
         result.stderr,
         /removed inherited AppImage paths from LD_LIBRARY_PATH \(3\)/,

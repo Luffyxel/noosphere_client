@@ -42,6 +42,19 @@ fn command_error(error: Error) -> String {
     error.to_string()
 }
 
+fn auth_step<T>(stage: &str, result: Result<T>) -> Result<T> {
+    match &result {
+        Err(error) => {
+            crate::startup::write_log(format_args!("[auth] phase={stage} error={error:?}"))
+        }
+        Ok(_) if crate::startup::verbose() => {
+            crate::startup::write_log(format_args!("[auth] phase={stage} ok"))
+        }
+        Ok(_) => {}
+    }
+    result
+}
+
 #[tauri::command]
 pub async fn github_restore(state: State<'_, AppState>) -> CommandResult<Option<GitHubViewer>> {
     state.restore_session().await.map_err(command_error)
@@ -149,7 +162,7 @@ pub async fn github_connect(
     let _directory = directory.operation.lock().await;
     let _operation = state.operations.lock().await;
     crate::remote_access::shutdown(&remote).await;
-    state.clear_session().await.map_err(command_error)?;
+    auth_step("clear-session", state.clear_session().await).map_err(command_error)?;
     let result = connect_github(&app, &state).await.map_err(command_error);
     let _ = app.emit("github-device-code", Value::Null);
     let _ = app.emit("github-setup-status", Value::Null);
@@ -158,7 +171,7 @@ pub async fn github_connect(
 
 async fn connect_github(app: &DesktopAppHandle, state: &AppState) -> Result<GitHubViewer> {
     emit_setup_status(app, "authorization", None)?;
-    let device = state.github.request_device_code().await?;
+    let device = auth_step("device-code", state.github.request_device_code().await)?;
     app.emit(
         "github-device-code",
         serde_json::json!({
@@ -168,9 +181,15 @@ async fn connect_github(app: &DesktopAppHandle, state: &AppState) -> Result<GitH
     )
     .map_err(|_| Error::Local)?;
     let _ = open_github_url(app, &device.verification_uri).await;
-    let token = wait_for_device_token(&state.github, device).await?;
-    let viewer = fetch_viewer(&state.github, &token).await?;
-    let selection = select_repository(&state.github, &token, &viewer).await?;
+    let token = auth_step(
+        "authorization",
+        wait_for_device_token(&state.github, device).await,
+    )?;
+    let viewer = auth_step("viewer", fetch_viewer(&state.github, &token).await)?;
+    let selection = auth_step(
+        "repository-selection",
+        select_repository(&state.github, &token, &viewer).await,
+    )?;
     let created = selection.1.is_none();
     emit_setup_status(app, "repository", Some(&selection.0))?;
     let repository = match selection.1 {
@@ -181,14 +200,20 @@ async fn connect_github(app: &DesktopAppHandle, state: &AppState) -> Result<GitH
             wait_for_repository(&state.github, &token, &viewer, &selection.0).await?
         }
     };
-    if !installation_is_valid(&state.github, &token, &viewer, &repository).await? {
+    if !auth_step(
+        "installation-check",
+        installation_is_valid(&state.github, &token, &viewer, &repository).await,
+    )? {
         emit_setup_status(app, "installation", Some(&repository.name))?;
         let url = crate::github::installation_url(viewer.id, repository.id)?;
         open_github_url(app, &url).await?;
         wait_for_installation(&state.github, &token, &viewer, &repository).await?;
     }
     emit_setup_status(app, "initialization", Some(&repository.name))?;
-    initialize_repository(state, &token, &viewer, &repository).await?;
+    auth_step(
+        "repository-initialization",
+        initialize_repository(state, &token, &viewer, &repository).await,
+    )?;
     let viewer = GitHubViewer {
         id: viewer.id,
         login: viewer.login,
@@ -201,7 +226,10 @@ async fn connect_github(app: &DesktopAppHandle, state: &AppState) -> Result<GitH
             created,
         },
     };
-    state.install_session(token, viewer).await
+    auth_step(
+        "session-storage",
+        state.install_session(token, viewer).await,
+    )
 }
 
 #[tauri::command]
@@ -701,11 +729,12 @@ async fn initialize_repository(
     .filter(|profile| {
         crate::protocol::validate_public_profile(profile, viewer.id, repository.id).is_ok()
     });
-    let local_profile = state
-        .load_or_create_identity(viewer.id, repository.id, published_profile.as_ref())
-        .await?;
-    // A second computer has its own protected keys. Never replace the primary
-    // messaging identity merely because that computer has just signed in.
+    let local_profile = auth_step(
+        "local-identity",
+        state
+            .load_or_create_identity(viewer.id, repository.id, published_profile.as_ref())
+            .await,
+    )?;
     let profile = published_profile.unwrap_or(local_profile);
     let profile = format!(
         "{}\n",

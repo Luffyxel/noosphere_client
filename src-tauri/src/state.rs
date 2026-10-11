@@ -364,11 +364,6 @@ impl AppState {
             }
             let (secret, profile) =
                 crate::protocol::restore_identity(&stored.identity, github_user_id, repository_id)?;
-            if expected_profile
-                .is_some_and(|expected| !crate::protocol::same_public_profile(expected, &profile))
-            {
-                return Err(Error::Crypto);
-            }
             validate_social(&stored.social, Some(github_user_id))?;
             *self.identity.write().await = Some(IdentityState { secret });
             *self.social.write().await = stored.social.clone();
@@ -874,6 +869,64 @@ fn validate_conversation_record(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn secondary_device_restores_its_snapshot_after_sign_out_and_restart() {
+        let primary_directory = tempfile::tempdir().unwrap();
+        let secondary_directory = tempfile::tempdir().unwrap();
+        let primary =
+            AppState::new(InstanceProfile::acquire(primary_directory.path()).unwrap()).unwrap();
+        let published = primary
+            .load_or_create_identity(42, 420, None)
+            .await
+            .unwrap();
+        let mut secondary =
+            AppState::new(InstanceProfile::acquire(secondary_directory.path()).unwrap()).unwrap();
+        let local = secondary
+            .load_or_create_identity(42, 420, Some(&published))
+            .await
+            .unwrap();
+        assert!(!crate::protocol::same_public_profile(&local, &published));
+        secondary
+            .social
+            .write()
+            .await
+            .declined_request_ids
+            .push("dm-0123456789abcdef0123456789abcdef".to_owned());
+        secondary.persist_social(420).await.unwrap();
+        let account = secondary.profile.shared_account("state-420").unwrap();
+        let before = secondary.blobs.load(&account).unwrap().unwrap();
+        secondary.clear_session().await.unwrap();
+        let restored = secondary
+            .load_or_create_identity(42, 420, Some(&published))
+            .await
+            .unwrap();
+        assert!(crate::protocol::same_public_profile(&restored, &local));
+        drop(secondary);
+        secondary =
+            AppState::new(InstanceProfile::acquire(secondary_directory.path()).unwrap()).unwrap();
+        let restarted = secondary
+            .load_or_create_identity(42, 420, Some(&published))
+            .await
+            .unwrap();
+        assert!(crate::protocol::same_public_profile(&restarted, &local));
+        assert_eq!(
+            secondary.social.read().await.declined_request_ids,
+            vec!["dm-0123456789abcdef0123456789abcdef".to_owned()]
+        );
+        let after = secondary.blobs.load(&account).unwrap().unwrap();
+        assert_eq!(
+            secrecy::ExposeSecret::expose_secret(&before),
+            secrecy::ExposeSecret::expose_secret(&after)
+        );
+        assert!(crate::protocol::same_public_profile(
+            &primary
+                .load_or_create_identity(42, 420, Some(&published))
+                .await
+                .unwrap(),
+            &published
+        ));
+    }
 
     #[tokio::test]
     async fn account_snapshot_restores_identity_and_social_together() {
