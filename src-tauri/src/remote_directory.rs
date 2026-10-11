@@ -1031,7 +1031,7 @@ pub async fn remote_sync_directory(
     save(&state, viewer.repository.id, &data)?;
     let needs_publish = !data.registered
         || refresh
-        || now().saturating_sub(data.last_publish) >= 45
+        || now().saturating_sub(data.last_publish) >= 75
         || data.published_revision != data.book.revision
         || data.published_machine_count != data.machines.len();
     if needs_publish

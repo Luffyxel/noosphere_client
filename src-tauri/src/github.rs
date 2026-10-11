@@ -1,4 +1,5 @@
 use std::{
+    collections::BTreeMap,
     sync::Arc,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
@@ -8,6 +9,7 @@ use reqwest::{Client, Method, Response, header};
 use secrecy::{ExposeSecret as _, SecretString};
 use serde::de::DeserializeOwned;
 use serde_json::{Map, Value};
+use sha2::{Digest as _, Sha256};
 use tokio::{
     sync::Mutex,
     time::{Instant, sleep},
@@ -77,6 +79,69 @@ pub struct ApiResponse<T> {
 pub struct GitHubClient {
     client: Client,
     budget: Arc<Mutex<RequestBudget>>,
+    cache: Arc<Mutex<ResponseCache>>,
+}
+
+#[derive(Clone)]
+struct CachedResponse {
+    etag: String,
+    bytes: Arc<[u8]>,
+    used_at: Instant,
+}
+
+#[derive(Default)]
+struct ResponseCache {
+    entries: BTreeMap<String, CachedResponse>,
+    size: usize,
+}
+
+impl ResponseCache {
+    fn get(&mut self, key: &str) -> Option<CachedResponse> {
+        let entry = self.entries.get_mut(key)?;
+        entry.used_at = Instant::now();
+        Some(entry.clone())
+    }
+
+    fn insert(&mut self, key: String, etag: String, bytes: Vec<u8>) {
+        if let Some(old) = self.entries.remove(&key) {
+            self.size -= old.bytes.len();
+        }
+        if bytes.len() > 1024 * 1024 {
+            return;
+        }
+        while self.entries.len() >= 64 || self.size + bytes.len() > 16 * 1024 * 1024 {
+            let Some(oldest) = self
+                .entries
+                .iter()
+                .min_by_key(|(_, value)| value.used_at)
+                .map(|(key, _)| key.clone())
+            else {
+                break;
+            };
+            if let Some(old) = self.entries.remove(&oldest) {
+                self.size -= old.bytes.len();
+            }
+        }
+        self.size += bytes.len();
+        self.entries.insert(
+            key,
+            CachedResponse {
+                etag,
+                bytes: bytes.into(),
+                used_at: Instant::now(),
+            },
+        );
+    }
+}
+
+fn response_cache_key(url: &Url, accept: &str, token: &str) -> String {
+    let mut hash = Sha256::new();
+    hash.update(token.as_bytes());
+    hash.update([0]);
+    hash.update(accept.as_bytes());
+    hash.update([0]);
+    hash.update(url.as_str().as_bytes());
+    hex::encode(hash.finalize())
 }
 
 #[derive(Default)]
@@ -84,6 +149,9 @@ struct RequestBudget {
     next_request: Option<Instant>,
     next_write: Option<Instant>,
     cooldown: Option<Instant>,
+    requests: u64,
+    writes: u64,
+    unchanged: u64,
 }
 
 impl GitHubClient {
@@ -92,12 +160,13 @@ impl GitHubClient {
             .connect_timeout(Duration::from_secs(10))
             .timeout(Duration::from_secs(30))
             .redirect(reqwest::redirect::Policy::none())
-            .user_agent("Noosphere/0.1")
+            .user_agent(concat!("Noosphere/", env!("CARGO_PKG_VERSION")))
             .build()
             .map_err(|_| Error::Network)?;
         Ok(Self {
             client,
             budget: Arc::new(Mutex::new(RequestBudget::default())),
+            cache: Arc::new(Mutex::new(ResponseCache::default())),
         })
     }
 
@@ -156,6 +225,40 @@ impl GitHubClient {
         if let Some(token) = access_token {
             validate_token(token)?;
         }
+        self.send_api_json(
+            method,
+            url,
+            access_token,
+            etag,
+            body,
+            allowed_statuses,
+            accept,
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn send_api_json<T: DeserializeOwned>(
+        &self,
+        method: Method,
+        url: Url,
+        access_token: Option<&str>,
+        etag: Option<&str>,
+        body: Option<&serde_json::Value>,
+        allowed_statuses: &[u16],
+        accept: &'static str,
+    ) -> Result<ApiResponse<T>> {
+        let cache_key = access_token
+            .filter(|_| method == Method::GET && body.is_none())
+            .map(|token| response_cache_key(&url, accept, token));
+        let cached = if etag.is_none() {
+            match &cache_key {
+                Some(key) => self.cache.lock().await.get(key),
+                None => None,
+            }
+        } else {
+            None
+        };
         for attempt in 0..=3 {
             self.reserve_request(&method).await?;
             let mut request = self
@@ -166,7 +269,7 @@ impl GitHubClient {
             if let Some(token) = access_token {
                 request = request.bearer_auth(token);
             }
-            if let Some(value) = etag {
+            if let Some(value) = etag.or_else(|| cached.as_ref().map(|value| value.etag.as_str())) {
                 request = request.header(header::IF_NONE_MATCH, value);
             }
             if let Some(value) = body {
@@ -181,8 +284,33 @@ impl GitHubClient {
                 Err(_) => return Err(Error::Network),
             };
             let status = response.status().as_u16();
+            let (requests, writes, unchanged) = {
+                let mut budget = self.budget.lock().await;
+                budget.requests = budget.requests.saturating_add(1);
+                if method != Method::GET {
+                    budget.writes = budget.writes.saturating_add(1);
+                }
+                if status == 304 {
+                    budget.unchanged = budget.unchanged.saturating_add(1);
+                }
+                (budget.requests, budget.writes, budget.unchanged)
+            };
             if let Some(delay) = rate_limit_delay(status, response.headers(), SystemTime::now()) {
                 self.budget.lock().await.cooldown = Some(Instant::now() + delay);
+                crate::startup::write_log(format_args!(
+                    "[github] rateLimit status={status} retryAfterSeconds={} remaining={:?} resetAt={:?} requests={requests} writes={writes} unchanged={unchanged}",
+                    delay.as_secs(),
+                    response
+                        .headers()
+                        .get("x-ratelimit-remaining")
+                        .and_then(|value| value.to_str().ok())
+                        .and_then(|value| value.parse::<u64>().ok()),
+                    response
+                        .headers()
+                        .get("x-ratelimit-reset")
+                        .and_then(|value| value.to_str().ok())
+                        .and_then(|value| value.parse::<u64>().ok())
+                ));
                 return Err(Error::RateLimited);
             }
             let etag = response
@@ -198,6 +326,31 @@ impl GitHubClient {
             }
             if status == 304 || status == 404 || allowed_statuses.contains(&status) {
                 consume_bounded(response, 64 * 1024).await?;
+                if status == 304
+                    && let Some(cached) = &cached
+                {
+                    let data = if cached.bytes.is_empty() {
+                        None
+                    } else {
+                        Some(
+                            serde_json::from_slice(&cached.bytes)
+                                .map_err(|_| Error::InvalidGitHubResponse)?,
+                        )
+                    };
+                    return Ok(ApiResponse {
+                        status: 200,
+                        etag: Some(cached.etag.clone()),
+                        data,
+                    });
+                }
+                if status != 304
+                    && let Some(key) = &cache_key
+                {
+                    let mut cache = self.cache.lock().await;
+                    if let Some(old) = cache.entries.remove(key) {
+                        cache.size -= old.bytes.len();
+                    }
+                }
                 return Ok(ApiResponse {
                     status,
                     etag,
@@ -223,6 +376,11 @@ impl GitHubClient {
             } else {
                 Some(serde_json::from_slice(&bytes).map_err(|_| Error::InvalidGitHubResponse)?)
             };
+            if status == 200
+                && let (Some(key), Some(tag)) = (cache_key.clone(), etag.clone())
+            {
+                self.cache.lock().await.insert(key, tag, bytes);
+            }
             return Ok(ApiResponse { status, etag, data });
         }
         Err(Error::Network)
@@ -699,6 +857,155 @@ async fn consume_bounded(response: Response, maximum: usize) -> Result<Vec<u8>> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn http_fixture(responses: Vec<&'static str>) -> (Url, std::thread::JoinHandle<Vec<String>>) {
+        use std::io::{Read as _, Write as _};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = Url::parse(&format!(
+            "http://{}/fixture",
+            listener.local_addr().unwrap()
+        ))
+        .unwrap();
+        let worker = std::thread::spawn(move || {
+            let mut requests = Vec::new();
+            for response in responses {
+                let (mut stream, _) = listener.accept().unwrap();
+                stream
+                    .set_read_timeout(Some(Duration::from_secs(5)))
+                    .unwrap();
+                let mut bytes = Vec::new();
+                while !bytes.ends_with(b"\r\n\r\n") {
+                    let mut byte = [0];
+                    stream.read_exact(&mut byte).unwrap();
+                    bytes.push(byte[0]);
+                    assert!(bytes.len() < 16 * 1024);
+                }
+                requests.push(String::from_utf8(bytes).unwrap().to_ascii_lowercase());
+                stream.write_all(response.as_bytes()).unwrap();
+            }
+            requests
+        });
+        (url, worker)
+    }
+
+    const CACHED_OK: &str = "HTTP/1.1 200 OK\r\nETag: \"first\"\r\nContent-Length: 16\r\nConnection: close\r\n\r\n{\"generation\":1}";
+    const CACHED_CHANGED: &str = "HTTP/1.1 200 OK\r\nETag: \"second\"\r\nContent-Length: 16\r\nConnection: close\r\n\r\n{\"generation\":2}";
+    const NOT_MODIFIED: &str =
+        "HTTP/1.1 304 Not Modified\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+
+    #[tokio::test]
+    async fn unchanged_authenticated_reads_reuse_json_and_refresh_when_changed() {
+        let (url, server) = http_fixture(vec![CACHED_OK, NOT_MODIFIED, CACHED_CHANGED]);
+        let client = GitHubClient::new().unwrap();
+        for expected in [1, 1, 2] {
+            let response: ApiResponse<Value> = client
+                .send_api_json(
+                    Method::GET,
+                    url.clone(),
+                    Some("fixture-token"),
+                    None,
+                    None,
+                    &[],
+                    "application/json",
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status, 200);
+            assert_eq!(response.data.unwrap()["generation"], expected);
+        }
+        let requests = server.join().unwrap();
+        assert!(!requests[0].contains("if-none-match"));
+        assert!(requests[1].contains("if-none-match: \"first\""));
+        assert!(requests[2].contains("if-none-match: \"first\""));
+        assert_eq!(client.budget.lock().await.unchanged, 1);
+    }
+
+    #[tokio::test]
+    async fn conditional_cache_is_bound_to_credentials_and_representation() {
+        let (url, server) = http_fixture(vec![CACHED_OK, CACHED_OK, CACHED_OK, NOT_MODIFIED]);
+        let client = GitHubClient::new().unwrap();
+        for (token, accept, explicit) in [
+            ("first-token", "application/json", None),
+            ("second-token", "application/json", None),
+            ("first-token", "application/vnd.github.star+json", None),
+            ("first-token", "application/json", Some("\"explicit\"")),
+        ] {
+            let response: ApiResponse<Value> = client
+                .send_api_json(
+                    Method::GET,
+                    url.clone(),
+                    Some(token),
+                    explicit,
+                    None,
+                    &[],
+                    accept,
+                )
+                .await
+                .unwrap();
+            if explicit.is_some() {
+                assert_eq!(response.status, 304);
+                assert!(response.data.is_none());
+            } else {
+                assert_eq!(response.data.unwrap()["generation"], 1);
+            }
+        }
+        let requests = server.join().unwrap();
+        assert!(
+            requests[..3]
+                .iter()
+                .all(|request| !request.contains("if-none-match"))
+        );
+        assert!(requests[3].contains("if-none-match: \"explicit\""));
+    }
+
+    #[tokio::test]
+    async fn unauthenticated_requests_do_not_reuse_an_authenticated_response() {
+        let (url, server) = http_fixture(vec![CACHED_OK, CACHED_CHANGED]);
+        let client = GitHubClient::new().unwrap();
+        for token in [Some("fixture-token"), None] {
+            let _: ApiResponse<Value> = client
+                .send_api_json(
+                    Method::GET,
+                    url.clone(),
+                    token,
+                    None,
+                    None,
+                    &[],
+                    "application/json",
+                )
+                .await
+                .unwrap();
+        }
+        assert!(
+            server
+                .join()
+                .unwrap()
+                .iter()
+                .all(|request| !request.contains("if-none-match"))
+        );
+    }
+
+    #[test]
+    fn conditional_cache_bounds_response_count_and_total_memory() {
+        let mut cache = ResponseCache::default();
+        for index in 0..65 {
+            cache.insert(
+                format!("request-{index:02}"),
+                "etag".to_owned(),
+                vec![0; 1024 * 1024],
+            );
+        }
+        assert_eq!(cache.entries.len(), 16);
+        assert_eq!(cache.size, 16 * 1024 * 1024);
+        assert!(cache.get("request-00").is_none());
+        assert!(cache.get("request-64").is_some());
+        cache.insert(
+            "oversized".to_owned(),
+            "etag".to_owned(),
+            vec![0; 1024 * 1024 + 1],
+        );
+        assert!(cache.get("oversized").is_none());
+    }
 
     #[test]
     fn rate_limits_use_server_deadlines_without_retrying_denials() {

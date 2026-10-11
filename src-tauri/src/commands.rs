@@ -43,12 +43,16 @@ fn command_error(error: Error) -> String {
 }
 
 fn auth_step<T>(stage: &str, result: Result<T>) -> Result<T> {
+    command_step("auth", stage, result)
+}
+
+fn command_step<T>(scope: &str, stage: &str, result: Result<T>) -> Result<T> {
     match &result {
         Err(error) => {
-            crate::startup::write_log(format_args!("[auth] phase={stage} error={error:?}"))
+            crate::startup::write_log(format_args!("[{scope}] phase={stage} error={error:?}"))
         }
         Ok(_) if crate::startup::verbose() => {
-            crate::startup::write_log(format_args!("[auth] phase={stage} ok"))
+            crate::startup::write_log(format_args!("[{scope}] phase={stage} ok"))
         }
         Ok(_) => {}
     }
@@ -1196,6 +1200,11 @@ async fn send_friend_request(
 ) -> Result<FriendRequest> {
     let viewer = session_viewer(state).await?;
     let token = oauth_token(state).await?;
+    command_step(
+        "social",
+        "messaging-identity",
+        require_messaging_identity(state, &token, &viewer).await,
+    )?;
     let peer = resolve_user(&state.github, &token, login)
         .await?
         .ok_or(Error::GitHubNotFound)?
@@ -2322,6 +2331,31 @@ mod declined_request_tests {
     }
 }
 
+async fn require_messaging_identity(
+    state: &AppState,
+    token: &OAuthToken,
+    viewer: &GitHubViewer,
+) -> Result<()> {
+    let value = read_repository_json(
+        &state.github,
+        token,
+        &viewer.login,
+        &viewer.repository.name,
+        ".noosphere.json",
+        64 * 1024,
+    )
+    .await?
+    .ok_or(Error::InvalidGitHubResponse)?;
+    let published = serde_json::from_value(value).map_err(|_| Error::InvalidGitHubResponse)?;
+    let identity = state.identity.read().await;
+    crate::protocol::validate_messaging_identity(
+        &identity.as_ref().ok_or(Error::Crypto)?.secret,
+        &published,
+        viewer.id,
+        viewer.repository.id,
+    )
+}
+
 async fn accept_friend_request(
     state: &AppState,
     login: &str,
@@ -2329,6 +2363,11 @@ async fn accept_friend_request(
 ) -> Result<Conversation> {
     let viewer = session_viewer(state).await?;
     let token = oauth_token(state).await?;
+    command_step(
+        "social",
+        "messaging-identity",
+        require_messaging_identity(state, &token, &viewer).await,
+    )?;
     if let Some(existing) = state
         .social
         .read()

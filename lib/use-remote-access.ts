@@ -72,10 +72,9 @@ export function useRemoteAccess(accountId: number, visible: boolean) {
     let timer: ReturnType<typeof setTimeout>;
     async function poll() {
       if (generation.current !== epoch) return;
-      // Discovery also registers guest-only devices, without enabling hosting.
       await run((api) => api.syncDirectory(), { background: true });
       if (generation.current === epoch) {
-        const delay = directory?.connecting ? 750 : visible ? 2_000 : 4_000;
+        const delay = directory?.connecting ? 750 : visible ? 4_000 : 15_000;
         timer = setTimeout(() => void poll(), delay);
       }
     }

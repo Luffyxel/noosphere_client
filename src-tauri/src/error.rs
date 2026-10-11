@@ -34,6 +34,8 @@ pub enum Error {
     Network,
     #[error("Données cryptographiques invalides.")]
     Crypto,
+    #[error("Cet appareil n’a pas les clés de messagerie de ce compte.")]
+    MessagingIdentityUnavailable,
     #[error("Erreur locale.")]
     Local,
     #[error("La file d’envoi est pleine. Attends la synchronisation avant de renvoyer un message.")]

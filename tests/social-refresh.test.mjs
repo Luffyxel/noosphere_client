@@ -3,6 +3,7 @@ import test from 'node:test';
 
 import {
   SOCIAL_REFRESH_INTERVAL_MS,
+  SOCIAL_REFRESH_MAX_RETRY_MS,
   SOCIAL_REFRESH_RETRY_MS,
   startSocialRefreshLoop,
 } from '../lib/social-refresh.ts';
@@ -63,4 +64,36 @@ void test('deux clients vérifient indépendamment leurs amis au démarrage', as
   stopSecond();
   assert.equal(first.pending.length, 0);
   assert.equal(second.pending.length, 0);
+});
+
+void test('les échecs répétés espacés ne déclenchent pas une boucle rapide', async () => {
+  const { pending, scheduler } = fakeScheduler();
+  let succeed = false;
+  const stop = startSocialRefreshLoop(async () => succeed, scheduler);
+  await settle();
+  for (const delay of [
+    3_000,
+    6_000,
+    12_000,
+    24_000,
+    48_000,
+    96_000,
+    192_000,
+    SOCIAL_REFRESH_MAX_RETRY_MS,
+    SOCIAL_REFRESH_MAX_RETRY_MS,
+  ]) {
+    const next = pending.shift();
+    assert.equal(next.delay, delay);
+    next.callback();
+    await settle();
+  }
+  succeed = true;
+  pending.shift().callback();
+  await settle();
+  assert.equal(pending[0].delay, SOCIAL_REFRESH_INTERVAL_MS);
+  succeed = false;
+  pending.shift().callback();
+  await settle();
+  assert.equal(pending[0].delay, SOCIAL_REFRESH_RETRY_MS);
+  stop();
 });

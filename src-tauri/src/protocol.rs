@@ -757,6 +757,22 @@ pub(crate) fn same_public_profile(left: &PublicProfile, right: &PublicProfile) -
         && left.kyber_pre_key == right.kyber_pre_key
 }
 
+pub(crate) fn validate_messaging_identity(
+    secret: &DeviceSecret,
+    published: &PublicProfile,
+    github_user_id: u64,
+    repository_id: u64,
+) -> Result<()> {
+    validate_public_profile(published, github_user_id, repository_id)?;
+    if secret.github_user_id != github_user_id || secret.repository_id != repository_id {
+        return Err(Error::Crypto);
+    }
+    if !same_public_profile(&profile_from_secret(secret)?, published) {
+        return Err(Error::MessagingIdentityUnavailable);
+    }
+    Ok(())
+}
+
 pub async fn encrypt_message(
     secret: &mut DeviceSecret,
     message: EncryptMessage<'_>,
@@ -1618,6 +1634,39 @@ mod tests {
     use super::*;
 
     const CONVERSATION: &str = "dm-0123456789abcdef0123456789abcdef";
+
+    #[test]
+    fn a_second_device_cannot_accept_an_invitation_for_the_primary_identity() {
+        let (peer, peer_profile) = create_identity(99, 990).unwrap();
+        let (primary, primary_profile) = create_identity(42, 420).unwrap();
+        let (secondary, _) = create_identity(42, 420).unwrap();
+        validate_messaging_identity(&primary, &primary_profile, 42, 420).unwrap();
+        assert!(matches!(
+            validate_messaging_identity(&secondary, &primary_profile, 42, 420),
+            Err(Error::MessagingIdentityUnavailable)
+        ));
+        assert!(validate_messaging_identity(&primary, &primary_profile, 43, 420).is_err());
+        let (_, invitation) = create_invitation_owned(
+            peer,
+            OwnedHandshake {
+                peer_profile: primary_profile,
+                peer_github_user_id: 42,
+                peer_repository_id: 420,
+                conversation_id: CONVERSATION.to_owned(),
+                created_at: "2026-10-11T18:00:00Z".to_owned(),
+            },
+        )
+        .unwrap();
+        let handshake = OwnedHandshake {
+            peer_profile,
+            peer_github_user_id: 99,
+            peer_repository_id: 990,
+            conversation_id: CONVERSATION.to_owned(),
+            created_at: "2026-10-11T18:00:00Z".to_owned(),
+        };
+        assert!(accept_invitation_owned(secondary, handshake.clone(), invitation.clone()).is_err());
+        accept_invitation_owned(primary, handshake, invitation).unwrap();
+    }
 
     fn message_id(value: u8) -> String {
         format!("msg-{value:032x}")

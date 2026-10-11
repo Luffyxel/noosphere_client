@@ -1,5 +1,6 @@
 export const SOCIAL_REFRESH_RETRY_MS = 3_000;
 export const SOCIAL_REFRESH_INTERVAL_MS = 30_000;
+export const SOCIAL_REFRESH_MAX_RETRY_MS = 300_000;
 
 export type SocialRefreshScheduler = {
   schedule: (callback: () => void, delay: number) => unknown;
@@ -18,6 +19,7 @@ export function startSocialRefreshLoop(
 ): () => void {
   let active = true;
   let synchronized = false;
+  let retryDelay = SOCIAL_REFRESH_RETRY_MS;
   let handle: unknown;
 
   async function run() {
@@ -26,11 +28,16 @@ export function startSocialRefreshLoop(
       succeeded = await refresh(synchronized);
     } catch {}
     if (!active) return;
-    if (succeeded) synchronized = true;
+    if (succeeded) {
+      synchronized = true;
+      retryDelay = SOCIAL_REFRESH_RETRY_MS;
+    }
     handle = scheduler.schedule(
       () => void run(),
-      succeeded ? SOCIAL_REFRESH_INTERVAL_MS : SOCIAL_REFRESH_RETRY_MS,
+      succeeded ? SOCIAL_REFRESH_INTERVAL_MS : retryDelay,
     );
+    if (!succeeded)
+      retryDelay = Math.min(retryDelay * 2, SOCIAL_REFRESH_MAX_RETRY_MS);
   }
 
   void run();
