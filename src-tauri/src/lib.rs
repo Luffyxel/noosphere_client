@@ -376,7 +376,7 @@ fn configure_linux_runtime() -> bool {
         ]);
     }
     if smoke_test && std::env::var("NOOSPHERE_SMOKE_GPU").as_deref() == Ok("1") {
-        command_line_args.push(("ignore-gpu-blocklist".into(), None));
+        command_line_args.push(("--ignore-gpu-blocklist".into(), None));
     }
     if smoke_test {
         command_line_args.extend([
