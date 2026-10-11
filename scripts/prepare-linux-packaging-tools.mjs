@@ -19,8 +19,9 @@ const tools = [
   },
   {
     name: 'linuxdeploy-plugin-appimage.AppImage',
-    sha256: '0441769ab38009504d2678c38cd7e526955388dd30a215b4a20afaa5471652f2',
-    url: 'https://github.com/linuxdeploy/linuxdeploy-plugin-appimage/releases/download/continuous/linuxdeploy-plugin-appimage-x86_64.AppImage',
+    sha256: '49d6a17160675a6bd1781699aae6bdf7692d98552e02a3671d2183d10547842e',
+    url: 'https://api.github.com/repos/linuxdeploy/linuxdeploy-plugin-appimage/releases/assets/602435573',
+    headers: { Accept: 'application/octet-stream' },
   },
   {
     name: 'AppRun-x86_64',
@@ -44,7 +45,10 @@ async function download(tool, destination) {
   const temporary = `${destination}.download-${process.pid}`;
   for (let attempt = 1; attempt <= 6; attempt += 1) {
     try {
-      const response = await fetch(tool.url, { redirect: 'follow' });
+      const response = await fetch(tool.url, {
+        redirect: 'follow',
+        headers: tool.headers,
+      });
       if (!response.ok || !response.body) {
         throw new Error(`HTTP ${response.status}`);
       }
