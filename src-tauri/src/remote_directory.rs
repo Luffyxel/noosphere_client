@@ -93,6 +93,24 @@ fn registration_verified(data: &StoredDirectory, principal: &Principal) -> bool 
         .is_none_or(|machine| machine.principal == *principal && machine.identity_verified)
 }
 
+fn revoke_replaced_device(data: &mut StoredDirectory, principal: &Principal) -> bool {
+    let replaced: Vec<_> = data
+        .machines
+        .iter()
+        .filter(|machine| {
+            same_device(&machine.principal, principal) && machine.principal != *principal
+        })
+        .map(|machine| machine.principal.clone())
+        .collect();
+    for old in &replaced {
+        data.book.revoke(old);
+        data.machines.retain(|machine| &machine.principal != old);
+        data.session_hellos.retain(|hello| &hello.host != old);
+        data.session_offers.retain(|offer| &offer.guest != old);
+    }
+    !replaced.is_empty()
+}
+
 impl Default for RemoteDirectory {
     fn default() -> Self {
         Self {
@@ -753,6 +771,9 @@ pub async fn remote_sync_directory(
                     return Err("Identifiant de machine incohérent.".into());
                 }
                 let verified = registration_verified(&data, &registration.principal);
+                if revoke_replaced_device(&mut data, &registration.principal) {
+                    crate::remote_access::stop_live_if_running(&remote).await?;
+                }
                 if let Some(existing) = data
                     .machines
                     .iter_mut()
@@ -761,24 +782,6 @@ pub async fn remote_sync_directory(
                     existing.login = login.clone();
                     existing.avatar_url = avatar_url.clone();
                 } else if data.machines.len() < 100 {
-                    // A changed key never inherits a former machine's permissions.
-                    let changed: Vec<_> = data
-                        .machines
-                        .iter()
-                        .filter(|m| {
-                            m.principal.machine_id == registration.principal.machine_id
-                                && m.principal.github_user_id == github_id
-                        })
-                        .map(|m| m.principal.clone())
-                        .collect();
-                    let verified = verified && changed.is_empty();
-                    if !changed.is_empty() {
-                        crate::remote_access::stop_live_if_running(&remote).await?;
-                    }
-                    for old in changed {
-                        data.book.revoke(&old);
-                        data.machines.retain(|m| m.principal != old);
-                    }
                     data.machines.push(Machine {
                         principal: registration.principal,
                         login: login.clone(),
@@ -1642,14 +1645,29 @@ mod tests {
         };
         update_user_policy(&mut stored, &owner, 84, permissions, true, false).unwrap();
         assert!(!registration_verified(&stored, &replacement));
-        stored.book.revoke(&old);
-        stored.machines[0].principal = replacement.clone();
-        stored.machines[0].identity_verified = false;
+        let mut replaced = stored.machines[0].clone();
+        for index in 3..=101_u8 {
+            let mut extra = replaced.clone();
+            extra.principal.machine_id = [index; 16];
+            stored.machines.push(extra);
+        }
+        assert_eq!(stored.machines.len(), 100);
+        assert!(revoke_replaced_device(&mut stored, &replacement));
+        assert_eq!(stored.machines.len(), 99);
+        replaced.principal = replacement.clone();
+        replaced.identity_verified = false;
+        stored.machines.push(replaced);
+        assert_eq!(stored.machines.len(), 100);
         let mut restored: StoredDirectory =
             serde_json::from_slice(&serde_json::to_vec(&stored).unwrap()).unwrap();
         assert!(!registration_verified(&restored, &replacement));
         apply_user_policies(&mut restored, &owner).unwrap();
-        assert!(restored.book.grants.is_empty());
+        assert!(
+            restored
+                .book
+                .grant(&replacement, owner.machine_id)
+                .is_none()
+        );
         update_grant(
             &mut restored,
             &owner,
