@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import {
   Extension,
   Node,
@@ -47,7 +47,9 @@ import {
 } from '@/lib/noosnote/model';
 import type { NotePage } from '@/lib/noosnote/types';
 import { useNoteContext } from './context';
-import { Database } from './database';
+const Database = lazy(() =>
+  import('./database').then((module) => ({ default: module.Database })),
+);
 
 const BLOCKS = [
   'paragraph',
@@ -98,7 +100,11 @@ const StableIds = Extension.create({
 function DatabaseNode({ node }: NodeViewProps) {
   return (
     <NodeViewWrapper className="note-database-block" contentEditable={false}>
-      <Database databaseId={node.attrs.databaseId as string} />
+      <Suspense
+        fallback={<div className="note-empty">Chargement de la table…</div>}
+      >
+        <Database databaseId={node.attrs.databaseId as string} />
+      </Suspense>
     </NodeViewWrapper>
   );
 }

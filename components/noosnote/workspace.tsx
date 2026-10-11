@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useState } from 'react';
+import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
 import {
   ArrowLeft,
   Check,
@@ -21,7 +21,7 @@ import {
   Trash2,
 } from 'lucide-react';
 import type { NoosnoteController } from '@/lib/noosnote/use-noosnote';
-import type { NoteConflict, Workspace } from '@/lib/noosnote/types';
+import type { NoteConflict, PageEntry, Workspace } from '@/lib/noosnote/types';
 import {
   applyFiles,
   breadcrumbs,
@@ -390,13 +390,13 @@ function ConflictDialog({
 }
 
 function PageTree({
-  workspace,
+  childrenByParent,
   selected,
   openPage,
   parent = null,
   depth = 0,
 }: {
-  workspace: Workspace;
+  childrenByParent: ReadonlyMap<string | null, PageEntry[]>;
   selected: string | null;
   openPage: (id: string) => void;
   parent?: string | null;
@@ -404,15 +404,11 @@ function PageTree({
 }) {
   const [closed, setClosed] = useState(new Set<string>());
   if (depth > 48) return null;
-  const pages = workspace.pages.filter(
-    (page) => page.parentId === parent && !page.trashedAt,
-  );
+  const pages = childrenByParent.get(parent) ?? [];
   return (
     <div>
       {pages.map((page) => {
-        const hasChildren = workspace.pages.some(
-          (child) => child.parentId === page.id && !child.trashedAt,
-        );
+        const hasChildren = childrenByParent.has(page.id);
         return (
           <div key={page.id}>
             <div
@@ -453,7 +449,7 @@ function PageTree({
             </div>
             {hasChildren && !closed.has(page.id) && (
               <PageTree
-                workspace={workspace}
+                childrenByParent={childrenByParent}
                 selected={selected}
                 openPage={openPage}
                 parent={page.id}
@@ -491,6 +487,16 @@ export function NoosnoteWorkspace({
   const workspace = workspaceId
     ? getWorkspace(notes.files, workspaceId)
     : undefined;
+  const childrenByParent = useMemo(() => {
+    const children = new Map<string | null, PageEntry[]>();
+    for (const page of workspace?.pages ?? []) {
+      if (page.trashedAt) continue;
+      const siblings = children.get(page.parentId);
+      if (siblings) siblings.push(page);
+      else children.set(page.parentId, [page]);
+    }
+    return children;
+  }, [workspace?.pages]);
   const pageId = workspace?.pages.some(
     (entry) => entry.id === selectedPageId && !entry.trashedAt,
   )
@@ -642,7 +648,7 @@ export function NoosnoteWorkspace({
                 ))
               ) : (
                 <PageTree
-                  workspace={workspace}
+                  childrenByParent={childrenByParent}
                   selected={pageId}
                   openPage={openPage}
                 />
