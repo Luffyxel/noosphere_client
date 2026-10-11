@@ -3,6 +3,7 @@ import { invoke } from '@tauri-apps/api/core';
 type SmokeConfig = {
   enabled: boolean;
   syntheticMedia: boolean;
+  renderOnly: boolean;
   instanceProfileSlot: number | null;
 };
 
@@ -197,6 +198,29 @@ async function verifyBrandAssets(): Promise<boolean> {
   }
 }
 
+function verifyWebGl(): boolean {
+  const canvas = document.createElement('canvas');
+  canvas.width = 1;
+  canvas.height = 1;
+  const gl = canvas.getContext('webgl2');
+  if (!gl) return false;
+  try {
+    gl.clearColor(0.25, 0.5, 0.75, 1);
+    gl.clear(gl.COLOR_BUFFER_BIT);
+    const pixel = new Uint8Array(4);
+    gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, pixel);
+    return (
+      gl.getError() === gl.NO_ERROR &&
+      Math.abs(pixel[0] - 64) <= 1 &&
+      Math.abs(pixel[1] - 128) <= 1 &&
+      Math.abs(pixel[2] - 191) <= 1 &&
+      pixel[3] === 255
+    );
+  } finally {
+    gl.getExtension('WEBGL_lose_context')?.loseContext();
+  }
+}
+
 export async function runTauriSmokeTest(): Promise<void> {
   const config = await invoke<SmokeConfig>('system_smoke_config');
   if (!config.enabled || config.instanceProfileSlot === null) return;
@@ -210,42 +234,45 @@ export async function runTauriSmokeTest(): Promise<void> {
   } catch (error) {
     diagnostics.push(`brand: ${String(error)}`);
   }
-  let media: SmokeMedia | null = null;
-  if (!config.syntheticMedia) {
-    try {
-      const captured = await navigator.mediaDevices.getUserMedia({
-        audio: true,
-        video: true,
-      });
-      mediaPermission =
-        captured.getAudioTracks().length > 0 &&
-        captured.getVideoTracks().length > 0;
-      media = {
-        stream: captured,
-        release: async () => {
-          for (const track of captured.getTracks()) track.stop();
-        },
-      };
-    } catch (error) {
-      diagnostics.push(`capture: ${String(error)}`);
+  const webGl = verifyWebGl();
+  if (!config.renderOnly) {
+    let media: SmokeMedia | null = null;
+    if (!config.syntheticMedia) {
+      try {
+        const captured = await navigator.mediaDevices.getUserMedia({
+          audio: true,
+          video: true,
+        });
+        mediaPermission =
+          captured.getAudioTracks().length > 0 &&
+          captured.getVideoTracks().length > 0;
+        media = {
+          stream: captured,
+          release: async () => {
+            for (const track of captured.getTracks()) track.stop();
+          },
+        };
+      } catch (error) {
+        diagnostics.push(`capture: ${String(error)}`);
+      }
     }
-  }
-  if (!media) {
-    try {
-      media = await createSyntheticMedia();
-    } catch (error) {
-      diagnostics.push(`synthetic: ${String(error)}`);
+    if (!media) {
+      try {
+        media = await createSyntheticMedia();
+      } catch (error) {
+        diagnostics.push(`synthetic: ${String(error)}`);
+      }
     }
-  }
-  if (media) {
-    try {
-      const result = await exercisePeerConnection(media.stream);
-      webRtcDataChannel = result.dataChannel;
-      webRtcMedia = result.media;
-    } catch (error) {
-      diagnostics.push(`webrtc: ${String(error)}`);
-    } finally {
-      await media.release();
+    if (media) {
+      try {
+        const result = await exercisePeerConnection(media.stream);
+        webRtcDataChannel = result.dataChannel;
+        webRtcMedia = result.media;
+      } catch (error) {
+        diagnostics.push(`webrtc: ${String(error)}`);
+      } finally {
+        await media.release();
+      }
     }
   }
   try {
@@ -273,6 +300,7 @@ export async function runTauriSmokeTest(): Promise<void> {
       webRtcMedia,
       mediaPermission,
       brandAssets,
+      webGl,
       diagnostics,
       instanceProfileSlot: config.instanceProfileSlot,
     },

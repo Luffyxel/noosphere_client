@@ -8,6 +8,8 @@ when the compositor cannot host CEF directly.
 
 ## AppImage
 
+The AppImage uses system graphics, font, keyboard and cryptography libraries to remain compatible with its drivers and Plasma services. The main window uses X11, including XWayland in Wayland sessions.
+
 Use the AppImage on distributions without a DEB or RPM package:
 
 ```bash

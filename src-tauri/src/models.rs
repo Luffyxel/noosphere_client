@@ -170,6 +170,7 @@ pub struct NotificationResult {
 pub struct SmokeConfig {
     pub enabled: bool,
     pub synthetic_media: bool,
+    pub render_only: bool,
     pub instance_profile_slot: Option<u8>,
 }
 
@@ -183,6 +184,7 @@ pub struct SmokeResult {
     pub web_rtc_media: bool,
     pub media_permission: bool,
     pub brand_assets: bool,
+    pub web_gl: bool,
     pub diagnostics: Vec<String>,
     pub instance_profile_slot: u8,
 }

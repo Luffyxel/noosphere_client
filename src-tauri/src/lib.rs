@@ -39,6 +39,7 @@ type DesktopAppHandle = tauri::AppHandle<DesktopRuntime>;
 
 #[cfg(target_os = "linux")]
 pub fn prepare_linux_media_runtime() {
+    unsafe { std::env::set_var("GDK_BACKEND", "x11") };
     let Some(app_dir) = std::env::var_os("APPDIR").map(std::path::PathBuf::from) else {
         return;
     };
@@ -361,15 +362,28 @@ fn configure_linux_runtime() -> bool {
         ("--disable-setuid-sandbox".into(), None),
         ("password-store".into(), Some("basic".into())),
     ];
-    if smoke_test {
+    if !smoke_test || std::env::var("NOOSPHERE_SMOKE_GPU").as_deref() == Ok("1") {
         command_line_args.extend([
-            ("--no-sandbox".into(), None),
+            ("use-gl".into(), Some("angle".into())),
+            ("use-angle".into(), Some("gl-egl".into())),
+        ]);
+    } else {
+        command_line_args.extend([
             ("--single-process".into(), None),
             ("--disable-gpu".into(), None),
             ("use-gl".into(), Some("angle".into())),
             ("use-angle".into(), Some("swiftshader".into())),
             ("--enable-unsafe-swiftshader".into(), None),
+        ]);
+    }
+    if smoke_test {
+        command_line_args.extend([
+            ("--no-sandbox".into(), None),
             ("--use-fake-device-for-media-stream".into(), None),
+            (
+                "autoplay-policy".into(),
+                Some("no-user-gesture-required".into()),
+            ),
         ]);
     }
     let cache_path = smoke_test.then(|| {

@@ -8,6 +8,8 @@ XWayland lorsque le compositeur ne prend pas CEF en charge directement.
 
 ## AppImage
 
+L’AppImage utilise les bibliothèques graphiques, de polices, de clavier et de chiffrement du système pour rester compatible avec ses pilotes et les services Plasma. La fenêtre principale utilise X11, y compris sous Wayland via XWayland.
+
 Utilisez l’AppImage sur les distributions sans paquet DEB ou RPM :
 
 ```bash

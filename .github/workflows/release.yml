@@ -87,6 +87,8 @@ jobs:
       - name: Smoke test Linux package
         if: runner.os == 'Linux'
         run: dbus-run-session -- xvfb-run -a npm run smoke:appimage
+        env:
+          NOOSPHERE_SMOKE_GPU: '1'
       - name: Collect Windows packages
         if: runner.os == 'Windows'
         shell: pwsh

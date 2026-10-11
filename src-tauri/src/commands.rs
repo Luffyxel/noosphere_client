@@ -3654,6 +3654,7 @@ pub fn system_smoke_config(state: State<'_, AppState>) -> SmokeConfig {
         enabled,
         synthetic_media: enabled
             && std::env::var("NOOSPHERE_SMOKE_SYNTHETIC_MEDIA").as_deref() == Ok("1"),
+        render_only: enabled && std::env::var("NOOSPHERE_SMOKE_RENDER_ONLY").as_deref() == Ok("1"),
         instance_profile_slot: enabled.then(|| state.profile.slot()),
     }
 }
@@ -3679,6 +3680,7 @@ pub fn system_smoke_complete(
         "webRtcMedia": result.web_rtc_media,
         "mediaPermission": result.media_permission,
         "brandAssets": result.brand_assets,
+        "webGl": result.web_gl,
         "diagnostics": result.diagnostics,
         "instanceProfileSlot": result.instance_profile_slot,
     }))

@@ -16,6 +16,10 @@ import {
 } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import {
+  removeHostLibraries,
+  usesHostLibrary,
+} from './linux-appimage-libraries.mjs';
 
 if (process.platform !== 'linux') {
   throw new Error('AppImage finalization must run on Linux.');
@@ -186,6 +190,7 @@ await cp(
   { force: true },
 );
 
+await removeHostLibraries([appLibraryDirectory, cefResourceDirectory]);
 await unlink(path.join(cefResourceDirectory, 'libcef.so'));
 await chmod(path.join(appLibraryDirectory, 'chrome-sandbox'), 0o755);
 
@@ -386,7 +391,7 @@ async function copyDependencyClosure(roots) {
       if (!match) continue;
       const dependency = match[1];
       const name = path.basename(dependency);
-      if (excluded.has(name)) continue;
+      if (excluded.has(name) || usesHostLibrary(name)) continue;
       const target = path.join(appLibraryDirectory, name);
       try {
         await access(target);

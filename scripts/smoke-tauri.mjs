@@ -114,15 +114,18 @@ async function stopInstance(instance) {
   }
 }
 
+const renderOnly = process.env.NOOSPHERE_SMOKE_RENDER_ONLY === '1';
+const requireWebGl = renderOnly || process.env.NOOSPHERE_SMOKE_GPU === '1';
+
 function validResult(result) {
   return Boolean(
     result?.version === 1 &&
     result.nativeBridge &&
     result.socialBridge &&
-    result.webRtcDataChannel &&
-    result.webRtcMedia &&
+    (renderOnly || (result.webRtcDataChannel && result.webRtcMedia)) &&
+    (!requireWebGl || result.webGl) &&
     typeof result.mediaPermission === 'boolean' &&
-    (!requireDeviceCapture || result.mediaPermission) &&
+    (renderOnly || !requireDeviceCapture || result.mediaPermission) &&
     result.brandAssets &&
     Number.isSafeInteger(result.instanceProfileSlot),
   );
@@ -169,8 +172,11 @@ try {
     `NOOSPHERE_TAURI_SMOKE=${JSON.stringify({
       firstProfile: firstResult.instanceProfileSlot,
       secondProfile: secondResult.instanceProfileSlot,
-      webRtcDataChannel: true,
-      webRtcMedia: true,
+      webRtcDataChannel:
+        firstResult.webRtcDataChannel && secondResult.webRtcDataChannel,
+      webRtcMedia: firstResult.webRtcMedia && secondResult.webRtcMedia,
+      webGl: firstResult.webGl && secondResult.webGl,
+      renderOnly,
       mediaPermission:
         firstResult.mediaPermission && secondResult.mediaPermission,
       deviceCaptureRequired: requireDeviceCapture,
