@@ -118,6 +118,14 @@ jobs:
         run: dbus-run-session -- xvfb-run -a npm run smoke:appimage
         env:
           NOOSPHERE_SMOKE_GPU: '1'
+          LIBGL_ALWAYS_SOFTWARE: '1'
+      - name: Store Linux diagnostics
+        if: failure() && runner.os == 'Linux'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: noosphere-linux-diagnostics
+          path: src-tauri/target/release/bundle/appimage/*.AppImage
+          if-no-files-found: ignore
       - name: Store packages
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:

@@ -165,7 +165,7 @@ try {
     firstResult.instanceProfileSlot === secondResult.instanceProfileSlot
   ) {
     throw new Error(
-      `Le smoke test Tauri a échoué.\n${JSON.stringify({ firstResult, secondResult })}`,
+      `Le smoke test Tauri a échoué.\n${JSON.stringify({ firstResult, secondResult })}\n${first.output()}\n${second.output()}`,
     );
   }
   console.log(

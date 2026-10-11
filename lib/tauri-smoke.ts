@@ -198,10 +198,13 @@ async function verifyBrandAssets(): Promise<boolean> {
   }
 }
 
-function verifyWebGl(): boolean {
+function verifyWebGl(diagnostics: string[]): boolean {
   const canvas = document.createElement('canvas');
   canvas.width = 1;
   canvas.height = 1;
+  canvas.addEventListener('webglcontextcreationerror', (event) => {
+    diagnostics.push(`webgl: ${(event as WebGLContextEvent).statusMessage}`);
+  });
   const gl = canvas.getContext('webgl2');
   if (!gl) return false;
   try {
@@ -234,7 +237,7 @@ export async function runTauriSmokeTest(): Promise<void> {
   } catch (error) {
     diagnostics.push(`brand: ${String(error)}`);
   }
-  const webGl = verifyWebGl();
+  const webGl = verifyWebGl(diagnostics);
   if (!config.renderOnly) {
     let media: SmokeMedia | null = null;
     if (!config.syntheticMedia) {
