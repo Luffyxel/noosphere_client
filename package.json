@@ -25,6 +25,7 @@
     "create:release-aliases": "node scripts/create-release-aliases.mjs",
     "sign:updates:linux": "node scripts/sign-update-artifacts.mjs",
     "smoke:tauri": "node scripts/smoke-tauri.mjs",
+    "smoke:appimage": "node scripts/smoke-linux-appimage.mjs",
     "smoke:remote": "node scripts/smoke-remote.mjs",
     "smoke:remote:gpu": "node scripts/smoke-remote.mjs --gpu",
     "bench:remote:session": "node scripts/native-toolchain.mjs cargo run --manifest-path src-tauri/Cargo.toml -p noosphere-remote --bin noosphere-remote-bench --release -- --session",

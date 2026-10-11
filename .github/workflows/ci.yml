@@ -115,7 +115,7 @@ jobs:
           NOOSPHERE_SMOKE_SYNTHETIC_MEDIA: '1'
       - name: Smoke test Chromium
         if: runner.os == 'Linux'
-        run: dbus-run-session -- xvfb-run -a npm run smoke:tauri
+        run: dbus-run-session -- xvfb-run -a npm run smoke:appimage
       - name: Store packages
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
