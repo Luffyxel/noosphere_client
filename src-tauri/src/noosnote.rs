@@ -285,6 +285,9 @@ fn validate_file(path: &str, value: &Value) -> Result<()> {
         return Err(Error::InvalidData);
     }
     field(value, "title", 512)?;
+    if value.get("emoji").is_some() {
+        field(value, "emoji", 128)?;
+    }
     match kind {
         "workspace" => {
             field(value, "icon", 32)?;
@@ -313,6 +316,9 @@ fn validate_file(path: &str, value: &Value) -> Result<()> {
             for page in pages {
                 field(page, "title", 512)?;
                 field(page, "icon", 32)?;
+                if page.get("emoji").is_some() {
+                    field(page, "emoji", 128)?;
+                }
                 if let Some(parent) = page.get("parentId").and_then(Value::as_str)
                     && (!ids.contains(parent) || parent == page["id"])
                 {
@@ -2156,6 +2162,30 @@ mod tests {
         let b = Uuid::new_v4().to_string();
         let value = json!({"version":1,"kind":"workspace","id":workspace,"title":"École","icon":"📚","color":"#78b89b","pages":[{"id":a,"title":"Anglais","icon":"","parentId":b},{"id":b,"title":"Français","icon":"","parentId":a}]});
         assert!(validate_file(&format!("notes/{workspace}/workspace.json"), &value).is_err());
+    }
+
+    #[test]
+    fn extended_emoji_keeps_the_legacy_icon_and_note_format() {
+        let (path, mut value) = page();
+        value["icon"] = json!("📄");
+        value["emoji"] = json!("👩🏽‍❤️‍💋‍👩🏾");
+        value["applicationVersion"] = json!("0.2.0");
+        validate_file(&path, &value).unwrap();
+        let mut cache = Cache::empty(42);
+        apply_changes(
+            &mut cache,
+            vec![Change {
+                path: path.clone(),
+                value: Some(value.clone()),
+                base: None,
+            }],
+        )
+        .unwrap();
+        assert_eq!(cache.documents[&path].local.as_deref(), Some(&value));
+        assert_eq!(value["version"], json!(1));
+        assert!(value["icon"].as_str().unwrap().len() <= 32);
+        value["emoji"] = json!("a".repeat(129));
+        assert!(validate_file(&path, &value).is_err());
     }
 
     #[test]

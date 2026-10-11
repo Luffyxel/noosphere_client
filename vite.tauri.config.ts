@@ -18,6 +18,13 @@ export default defineConfig({
     emptyOutDir: true,
     sourcemap: false,
     target: ['es2021', 'chrome105', 'safari13'],
+    rolldownOptions: {
+      output: {
+        codeSplitting: {
+          groups: [{ name: 'ui', test: /node_modules[\\/]@base-ui[\\/]/ }],
+        },
+      },
+    },
   },
   server: {
     host: '127.0.0.1',

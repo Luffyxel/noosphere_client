@@ -44,9 +44,11 @@ import {
   getPage,
   getWorkspace,
   id,
+  noteIcon,
 } from '@/lib/noosnote/model';
 import type { NotePage } from '@/lib/noosnote/types';
 import { useNoteContext } from './context';
+import { PageContextMenu } from './page-menu';
 const Database = lazy(() =>
   import('./database').then((module) => ({ default: module.Database })),
 );
@@ -115,13 +117,15 @@ function PageNode({ node }: NodeViewProps) {
   );
   return (
     <NodeViewWrapper contentEditable={false}>
-      <button
-        className="note-page-link"
-        disabled={!entry || !!entry.trashedAt}
-        onClick={() => openPage(node.attrs.pageId as string)}
-      >
-        {entry?.icon || '📄'} {entry?.title || 'Page indisponible'}
-      </button>
+      <PageContextMenu pageId={node.attrs.pageId as string}>
+        <button
+          className="note-page-link"
+          disabled={!entry || !!entry.trashedAt}
+          onClick={() => openPage(node.attrs.pageId as string)}
+        >
+          {noteIcon(entry) || '📄'} {entry?.title || 'Page indisponible'}
+        </button>
+      </PageContextMenu>
     </NodeViewWrapper>
   );
 }

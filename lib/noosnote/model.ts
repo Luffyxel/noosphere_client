@@ -19,22 +19,42 @@ export const NOTE_COLORS = [
   '#d9ac7e',
   '#dc939e',
   '#a7b5bb',
-];
-export const NOTE_ICONS = [
-  '📝',
-  '📚',
-  '🌿',
-  '💡',
-  '🎯',
-  '🧭',
-  '🏠',
-  '🎨',
-  '💼',
-  '🔬',
-  '🎵',
-  '⭐',
+  '#ff453a',
+  '#ff9f0a',
+  '#ffd60a',
+  '#32d74b',
+  '#63e6be',
+  '#64d2ff',
+  '#0a84ff',
+  '#5e5ce6',
+  '#bf5af2',
+  '#ff375f',
+  '#f783ac',
+  '#e599f7',
+  '#b197fc',
+  '#91a7ff',
+  '#74c0fc',
+  '#66d9e8',
+  '#8ce99a',
+  '#c0eb75',
+  '#ffe066',
+  '#ffc078',
+  '#ffa8a8',
+  '#e8c9a3',
+  '#a68a64',
+  '#868e96',
+  '#ced4da',
+  '#ffffff',
+  '#343a40',
+  '#000000',
 ];
 export const id = () => crypto.randomUUID();
+export const noteIcon = (value?: { icon: string; emoji?: string }) =>
+  value?.emoji ?? value?.icon ?? '';
+export function iconFields(emoji: string) {
+  if (new TextEncoder().encode(emoji).length > 32) return { icon: '📄', emoji };
+  return { icon: emoji, emoji: undefined };
+}
 export const workspacePath = (workspaceId: string) =>
   `notes/${workspaceId}/workspace.json`;
 export const pagePath = (workspaceId: string, pageId: string) =>
@@ -209,7 +229,7 @@ export function createWorkspace(
     kind: 'workspace',
     id: id(),
     title: title.trim() || 'Mon Noosnote',
-    icon,
+    ...iconFields(icon),
     color,
     pages: [],
   };
@@ -284,11 +304,11 @@ export function renamePage(
       ...workspace,
       pages: workspace.pages.map((entry) =>
         entry.id === pageId
-          ? { ...entry, title, ...(icon !== undefined ? { icon } : {}) }
+          ? { ...entry, title, ...(icon !== undefined ? iconFields(icon) : {}) }
           : entry,
       ),
     }),
-    change({ ...page, title, ...(icon !== undefined ? { icon } : {}) }),
+    change({ ...page, title, ...(icon !== undefined ? iconFields(icon) : {}) }),
   ];
 }
 export function descendants(workspace: Workspace, pageId: string): Set<string> {

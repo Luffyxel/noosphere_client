@@ -10,6 +10,7 @@ export type PageEntry = {
   id: string;
   title: string;
   icon: string;
+  emoji?: string;
   parentId: string | null;
   databaseId?: string;
   trashedAt?: string;
@@ -21,6 +22,7 @@ export type Workspace = {
   id: string;
   title: string;
   icon: string;
+  emoji?: string;
   color: string;
   pages: PageEntry[];
 };
@@ -32,6 +34,7 @@ export type NotePage = {
   workspaceId: string;
   title: string;
   icon: string;
+  emoji?: string;
   content: RichNode;
 };
 

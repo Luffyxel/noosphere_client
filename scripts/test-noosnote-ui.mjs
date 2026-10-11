@@ -37,7 +37,7 @@ let browser;
 const lifetime = setInterval(() => {}, 1000);
 try {
   let ready = false;
-  for (let i = 0; i < 80; i += 1) {
+  for (let i = 0; i < 240; i += 1) {
     try {
       if ((await fetch(`${base}/tests/noosnote-ui.html`)).ok) {
         ready = true;
@@ -48,7 +48,7 @@ try {
       throw new Error(diagnostics);
     await delay(250);
   }
-  assert.ok(ready, 'Le serveur de test ne répond pas.');
+  assert.ok(ready, `Le serveur de test ne répond pas.\n${diagnostics}`);
   browser = await chromium.launch({
     headless: true,
     ...(process.env.NOOSPHERE_TEST_BROWSER
@@ -218,6 +218,34 @@ try {
     .getByRole('textbox', { name: 'Nom', exact: true })
     .fill('Projets');
   await dialog
+    .getByRole('button', { name: 'Icône du Noosnote', exact: true })
+    .click();
+  const emojiPicker = page.getByRole('dialog', {
+    name: 'Icône du Noosnote',
+    exact: true,
+  });
+  await emojiPicker
+    .getByRole('textbox', { name: 'Rechercher un emoji', exact: true })
+    .fill('loutre');
+  await emojiPicker
+    .getByRole('button', { name: 'loutre', exact: true })
+    .click();
+  assert.ok(
+    await dialog
+      .getByRole('button', { name: 'Icône du Noosnote', exact: true })
+      .innerText()
+      .then((text) => text.includes('🦦')),
+  );
+  assert.ok(
+    (await dialog
+      .getByRole('group', { name: 'Palette de couleurs' })
+      .getByRole('button')
+      .count()) >= 30,
+  );
+  await dialog
+    .getByRole('textbox', { name: 'Code couleur hexadécimal', exact: true })
+    .fill('#123abc');
+  await dialog
     .getByRole('button', { name: 'Créer le Noosnote', exact: true })
     .click();
   await page
@@ -227,6 +255,32 @@ try {
     () => document.querySelector('.note-page-title')?.value === 'Bienvenue',
   );
   assert.equal(await page.locator('.note-rail-icon').count(), 2);
+  const projectRail = page.getByRole('button', {
+    name: 'Noosnote Projets',
+    exact: true,
+  });
+  assert.match(await projectRail.innerText(), /🦦/);
+  assert.equal(
+    await projectRail.evaluate((element) => element.style.borderColor),
+    'rgb(18, 58, 188)',
+  );
+  await page
+    .getByRole('button', { name: 'Réglages du Noosnote', exact: true })
+    .click();
+  const settings = page.getByRole('dialog', {
+    name: 'Personnaliser le Noosnote',
+    exact: true,
+  });
+  await settings
+    .getByRole('button', { name: 'Icône du Noosnote', exact: true })
+    .click();
+  await emojiPicker
+    .getByRole('textbox', { name: 'Emoji du système', exact: true })
+    .fill('👩🏽‍❤️‍💋‍👩🏾');
+  await settings
+    .getByRole('button', { name: 'Enregistrer', exact: true })
+    .click();
+  assert.match(await projectRail.innerText(), /👩🏽‍❤️‍💋‍👩🏾/);
   await page
     .getByRole('button', { name: 'Noosnote École', exact: true })
     .click();
@@ -242,6 +296,135 @@ try {
     .click();
   await editor.waitFor();
   assert.match(await editor.innerText(), /Present perfect/);
+  const french = page
+    .locator('.note-tree-page')
+    .filter({ hasText: /Français$/ });
+  await french.click({ button: 'right' });
+  const menu = page.getByRole('menu');
+  await menu.getByRole('menuitem', { name: 'Renommer', exact: true }).click();
+  const rename = page.getByRole('dialog', {
+    name: 'Personnaliser la page',
+    exact: true,
+  });
+  await rename
+    .getByRole('textbox', { name: 'Nom de la page', exact: true })
+    .fill('Français révisé');
+  await rename
+    .getByRole('button', { name: 'Enregistrer', exact: true })
+    .click();
+  assert.equal(
+    await page.locator('.note-page-title').inputValue(),
+    'Lundi 12 octobre',
+  );
+  const renamed = page
+    .locator('.note-tree-page')
+    .filter({ hasText: /Français révisé$/ });
+  await renamed.click({ button: 'right' });
+  await menu
+    .getByRole('menuitem', { name: 'Mettre à la corbeille', exact: true })
+    .click();
+  await renamed.waitFor({ state: 'hidden' });
+  assert.equal(
+    await page.locator('.note-page-title').inputValue(),
+    'Lundi 12 octobre',
+  );
+  await page.getByRole('button', { name: /^Corbeille/ }).click();
+  await page
+    .locator('.note-trash')
+    .getByRole('button', { name: 'Restaurer', exact: true })
+    .click();
+  await renamed.waitFor();
+  await renamed.click({ button: 'right' });
+  await menu
+    .getByRole('menuitem', {
+      name: 'Dupliquer avec les sous-pages',
+      exact: true,
+    })
+    .click();
+  await page.waitForFunction(
+    () =>
+      document.querySelector('.note-page-title')?.value ===
+      'Français révisé — copie',
+  );
+  const copy = page
+    .locator('.note-tree-page')
+    .filter({ hasText: /Français révisé — copie$/ });
+  await copy.click({ button: 'right' });
+  assert.equal(
+    await menu
+      .getByRole('menuitem', { name: 'Déplacer', exact: true })
+      .isEnabled(),
+    false,
+  );
+  await menu
+    .getByRole('menuitem', { name: 'Mettre à la corbeille', exact: true })
+    .click();
+  await copy.waitFor({ state: 'hidden' });
+  await page
+    .getByRole('button', { name: 'Nouvelle page', exact: true })
+    .click();
+  await page
+    .getByRole('textbox', { name: 'Titre de la page', exact: true })
+    .fill('À déplacer');
+  const movable = page
+    .locator('.note-tree-page')
+    .filter({ hasText: /À déplacer$/ });
+  await movable.click({ button: 'right' });
+  await menu.getByRole('menuitem', { name: 'Déplacer', exact: true }).click();
+  await page
+    .getByRole('dialog', { name: 'Déplacer la page', exact: true })
+    .getByRole('button', { name: 'Anglais', exact: false })
+    .click();
+  assert.match(
+    await page.getByRole('navigation', { name: 'Fil d’Ariane' }).innerText(),
+    /Anglais/,
+  );
+  await movable.click({ button: 'right' });
+  await page.screenshot({
+    path: path.join(output, 'context-menu.png'),
+    fullPage: true,
+  });
+  await page.keyboard.press('Escape');
+  await menu.waitFor({ state: 'hidden' });
+  await movable.focus();
+  await page.keyboard.press('Shift+F10');
+  await menu
+    .getByRole('menuitem', { name: 'Ajouter une sous-page', exact: true })
+    .waitFor();
+  await page.keyboard.press('Escape');
+  await page
+    .getByRole('navigation', { name: 'Fil d’Ariane' })
+    .getByRole('button', { name: 'École', exact: true })
+    .click();
+  await page
+    .getByRole('button', { name: 'Ouvrir Français révisé', exact: true })
+    .click({ button: 'right' });
+  await menu
+    .getByRole('menuitem', { name: 'Changer l’icône', exact: true })
+    .click();
+  await rename
+    .getByRole('button', { name: 'Icône de la page', exact: true })
+    .click();
+  const pageEmoji = page.getByRole('dialog', {
+    name: 'Icône de la page',
+    exact: true,
+  });
+  await pageEmoji
+    .getByRole('textbox', { name: 'Rechercher un emoji', exact: true })
+    .fill('pouce vers le haut');
+  await pageEmoji
+    .getByLabel('Teinte de peau', { exact: true })
+    .selectOption('2');
+  await pageEmoji
+    .getByRole('button', {
+      name: 'pouce vers le haut : peau légèrement mate',
+      exact: true,
+    })
+    .click();
+  await rename
+    .getByRole('button', { name: 'Enregistrer', exact: true })
+    .click();
+  assert.match(await renamed.innerText(), /👍🏽/);
   assert.deepEqual(errors, []);
   await writeFile(
     path.join(output, 'validation.json'),
@@ -256,6 +439,15 @@ try {
         calendar: true,
         multipleWorkspaces: true,
         pageReopen: true,
+        contextMenu: true,
+        inactivePageRenameAndTrash: true,
+        restorePage: true,
+        duplicateAndMove: true,
+        systemEmojis: true,
+        customColor: true,
+        keyboardContextMenu: true,
+        databaseContextMenu: true,
+        emojiSkinTone: true,
         javascriptErrors: errors,
       },
       null,

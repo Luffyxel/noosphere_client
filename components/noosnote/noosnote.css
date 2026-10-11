@@ -304,11 +304,11 @@
 .note-page-icon {
   margin-bottom: 13px;
 }
-.note-page-icon select {
+.note-page-icon .note-emoji-trigger {
   font-size: 33px;
   padding: 3px;
   background: transparent;
-  width: 73px;
+  width: auto;
 }
 .note-page-title {
   width: 100%;
@@ -1110,32 +1110,175 @@
   display: block;
   margin-bottom: 8px;
 }
-.note-icon-grid {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 5px;
-}
-.note-icon-grid button {
-  padding: 5px;
-  width: 32px;
-  height: 32px;
-  font-size: 20px;
-  border: 1px solid transparent;
-}
-.note-icon-grid button[aria-pressed='true'] {
-  background: #ffffff09;
-  border-color: var(--noosphere-accent);
-}
 .note-color-grid {
-  display: flex;
-  gap: 9px;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, 28px);
+  gap: 8px;
+  padding: 0 !important;
+  border: 0 !important;
 }
 .note-color-grid button {
-  width: 24px;
-  height: 24px;
+  width: 28px;
+  height: 28px;
   border-radius: 50%;
   padding: 0;
   color: #1c1c1e;
+  border: 1px solid #ffffff25;
+}
+.note-color-grid button[aria-pressed='true'] {
+  outline: 2px solid var(--noosphere-accent);
+  outline-offset: 2px;
+}
+.note-color-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.note-custom-color {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.note-custom-color > input {
+  width: 46px;
+  height: 42px;
+  padding: 4px;
+  border: 1px solid #ffffff20;
+  border-radius: 8px;
+}
+.note-custom-color label {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  color: #a2a2ad;
+  font-size: 11px;
+}
+.note-custom-color label input {
+  width: 120px;
+  background: #1c1c1e;
+  border: 1px solid #ffffff15;
+  border-radius: 6px;
+  padding: 7px;
+  font-size: 13px;
+}
+.note-system-emoji {
+  font-family: 'Apple Color Emoji', 'Segoe UI Emoji', 'Noto Color Emoji', emoji;
+}
+.note-emoji-trigger {
+  border: 1px solid #ffffff15;
+  background: #1c1c1e;
+  font-size: 25px;
+}
+.note-picker-positioner,
+.note-menu-positioner {
+  z-index: 100;
+}
+.note-context-menu,
+.note-emoji-picker {
+  background: #28282b;
+  color: #ececf1;
+  border: 1px solid #ffffff20;
+  border-radius: 12px;
+  box-shadow: 0 14px 45px #0008;
+  font-family: inherit;
+  font-size: 13px;
+}
+.note-context-menu {
+  min-width: 250px;
+  padding: 6px;
+  outline: none;
+}
+.note-context-menu [role='menuitem'] {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 9px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  outline: none;
+}
+.note-context-menu [data-highlighted] {
+  background: #ffffff12;
+}
+.note-context-menu [data-disabled] {
+  opacity: 0.4;
+  cursor: default;
+}
+.note-emoji-picker {
+  width: min(360px, calc(100vw - 24px));
+  max-height: min(550px, calc(100vh - 32px));
+  overflow: auto;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.note-emoji-picker input,
+.note-emoji-picker select {
+  min-width: 0;
+  color: inherit;
+  background: #1c1c1e;
+  border: 1px solid #ffffff20;
+  border-radius: 7px;
+  padding: 8px;
+  outline: none;
+}
+.note-emoji-picker input:focus-visible,
+.note-emoji-picker button:focus-visible,
+.note-emoji-picker select:focus-visible {
+  outline: 2px solid var(--noosphere-accent);
+  outline-offset: 1px;
+}
+.note-emoji-picker button {
+  cursor: pointer;
+  border-radius: 6px;
+  color: inherit;
+  padding: 5px;
+}
+.note-emoji-picker button:hover,
+.note-emoji-picker button[aria-pressed='true'] {
+  background: #ffffff15;
+}
+.note-emoji-categories {
+  display: flex;
+  gap: 2px;
+  flex-wrap: wrap;
+}
+.note-emoji-categories .note-system-emoji {
+  font-size: 20px;
+}
+.note-emoji-tone {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  color: #aaaab4;
+}
+.note-emoji-results {
+  max-height: 250px;
+  overflow: auto;
+  scrollbar-width: thin;
+}
+.note-emoji-grid {
+  display: grid;
+  grid-template-columns: repeat(8, minmax(0, 1fr));
+  gap: 2px;
+}
+.note-emoji-grid button {
+  font-size: 25px;
+  min-height: 36px;
+}
+.note-emoji-more,
+.note-emoji-clear {
+  width: 100%;
+  font-size: 12px;
+}
+.note-emoji-paste {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+  color: #aaaab4;
 }
 .note-templates {
   display: flex;

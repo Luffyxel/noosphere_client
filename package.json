@@ -1,7 +1,7 @@
 {
   "name": "noosphere",
   "productName": "Noosphere",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "private": true,
   "license": "AGPL-3.0-only",
   "engines": {
@@ -40,7 +40,8 @@
     "lint": "oxlint app components src lib scripts tests && node scripts/native-toolchain.mjs cargo clippy --manifest-path src-tauri/Cargo.toml --workspace --all-targets -- -D warnings",
     "format": "oxfmt && node scripts/native-toolchain.mjs cargo fmt --manifest-path src-tauri/Cargo.toml -p noosphere-desktop -p noosphere-remote",
     "format:check": "oxfmt --check && node scripts/native-toolchain.mjs cargo fmt --manifest-path src-tauri/Cargo.toml -p noosphere-desktop -p noosphere-remote -- --check",
-    "test:noosnote-ui": "node scripts/test-noosnote-ui.mjs"
+    "test:noosnote-ui": "node scripts/test-noosnote-ui.mjs",
+    "generate:note-emojis": "node scripts/generate-note-emojis.mjs"
   },
   "dependencies": {
     "@base-ui/react": "1.7.0",
@@ -68,6 +69,7 @@
     "@types/react": "19.2.14",
     "@types/react-dom": "19.2.3",
     "@vitejs/plugin-react": "6.0.2",
+    "emojibase-data": "17.0.0",
     "oxfmt": "0.61.0",
     "oxlint": "1.76.0",
     "oxlint-tsgolint": "7.0.2001",

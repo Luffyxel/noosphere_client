@@ -10,6 +10,19 @@ URLs, e-mail, phone numbers, relations, formulas and rollups. Saved views suppor
 tables, boards, lists, galleries and calendars, with grouping, filtering,
 sorting and property visibility. Tables export to CSV and pages to JSON.
 
+Right-click pages, search results or database items to open, rename, change
+the icon, add a subpage, duplicate, move, export or send them to the trash.
+**Shift+F10** also opens the menu. Database rows stay in their database;
+their categories can be changed through properties or board columns.
+
+Icons use a French searchable emoji catalog with categories and skin tones,
+rendered with the system font. Emojis from the desktop picker can also be
+pasted. Colors include an extended palette, a native picker and custom hex codes.
+
+Storage format version 1 is independent of the application release. Notes
+created with 0.2.0 remain readable and editable without recreating the
+repository. Extended emoji sequences keep a fallback icon compatible with 0.2.0.
+
 ## Private repository
 
 All workspaces share `noosnote_<GitHub account ID>`, a private repository in the

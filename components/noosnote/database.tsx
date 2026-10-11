@@ -48,6 +48,7 @@ import {
   rowPageTitle,
 } from '@/lib/noosnote/data';
 import { downloadFile, NoteDialog, useNoteContext } from './context';
+import { PageContextMenu } from './page-menu';
 
 const PROPERTY_TYPES: [PropertyType, string][] = [
   ['text', 'Texte'],
@@ -1101,65 +1102,66 @@ export function Database({ databaseId }: { databaseId: string }) {
   }
   function card(row: DatabaseRow, draggable = false) {
     return (
-      <div
-        className="note-card"
-        key={row.id}
-        draggable={draggable}
-        onDragStart={(event) => {
-          event.dataTransfer.setData(
-            'application/x-noosnote-row',
-            `${databaseId}:${row.id}`,
-          );
-          event.dataTransfer.effectAllowed = 'move';
-        }}
-      >
-        <div className="note-card-heading">
-          {draggable && <GripVertical size={14} />}
-          <button onClick={() => openPage(row.pageId)}>
-            {rowPageTitle(notes.files, database!, row)}
-          </button>
-          <button
-            aria-label="Mettre l’élément à la corbeille"
-            className="note-card-trash"
-            onClick={() => archive(row)}
-          >
-            <Trash2 size={13} />
-          </button>
-        </div>
-        {columns
-          .filter((column) => column.type !== 'title')
-          .map((column) => {
-            const result = reader.read(database!, row, column);
-            const label = reader.label(column, result.value);
-            return (
-              <div className="note-card-property" key={column.id}>
-                <span>{column.name}</span>
-                <span title={result.error}>
-                  {result.error ||
-                    (Array.isArray(label)
-                      ? label.join(', ')
-                      : String(label ?? '—'))}
-                </span>
-              </div>
+      <PageContextMenu key={row.id} pageId={row.pageId}>
+        <div
+          className="note-card"
+          draggable={draggable}
+          onDragStart={(event) => {
+            event.dataTransfer.setData(
+              'application/x-noosnote-row',
+              `${databaseId}:${row.id}`,
             );
-          })}
-        <details className="note-card-edit">
-          <summary>Modifier les propriétés</summary>
+            event.dataTransfer.effectAllowed = 'move';
+          }}
+        >
+          <div className="note-card-heading">
+            {draggable && <GripVertical size={14} />}
+            <button onClick={() => openPage(row.pageId)}>
+              {rowPageTitle(notes.files, database!, row)}
+            </button>
+            <button
+              aria-label="Mettre l’élément à la corbeille"
+              className="note-card-trash"
+              onClick={() => archive(row)}
+            >
+              <Trash2 size={13} />
+            </button>
+          </div>
           {columns
             .filter((column) => column.type !== 'title')
-            .map((column) => (
-              <label key={column.id}>
-                {column.name}
-                <Cell
-                  database={database!}
-                  row={row}
-                  column={column}
-                  reader={reader}
-                />
-              </label>
-            ))}
-        </details>
-      </div>
+            .map((column) => {
+              const result = reader.read(database!, row, column);
+              const label = reader.label(column, result.value);
+              return (
+                <div className="note-card-property" key={column.id}>
+                  <span>{column.name}</span>
+                  <span title={result.error}>
+                    {result.error ||
+                      (Array.isArray(label)
+                        ? label.join(', ')
+                        : String(label ?? '—'))}
+                  </span>
+                </div>
+              );
+            })}
+          <details className="note-card-edit">
+            <summary>Modifier les propriétés</summary>
+            {columns
+              .filter((column) => column.type !== 'title')
+              .map((column) => (
+                <label key={column.id}>
+                  {column.name}
+                  <Cell
+                    database={database!}
+                    row={row}
+                    column={column}
+                    reader={reader}
+                  />
+                </label>
+              ))}
+          </details>
+        </div>
+      </PageContextMenu>
     );
   }
   function table(items: DatabaseRow[]) {
@@ -1197,27 +1199,29 @@ export function Database({ databaseId }: { databaseId: string }) {
           </thead>
           <tbody>
             {items.map((row) => (
-              <tr key={row.id}>
-                {columns.map((column) => (
-                  <td key={column.id}>
-                    <Cell
-                      database={database!}
-                      row={row}
-                      column={column}
-                      reader={reader}
-                    />
+              <PageContextMenu key={row.id} pageId={row.pageId}>
+                <tr>
+                  {columns.map((column) => (
+                    <td key={column.id}>
+                      <Cell
+                        database={database!}
+                        row={row}
+                        column={column}
+                        reader={reader}
+                      />
+                    </td>
+                  ))}
+                  <td>
+                    <button
+                      className="note-row-trash"
+                      aria-label={`Mettre ${rowPageTitle(notes.files, database!, row)} à la corbeille`}
+                      onClick={() => archive(row)}
+                    >
+                      <Trash2 size={14} />
+                    </button>
                   </td>
-                ))}
-                <td>
-                  <button
-                    className="note-row-trash"
-                    aria-label={`Mettre ${rowPageTitle(notes.files, database!, row)} à la corbeille`}
-                    onClick={() => archive(row)}
-                  >
-                    <Trash2 size={14} />
-                  </button>
-                </td>
-              </tr>
+                </tr>
+              </PageContextMenu>
             ))}
           </tbody>
         </table>
@@ -1294,13 +1298,14 @@ export function Database({ databaseId }: { databaseId: string }) {
               {shown
                 .filter((row) => row.values[view.dateProperty!] === iso(day))
                 .map((row) => (
-                  <button
-                    key={row.id}
-                    className="note-calendar-event"
-                    onClick={() => openPage(row.pageId)}
-                  >
-                    {rowPageTitle(notes.files, database!, row)}
-                  </button>
+                  <PageContextMenu key={row.id} pageId={row.pageId}>
+                    <button
+                      className="note-calendar-event"
+                      onClick={() => openPage(row.pageId)}
+                    >
+                      {rowPageTitle(notes.files, database!, row)}
+                    </button>
+                  </PageContextMenu>
                 ))}
             </div>
           ))}

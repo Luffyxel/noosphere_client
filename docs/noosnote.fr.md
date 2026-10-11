@@ -4,6 +4,23 @@ Noosnote rassemble des pages et des tables dans Noosphere. Le bouton **+** de
 la barre latérale permet de créer une discussion ou un Noosnote. Chaque
 Noosnote dispose d’une icône, d’une couleur et d’un arbre de pages.
 
+Le clic droit sur une page, un résultat de recherche ou un élément de table
+permet d’ouvrir, renommer, changer l’icône, créer une sous-page, dupliquer,
+déplacer, exporter ou mettre à la corbeille. **Maj+F10** ouvre aussi ce menu.
+Les éléments de table gardent leur place dans la table ; leurs catégories
+se changent depuis les propriétés ou les colonnes.
+
+Les icônes se choisissent dans un catalogue avec recherche en français,
+catégories et teintes de peau. Les emojis utilisent la police du système ;
+il est aussi possible de coller un emoji depuis le sélecteur du bureau.
+Les couleurs comprennent une palette étendue, le sélecteur du système et
+un code hexadécimal personnalisé.
+
+Le format de stockage reste en version 1, indépendamment du numéro de
+l’application. Les notes de la 0.2.0 restent accessibles et éditables après
+la mise à jour sans recréer le dépôt. Les nouveaux emojis conservent
+une icône de remplacement compatible avec la 0.2.0.
+
 ## Premier Noosnote
 
 1. Cliquer sur **+**, puis **Noosnote**.

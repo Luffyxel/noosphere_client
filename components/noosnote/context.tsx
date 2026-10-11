@@ -12,7 +12,17 @@ export type NoteContextValue = {
   workspaceId: string;
   openPage: (pageId: string) => void;
   report: (error: unknown) => void;
+  pageAction: (action: PageAction, pageId: string) => void;
 };
+export type PageAction =
+  | 'open'
+  | 'rename'
+  | 'icon'
+  | 'child'
+  | 'duplicate'
+  | 'move'
+  | 'export'
+  | 'trash';
 export const NoteContext = createContext<NoteContextValue | null>(null);
 export function useNoteContext() {
   const context = useContext(NoteContext);

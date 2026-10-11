@@ -16,7 +16,9 @@ import {
   getPage,
   getWorkspace,
   id,
+  iconFields,
   movePage,
+  noteIcon,
   normalizeColumnValues,
   pagePath,
   renamePage,
@@ -52,6 +54,64 @@ function school() {
   );
   return { ...created, files, workspace, database };
 }
+
+void test('les notes de la 0.2.0 restent éditables sans changer leur format', async () => {
+  const files = JSON.parse(
+    await readFile(
+      new URL('./fixtures/noosnote-school.json', import.meta.url),
+      'utf8',
+    ),
+  );
+  const workspace = Object.values(files).find(
+    (value) => value.kind === 'workspace',
+  );
+  const page = Object.values(files).find((value) => value.kind === 'page');
+  const extra = { applicationVersion: '0.2.0', preferences: { folded: true } };
+  files[pagePath(workspace.id, page.id)] = { ...page, ...extra };
+  const updated = applyFiles(
+    files,
+    renamePage(files, workspace.id, page.id, 'Cours mis à jour', '🦦'),
+  );
+  assert.equal(getPage(updated, workspace.id, page.id).version, 1);
+  assert.equal(
+    getPage(updated, workspace.id, page.id).applicationVersion,
+    extra.applicationVersion,
+  );
+  assert.deepEqual(
+    getPage(updated, workspace.id, page.id).preferences,
+    extra.preferences,
+  );
+  assert.deepEqual(
+    getPage(updated, workspace.id, page.id).content,
+    page.content,
+  );
+  assert.ok(Object.values(updated).every((document) => document.version === 1));
+});
+
+void test('les emojis longs conservent une icône compatible avec la 0.2.0', () => {
+  const emoji = '👩🏽‍❤️‍💋‍👩🏾';
+  assert.ok(Buffer.byteLength(emoji) > 32);
+  const created = createWorkspace('Voyages', emoji, '#123abc');
+  let files = applyFiles({}, created.changes);
+  let workspace = getWorkspace(files, created.workspaceId);
+  assert.equal(noteIcon(workspace), emoji);
+  assert.ok(Buffer.byteLength(workspace.icon) <= 32);
+  files = applyFiles(
+    files,
+    renamePage(files, workspace.id, created.pageId, 'Journal', emoji),
+  );
+  workspace = getWorkspace(files, workspace.id);
+  const page = getPage(files, workspace.id, created.pageId);
+  assert.equal(noteIcon(page), emoji);
+  assert.equal(noteIcon(workspace.pages[0]), emoji);
+  assert.ok(Buffer.byteLength(page.icon) <= 32);
+  files = applyFiles(
+    files,
+    renamePage(files, workspace.id, page.id, page.title, '🦦'),
+  );
+  assert.equal(noteIcon(getPage(files, workspace.id, page.id)), '🦦');
+  assert.deepEqual(iconFields(''), { icon: '', emoji: undefined });
+});
 
 void test('École contient une catégorie Cours et deux pages vierges indépendantes', () => {
   const { files, workspace, database, pageId } = school();
