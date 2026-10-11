@@ -9,6 +9,7 @@ use reqwest::Method;
 use secrecy::ExposeSecret as _;
 use serde_json::Value;
 use tauri::{Emitter as _, State};
+#[cfg(not(target_os = "linux"))]
 use tauri_plugin_notification::NotificationExt as _;
 use tauri_plugin_opener::OpenerExt as _;
 use time::{Duration as TimeDuration, OffsetDateTime, format_description::well_known::Rfc3339};
@@ -3625,14 +3626,19 @@ fn parse_realtime_timestamp(value: &str) -> Result<OffsetDateTime> {
 }
 
 #[tauri::command]
-pub fn system_notify(
-    app: DesktopAppHandle,
+pub async fn system_notify(
+    _app: DesktopAppHandle,
     title: String,
     body: String,
 ) -> CommandResult<NotificationResult> {
     validation::notification_text(&title).map_err(command_error)?;
     validation::notification_text(&body).map_err(command_error)?;
-    app.notification()
+    #[cfg(target_os = "linux")]
+    crate::notification::show(&title, &body)
+        .await
+        .map_err(command_error)?;
+    #[cfg(not(target_os = "linux"))]
+    _app.notification()
         .builder()
         .title(title)
         .body(body)

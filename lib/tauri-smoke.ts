@@ -248,6 +248,11 @@ export async function runTauriSmokeTest(): Promise<void> {
       await media.release();
     }
   }
+  try {
+    await invoke('system_notify', { title: 'Noosphere', body: 'Smoke test' });
+  } catch (error) {
+    diagnostics.push(`notification: ${String(error)}`);
+  }
   await invoke('system_smoke_complete', {
     result: {
       version: 1,

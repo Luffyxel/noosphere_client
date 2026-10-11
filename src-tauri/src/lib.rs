@@ -5,6 +5,8 @@ mod error;
 mod github;
 mod instance_profile;
 mod models;
+#[cfg(target_os = "linux")]
+mod notification;
 mod protocol;
 mod remote_access;
 mod remote_directory;
@@ -451,12 +453,15 @@ pub fn run() {
             }
         }));
     }
+    #[cfg(not(target_os = "linux"))]
+    {
+        builder = builder.plugin(tauri_plugin_notification::init());
+    }
     builder
         .manage(background_host::BackgroundHost::new(service_mode))
         .manage(remote_access::RemoteAccess::default())
         .manage(remote_directory::RemoteDirectory::default())
         .plugin(tauri_plugin_opener::init())
-        .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(move |app| {
