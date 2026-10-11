@@ -305,6 +305,7 @@ async fn try_linux_url_launcher(
 
 #[cfg(target_os = "linux")]
 fn sanitize_linux_external_command(command: &mut std::process::Command) {
+    command.env_remove("GDK_BACKEND");
     let Some(app_dir) = std::env::var_os("APPDIR").map(PathBuf::from) else {
         return;
     };
@@ -323,6 +324,7 @@ fn sanitize_linux_external_command_for_appimage(
         "LD_LIBRARY_PATH",
         "LD_PRELOAD",
         "NOOSPHERE_REMOTE_LD_PRELOAD",
+        "GDK_BACKEND",
         "GDK_PIXBUF_MODULE_FILE",
         "GIO_EXTRA_MODULES",
         "GI_TYPELIB_PATH",
@@ -458,6 +460,7 @@ mod linux_browser_tests {
     #[test]
     fn appimage_library_overrides_are_removed_from_external_launchers() {
         let mut command = std::process::Command::new("true");
+        command.env("GDK_BACKEND", "x11");
         command.env("LD_LIBRARY_PATH", "/tmp/.mount_noosphere/usr/lib");
         command.env(
             "GST_PLUGIN_SCANNER",
@@ -472,7 +475,8 @@ mod linux_browser_tests {
         let removed = command
             .get_envs()
             .filter(|(name, _)| {
-                *name == std::ffi::OsStr::new("LD_LIBRARY_PATH")
+                *name == std::ffi::OsStr::new("GDK_BACKEND")
+                    || *name == std::ffi::OsStr::new("LD_LIBRARY_PATH")
                     || *name == std::ffi::OsStr::new("GST_PLUGIN_SCANNER")
             })
             .all(|(_, value)| value.is_none());

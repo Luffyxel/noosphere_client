@@ -4,7 +4,7 @@
 
 La version Linux cible les systèmes x86 64 bits. Le bureau distant utilise
 PipeWire et le portail système sous Wayland. L’interface Noosphere utilise
-XWayland lorsque le compositeur ne prend pas CEF en charge directement.
+XWayland pour sa fenêtre principale dans les sessions Wayland.
 
 ## AppImage
 

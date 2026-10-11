@@ -4,7 +4,7 @@
 
 The Linux release targets 64-bit x86 systems. Remote desktop capture uses
 PipeWire and the system portal on Wayland. The Noosphere shell uses XWayland
-when the compositor cannot host CEF directly.
+for the main window in Wayland sessions.
 
 ## AppImage
 
