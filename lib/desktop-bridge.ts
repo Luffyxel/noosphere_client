@@ -1,4 +1,5 @@
 import type { RemoteAccessApi } from '@/lib/remote-access';
+import type { NoosnoteApi } from '@/lib/noosnote/types';
 
 export type GitHubViewer = {
   id: number;
@@ -83,6 +84,7 @@ export type CallSignal = {
 };
 
 export type NoosphereDesktopApi = {
+  noosnote: NoosnoteApi;
   remoteAccess: RemoteAccessApi;
   isDesktop: true;
   platform: string;

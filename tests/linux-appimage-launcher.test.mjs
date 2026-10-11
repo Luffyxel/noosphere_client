@@ -29,7 +29,7 @@ void test(
       await chmod(path.join(app, 'AppRun'), 0o755);
       await writeFile(
         path.join(app, 'usr/lib/Noosphere/noosphere-version'),
-        '0.1.54\n',
+        '0.2.0\n',
       );
       await writeFile(
         path.join(app, 'AppRun.bin'),

@@ -1,7 +1,7 @@
 {
   "name": "noosphere",
   "productName": "Noosphere",
-  "version": "0.1.54",
+  "version": "0.2.0",
   "private": true,
   "license": "AGPL-3.0-only",
   "engines": {
@@ -46,6 +46,12 @@
     "@tauri-apps/api": "2.11.1",
     "@tauri-apps/plugin-process": "2.3.1",
     "@tauri-apps/plugin-updater": "2.11.0",
+    "@tiptap/extension-placeholder": "3.31.4",
+    "@tiptap/extension-task-item": "3.31.4",
+    "@tiptap/extension-task-list": "3.31.4",
+    "@tiptap/pm": "3.31.4",
+    "@tiptap/react": "3.31.4",
+    "@tiptap/starter-kit": "3.31.4",
     "class-variance-authority": "0.7.1",
     "clsx": "2.1.1",
     "lucide-react": "1.31.0",

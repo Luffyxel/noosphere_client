@@ -5,6 +5,7 @@ mod error;
 mod github;
 mod instance_profile;
 mod models;
+mod noosnote;
 #[cfg(target_os = "linux")]
 mod notification;
 mod protocol;
@@ -564,6 +565,14 @@ pub fn run() {
             }
         })
         .invoke_handler(tauri::generate_handler![
+            noosnote::noosnote_cached,
+            noosnote::noosnote_discover,
+            noosnote::noosnote_setup,
+            noosnote::noosnote_open_setup,
+            noosnote::noosnote_save,
+            noosnote::noosnote_sync,
+            noosnote::noosnote_resolve,
+            noosnote::noosnote_page,
             app_update::system_update_target,
             app_update::system_install_appimage_update,
             app_update::system_set_update_busy,

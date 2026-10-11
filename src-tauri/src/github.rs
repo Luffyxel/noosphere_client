@@ -248,6 +248,13 @@ impl GitHubClient {
         allowed_statuses: &[u16],
         accept: &'static str,
     ) -> Result<ApiResponse<T>> {
+        let read_only = method == Method::GET
+            || (method == Method::POST
+                && url.path() == "/graphql"
+                && body
+                    .and_then(|body| body.get("query"))
+                    .and_then(Value::as_str)
+                    .is_some_and(|query| query.trim_start().starts_with("query ")));
         let cache_key = access_token
             .filter(|_| method == Method::GET && body.is_none())
             .map(|token| response_cache_key(&url, accept, token));
@@ -260,7 +267,8 @@ impl GitHubClient {
             None
         };
         for attempt in 0..=3 {
-            self.reserve_request(&method).await?;
+            self.reserve_request(if read_only { &Method::GET } else { &method })
+                .await?;
             let mut request = self
                 .client
                 .request(method.clone(), url.clone())
@@ -287,7 +295,7 @@ impl GitHubClient {
             let (requests, writes, unchanged) = {
                 let mut budget = self.budget.lock().await;
                 budget.requests = budget.requests.saturating_add(1);
-                if method != Method::GET {
+                if !read_only {
                     budget.writes = budget.writes.saturating_add(1);
                 }
                 if status == 304 {
@@ -564,7 +572,15 @@ pub fn validate_installation(
     if required_string(installation, "app_slug", 100)? != APP_SLUG
         || positive_u64(account, "id")? != account_id
         || required_string(installation, "repository_selection", 32)? != "selected"
-        || permissions.len() != 2
+        || permissions.keys().any(|key| {
+            !matches!(
+                key.as_str(),
+                "contents" | "metadata" | "repository_creation"
+            )
+        })
+        || permissions
+            .get("repository_creation")
+            .is_some_and(|value| value.as_str() != Some("write"))
         || permissions.get("contents").and_then(Value::as_str) != Some("write")
         || permissions.get("metadata").and_then(Value::as_str) != Some("read")
     {
@@ -575,11 +591,32 @@ pub fn validate_installation(
         .get("repositories")
         .and_then(Value::as_array)
         .ok_or(Error::InvalidInstallation)?;
-    if positive_u64(repositories, "total_count")? != 1
-        || entries.len() != 1
-        || entries[0].get("id").and_then(Value::as_u64) != Some(repository_id)
+    let count = positive_u64(repositories, "total_count")?;
+    if !(1..=2).contains(&count)
+        || entries.len() != count as usize
+        || entries
+            .iter()
+            .filter(|entry| entry.get("id").and_then(Value::as_u64) == Some(repository_id))
+            .count()
+            != 1
     {
         return Err(Error::InvalidInstallation);
+    }
+    for entry in entries
+        .iter()
+        .filter(|entry| entry.get("id").and_then(Value::as_u64) != Some(repository_id))
+    {
+        if entry
+            .get("id")
+            .and_then(Value::as_u64)
+            .is_none_or(|id| id == 0)
+            || entry.get("name").and_then(Value::as_str)
+                != Some(crate::noosnote::repository_name(account_id).as_str())
+            || entry.get("private").and_then(Value::as_bool) != Some(true)
+            || entry.pointer("/owner/id").and_then(Value::as_u64) != Some(account_id)
+        {
+            return Err(Error::InvalidInstallation);
+        }
     }
     positive_u64(installation, "id").map_err(|_| Error::InvalidInstallation)
 }
@@ -1139,7 +1176,7 @@ mod tests {
     }
 
     #[test]
-    fn installation_is_limited_to_one_repository_and_exact_permissions() {
+    fn installation_is_limited_to_dedicated_repositories_and_exact_permissions() {
         let installation = serde_json::json!({
             "id": 7,
             "app_slug": APP_SLUG,
@@ -1155,6 +1192,23 @@ mod tests {
             validate_installation(&installation, &repositories, 42, 420).unwrap(),
             7
         );
+
+        let notes =
+            serde_json::json!({"id":421,"name":"noosnote_42","private":true,"owner":{"id":42}});
+        let dedicated = serde_json::json!({"total_count":2,"repositories":[{"id":420},notes]});
+        assert_eq!(
+            validate_installation(&installation, &dedicated, 42, 420).unwrap(),
+            7
+        );
+        let mut public = dedicated.clone();
+        public["repositories"][1]["private"] = serde_json::json!(false);
+        assert!(validate_installation(&installation, &public, 42, 420).is_err());
+        let mut foreign = dedicated.clone();
+        foreign["repositories"][1]["owner"]["id"] = serde_json::json!(99);
+        assert!(validate_installation(&installation, &foreign, 42, 420).is_err());
+        let mut unrelated = dedicated;
+        unrelated["repositories"][1]["name"] = serde_json::json!("my-project");
+        assert!(validate_installation(&installation, &unrelated, 42, 420).is_err());
 
         let mut broad = installation.clone();
         broad["repository_selection"] = Value::String("all".to_owned());

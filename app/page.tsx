@@ -65,6 +65,12 @@ import { RemoteWorkspace } from '@/components/remote-access/workspace';
 import { IncomingRemoteRequest } from '@/components/remote-access/permissions';
 import { RemoteSessionOverlay } from '@/components/remote-access/session-overlay';
 import { useRemoteAccess } from '@/lib/use-remote-access';
+import { useNoosnote } from '@/lib/noosnote/use-noosnote';
+import {
+  CreateNoosnoteDialog,
+  NoosnoteRail,
+  NoosnoteWorkspace,
+} from '@/components/noosnote/workspace';
 import { mergeMessages, type DisplayMessage } from '@/lib/message-list';
 import { startSocialRefreshLoop } from '@/lib/social-refresh';
 import { useDirectPeer } from '@/lib/use-direct-peer';
@@ -313,7 +319,7 @@ function LoginScreen({
                 </span>
                 <span>
                   J’accepte la création d’un dépôt public et l’installation de
-                  Noosphere uniquement sur ce dépôt.
+                  Noosphere uniquement sur les dépôts dédiés à l’application.
                 </span>
               </label>
               <Button
@@ -1135,7 +1141,16 @@ function NoosphereApp({
   initialSocialState: SocialState;
   onSignOut: () => void;
 }) {
-  const [section, setSection] = useState<'messages' | 'remote'>('messages');
+  const [section, setSection] = useState<'messages' | 'remote' | 'notes'>(
+    'messages',
+  );
+  const notes = useNoosnote(viewer.id, section === 'notes');
+  const [noteWorkspaceId, setNoteWorkspaceId] = useState<string | null>(null);
+  const [noteInitialPageId, setNoteInitialPageId] = useState<string | null>(
+    null,
+  );
+  const [createMenuOpen, setCreateMenuOpen] = useState(false);
+  const [createNoteOpen, setCreateNoteOpen] = useState(false);
   const [remoteSettingsOpen, setRemoteSettingsOpen] = useState(false);
   const remoteAccess = useRemoteAccess(viewer.id, section === 'remote');
   const [conversations, setConversations] = useState<Conversation[]>(
@@ -1582,12 +1597,22 @@ function NoosphereApp({
     if (!('__TAURI_INTERNALS__' in window)) return;
     void invoke('system_set_update_busy', {
       busy:
-        displayedCallStatus !== 'idle' || sendingMessage || remoteAccess.busy,
+        displayedCallStatus !== 'idle' ||
+        sendingMessage ||
+        remoteAccess.busy ||
+        notes.saving ||
+        notes.syncing,
     }).catch(() => {});
     return () => {
       void invoke('system_set_update_busy', { busy: false }).catch(() => {});
     };
-  }, [displayedCallStatus, sendingMessage, remoteAccess.busy]);
+  }, [
+    displayedCallStatus,
+    sendingMessage,
+    remoteAccess.busy,
+    notes.saving,
+    notes.syncing,
+  ]);
 
   useEffect(() => {
     const previous = previousCallStatus.current;
@@ -1957,11 +1982,21 @@ function NoosphereApp({
         >
           <Monitor className="size-5" />
         </button>
+        <NoosnoteRail
+          notes={notes}
+          selected={section === 'notes' ? noteWorkspaceId : null}
+          onSelect={(id) => {
+            setNoteWorkspaceId(id);
+            setNoteInitialPageId(null);
+            setSection('notes');
+          }}
+        />
         <button
           type="button"
           className="grid size-10 place-items-center rounded-[12px] bg-[#242426] text-[var(--noosphere-accent)] transition hover:bg-[#303033]"
-          aria-label="Nouvelle discussion"
-          onClick={() => setAddFriendOpen(true)}
+          aria-label="Créer"
+          aria-expanded={createMenuOpen}
+          onClick={() => setCreateMenuOpen(true)}
         >
           <Plus className="size-5" />
         </button>
@@ -1978,6 +2013,60 @@ function NoosphereApp({
           <Settings2 className="size-5" />
         </button>
       </aside>
+
+      {section === 'notes' && (
+        <NoosnoteWorkspace
+          key={`${noteWorkspaceId}:${noteInitialPageId}`}
+          notes={notes}
+          workspaceId={noteWorkspaceId}
+          initialPageId={noteInitialPageId}
+          onCreate={() => setCreateNoteOpen(true)}
+        />
+      )}
+      <Dialog open={createMenuOpen} onOpenChange={setCreateMenuOpen}>
+        <DialogContent className="note-dialog sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Créer</DialogTitle>
+          </DialogHeader>
+          <div className="note-create-choices">
+            <button
+              onClick={() => {
+                setCreateMenuOpen(false);
+                setAddFriendOpen(true);
+              }}
+            >
+              <MessageCircle size={22} />
+              <span>
+                <strong>Discussion</strong>
+                <small>Ajouter un ami pour discuter</small>
+              </span>
+            </button>
+            <button
+              onClick={() => {
+                setCreateMenuOpen(false);
+                setCreateNoteOpen(true);
+              }}
+            >
+              <span className="text-xl">📝</span>
+              <span>
+                <strong>Noosnote</strong>
+                <small>Pages et tables dans un dépôt privé</small>
+              </span>
+            </button>
+          </div>
+        </DialogContent>
+      </Dialog>
+      <CreateNoosnoteDialog
+        key={createNoteOpen ? 'open' : 'closed'}
+        notes={notes}
+        open={createNoteOpen}
+        onClose={() => setCreateNoteOpen(false)}
+        onCreated={(workspaceId, pageId) => {
+          setNoteWorkspaceId(workspaceId);
+          setNoteInitialPageId(pageId);
+          setSection('notes');
+        }}
+      />
 
       {section === 'remote' && (
         <RemoteWorkspace

@@ -1,4 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
+import type { NoteSnapshot, NoteChange } from '@/lib/noosnote/types';
 import type { RemoteDirectory, RemoteStatus } from '@/lib/remote-access';
 import {
   listen,
@@ -36,6 +37,19 @@ function subscribe<T>(event: string, callback: EventCallback<T>): () => void {
 
 export function installTauriBridge(): void {
   const bridge: NoosphereDesktopApi = {
+    noosnote: {
+      cached: () => invoke<NoteSnapshot>('noosnote_cached'),
+      discover: () => invoke<NoteSnapshot>('noosnote_discover'),
+      page: (workspaceId, pageId) =>
+        invoke<NoteSnapshot>('noosnote_page', { workspaceId, pageId }),
+      setup: () => invoke<NoteSnapshot>('noosnote_setup'),
+      openSetup: (mode) => invoke<void>('noosnote_open_setup', { mode }),
+      save: (changes: NoteChange[]) =>
+        invoke<NoteSnapshot>('noosnote_save', { changes }),
+      sync: () => invoke<NoteSnapshot>('noosnote_sync'),
+      resolve: (id, choice) =>
+        invoke<NoteSnapshot>('noosnote_resolve', { id, choice }),
+    },
     remoteAccess: {
       cancelAccess: (principal) =>
         invoke<RemoteDirectory>('remote_cancel_access', { principal }),

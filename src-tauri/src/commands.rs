@@ -243,7 +243,7 @@ pub async fn github_open_device_page(app: DesktopAppHandle) -> CommandResult<()>
     open_github_url(&app, &url).await.map_err(command_error)
 }
 
-async fn open_github_url(app: &DesktopAppHandle, url: &url::Url) -> Result<()> {
+pub(crate) async fn open_github_url(app: &DesktopAppHandle, url: &url::Url) -> Result<()> {
     if url.scheme() != "https"
         || url.host_str() != Some("github.com")
         || !url.username().is_empty()
@@ -645,7 +645,7 @@ async fn installation_is_valid(
         .and_then(Value::as_u64)
         .filter(|value| *value > 0)
         .ok_or(Error::InvalidInstallation)?;
-    let endpoint = format!("/user/installations/{installation_id}/repositories?per_page=2");
+    let endpoint = format!("/user/installations/{installation_id}/repositories?per_page=3");
     let repositories = client
         .api_json::<Value>(
             Method::GET,
