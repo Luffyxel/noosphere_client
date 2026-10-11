@@ -30,6 +30,6 @@ void test('la restauration charge aussi le cache social chiffré', async () => {
   assert.match(state, /load_social_for_identity/);
   assert.match(
     state,
-    /shared_account\(&format!\("social-\{repository_id\}"\)\)/,
+    /shared_account\(&format!\("state-\{repository_id\}"\)\)/,
   );
 });

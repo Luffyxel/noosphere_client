@@ -82,8 +82,15 @@ fn answer_is_actionable(
 }
 
 pub struct RemoteDirectory {
-    operation: Mutex<()>,
+    pub(crate) operation: Mutex<()>,
     runtime_id: [u8; 16],
+}
+
+fn registration_verified(data: &StoredDirectory, principal: &Principal) -> bool {
+    data.machines
+        .iter()
+        .find(|machine| same_device(&machine.principal, principal))
+        .is_none_or(|machine| machine.principal == *principal && machine.identity_verified)
 }
 
 impl Default for RemoteDirectory {
@@ -139,6 +146,8 @@ struct StoredDirectory {
     scanned_accounts: Vec<u64>,
     #[serde(default)]
     last_scan: u64,
+    #[serde(default)]
+    scan_times: std::collections::BTreeMap<u64, u64>,
     #[serde(default)]
     last_publish: u64,
     #[serde(default)]
@@ -283,6 +292,31 @@ fn load_for_runtime(
     let mut data = load(state, repository)?;
     enter_runtime(&mut data, directory.runtime_id);
     Ok(data)
+}
+
+pub(crate) fn revoke_user(state: &AppState, repository: u64, github_user_id: u64) -> Result<()> {
+    let mut data = load(state, repository)?;
+    revoke_user_records(&mut data, github_user_id);
+    save(state, repository, &data)
+}
+
+fn revoke_user_records(data: &mut StoredDirectory, github_user_id: u64) {
+    let removed: Vec<_> = data
+        .machines
+        .iter()
+        .filter(|machine| machine.principal.github_user_id == github_user_id)
+        .map(|machine| machine.principal.clone())
+        .collect();
+    for principal in removed {
+        data.book.revoke(&principal);
+    }
+    data.user_grants
+        .retain(|grant| grant.github_user_id != github_user_id);
+    data.machines
+        .retain(|machine| machine.principal.github_user_id != github_user_id);
+    data.outgoing
+        .retain(|request| request.guest.github_user_id != github_user_id);
+    retire_ephemeral(data, "Accès d’un ancien ami révoqué.");
 }
 
 fn enter_runtime(data: &mut StoredDirectory, runtime_id: [u8; 16]) {
@@ -629,6 +663,9 @@ pub async fn remote_sync_directory(
         .filter(|m| !sources.iter().any(|s| s.0 == m.principal.github_user_id))
         .map(|m| m.principal.clone())
         .collect();
+    if !removed.is_empty() {
+        crate::remote_access::stop_live_if_running(&remote).await?;
+    }
     for principal in removed {
         data.book.revoke(&principal);
     }
@@ -642,137 +679,138 @@ pub async fn remote_sync_directory(
     {
         failures.push(failure);
     }
-    let mut source_ids: Vec<_> = sources.iter().map(|source| source.0).collect();
-    source_ids.sort_unstable();
-    if refresh || source_ids != data.scanned_accounts || now().saturating_sub(data.last_scan) >= 60
-    {
-        for (github_id, login, avatar_url, repository, repository_id) in sources {
-            let discovered = async {
-                // Resolve immutable repository and owner IDs before trusting a login path.
-                let response = state
-                    .github
-                    .api_json::<serde_json::Value>(
-                        reqwest::Method::GET,
-                        &format!("/repos/{login}/{repository}"),
-                        Some(token.access_token.expose_secret()),
-                        None,
-                        None,
-                        &[],
-                    )
-                    .await
-                    .map_err(error)?;
-                let repository_value = response.data.ok_or("Dépôt indisponible.")?;
-                let verified =
-                    crate::github::normalize_repository(&repository_value, github_id, &repository)
-                        .map_err(error)?;
-                if verified.id != repository_id {
-                    return Err("L’identité du dépôt a changé.".into());
-                }
-                let names = commands::list_repository_directory(
-                    &state,
-                    &token,
-                    &login,
-                    &repository,
-                    "remote/devices",
-                    32,
+    data.scan_times
+        .retain(|id, _| sources.iter().any(|source| source.0 == *id));
+    for (github_id, login, avatar_url, repository, repository_id) in sources {
+        if !refresh
+            && data
+                .scan_times
+                .get(&github_id)
+                .is_some_and(|last| now().saturating_sub(*last) < 60)
+        {
+            continue;
+        }
+        data.scan_times.insert(github_id, now());
+        let discovered = async {
+            // Resolve immutable repository and owner IDs before trusting a login path.
+            let response = state
+                .github
+                .api_json::<serde_json::Value>(
+                    reqwest::Method::GET,
+                    &format!("/repos/{login}/{repository}"),
+                    Some(token.access_token.expose_secret()),
+                    None,
+                    None,
+                    &[],
                 )
                 .await
                 .map_err(error)?;
-                for filename in names {
-                    let Some(id) = filename
-                        .strip_suffix(".json")
-                        .and_then(|s| uuid::Uuid::parse_str(s).ok())
-                    else {
-                        continue;
-                    };
-                    if id.as_bytes() == &owner.machine_id {
-                        continue;
-                    }
-                    let value = commands::read_repository_json(
-                        &state.github,
-                        &token,
-                        &login,
-                        &repository,
-                        &format!("remote/devices/{filename}"),
-                        4096,
-                    )
-                    .await
+            let repository_value = response.data.ok_or("Dépôt indisponible.")?;
+            let verified =
+                crate::github::normalize_repository(&repository_value, github_id, &repository)
                     .map_err(error)?;
-                    let Some(value) = value else {
-                        continue;
-                    };
-                    let registration: Registration =
-                        serde_json::from_value(value).map_err(error)?;
-                    registration
-                        .verify(github_id, repository_id)
-                        .map_err(error)?;
-                    if registration.principal.machine_id != *id.as_bytes() {
-                        return Err("Identifiant de machine incohérent.".into());
-                    }
-                    // The immutable repository owner is the GitHub identity link;
-                    // the signed registration binds that account and repository to
-                    // this device's own Noosphere key and machine ID.
-                    let verified = true;
-                    if let Some(existing) = data
-                        .machines
-                        .iter_mut()
-                        .find(|m| m.principal == registration.principal)
-                    {
-                        existing.identity_verified = verified;
-                        existing.login = login.clone();
-                        existing.avatar_url = avatar_url.clone();
-                    } else if data.machines.len() < 100 {
-                        // A changed key never inherits a former machine's permissions.
-                        let changed: Vec<_> = data
-                            .machines
-                            .iter()
-                            .filter(|m| {
-                                m.principal.machine_id == registration.principal.machine_id
-                                    && m.principal.github_user_id == github_id
-                            })
-                            .map(|m| m.principal.clone())
-                            .collect();
-                        for old in changed {
-                            data.book.revoke(&old);
-                            data.machines.retain(|m| m.principal != old);
-                        }
-                        data.machines.push(Machine {
-                            principal: registration.principal,
-                            login: login.clone(),
-                            avatar_url: avatar_url.clone(),
-                            repository: repository.clone(),
-                            repository_id,
-                            name: format!("Ordinateur · {}", &id.simple().to_string()[..6]),
-                            platform: "unknown".into(),
-                            identity_verified: verified,
-                            host_enabled: false,
-                            permissions: Permissions::default(),
-                            unattended: false,
-                            last_seen: 0,
-                            received_sequence: 0,
-                        });
-                        log_event(
-                            &mut data,
-                            "info",
-                            "discovery",
-                            format!(
-                                "Machine {} détectée pour @{}.",
-                                &machine_key(id.into_bytes())[..6],
-                                login
-                            ),
-                        );
-                    }
+            if verified.id != repository_id {
+                return Err("L’identité du dépôt a changé.".into());
+            }
+            let names = commands::list_repository_directory(
+                &state,
+                &token,
+                &login,
+                &repository,
+                "remote/devices",
+                32,
+            )
+            .await
+            .map_err(error)?;
+            for filename in names {
+                let Some(id) = filename
+                    .strip_suffix(".json")
+                    .and_then(|s| uuid::Uuid::parse_str(s).ok())
+                else {
+                    continue;
+                };
+                if id.as_bytes() == &owner.machine_id {
+                    continue;
                 }
-                Ok::<_, String>(())
+                let value = commands::read_repository_json(
+                    &state.github,
+                    &token,
+                    &login,
+                    &repository,
+                    &format!("remote/devices/{filename}"),
+                    4096,
+                )
+                .await
+                .map_err(error)?;
+                let Some(value) = value else {
+                    continue;
+                };
+                let registration: Registration = serde_json::from_value(value).map_err(error)?;
+                registration
+                    .verify(github_id, repository_id)
+                    .map_err(error)?;
+                if registration.principal.machine_id != *id.as_bytes() {
+                    return Err("Identifiant de machine incohérent.".into());
+                }
+                let verified = registration_verified(&data, &registration.principal);
+                if let Some(existing) = data
+                    .machines
+                    .iter_mut()
+                    .find(|m| m.principal == registration.principal)
+                {
+                    existing.login = login.clone();
+                    existing.avatar_url = avatar_url.clone();
+                } else if data.machines.len() < 100 {
+                    // A changed key never inherits a former machine's permissions.
+                    let changed: Vec<_> = data
+                        .machines
+                        .iter()
+                        .filter(|m| {
+                            m.principal.machine_id == registration.principal.machine_id
+                                && m.principal.github_user_id == github_id
+                        })
+                        .map(|m| m.principal.clone())
+                        .collect();
+                    let verified = verified && changed.is_empty();
+                    if !changed.is_empty() {
+                        crate::remote_access::stop_live_if_running(&remote).await?;
+                    }
+                    for old in changed {
+                        data.book.revoke(&old);
+                        data.machines.retain(|m| m.principal != old);
+                    }
+                    data.machines.push(Machine {
+                        principal: registration.principal,
+                        login: login.clone(),
+                        avatar_url: avatar_url.clone(),
+                        repository: repository.clone(),
+                        repository_id,
+                        name: format!("Ordinateur · {}", &id.simple().to_string()[..6]),
+                        platform: "unknown".into(),
+                        identity_verified: verified,
+                        host_enabled: false,
+                        permissions: Permissions::default(),
+                        unattended: false,
+                        last_seen: 0,
+                        received_sequence: 0,
+                    });
+                    log_event(
+                        &mut data,
+                        "info",
+                        "discovery",
+                        format!(
+                            "Machine {} détectée pour @{}.",
+                            &machine_key(id.into_bytes())[..6],
+                            login
+                        ),
+                    );
+                }
             }
-            .await;
-            if let Err(failure) = discovered {
-                failures.push(format!("@{login} : {failure}"));
-            }
+            Ok::<_, String>(())
         }
-        if failures.is_empty() {
-            data.last_scan = now();
-            data.scanned_accounts = source_ids;
+        .await;
+        if let Err(failure) = discovered {
+            failures.push(format!("@{login} : {failure}"));
         }
     }
     apply_user_policies(&mut data, &owner)?;
@@ -1287,6 +1325,13 @@ fn update_grant(
                 owner,
             )
             .map_err(error)?;
+        if let Some(machine) = data
+            .machines
+            .iter_mut()
+            .find(|machine| &machine.principal == principal)
+        {
+            machine.identity_verified = true;
+        }
     }
     Ok(())
 }
@@ -1477,6 +1522,14 @@ pub async fn remote_decide_access(
         .request
         .guest
         .clone();
+    if permissions.screen
+        && let Some(machine) = data
+            .machines
+            .iter_mut()
+            .find(|machine| machine.principal == peer)
+    {
+        machine.identity_verified = true;
+    }
     log_event(
         &mut data,
         "info",
@@ -1553,6 +1606,71 @@ pub async fn remote_cancel_access(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn replacement_keys_require_explicit_approval_before_inheriting_policy() {
+        let host = SignalIdentity::from_private_key(42, &[1; 32]).unwrap();
+        let owner = host.principal([1; 16]).unwrap();
+        let old = SignalIdentity::from_private_key(84, &[2; 32])
+            .unwrap()
+            .principal([2; 16])
+            .unwrap();
+        let replacement = SignalIdentity::from_private_key(84, &[3; 32])
+            .unwrap()
+            .principal([2; 16])
+            .unwrap();
+        let mut stored = StoredDirectory {
+            machines: vec![Machine {
+                principal: old.clone(),
+                login: "friend".into(),
+                avatar_url: String::new(),
+                repository: "noosphere".into(),
+                repository_id: 840,
+                name: "Bureau".into(),
+                platform: "linux".into(),
+                identity_verified: true,
+                host_enabled: false,
+                permissions: Permissions::default(),
+                unattended: false,
+                last_seen: 0,
+                received_sequence: 0,
+            }],
+            ..Default::default()
+        };
+        let permissions = Permissions {
+            screen: true,
+            ..Default::default()
+        };
+        update_user_policy(&mut stored, &owner, 84, permissions, true, false).unwrap();
+        assert!(!registration_verified(&stored, &replacement));
+        stored.book.revoke(&old);
+        stored.machines[0].principal = replacement.clone();
+        stored.machines[0].identity_verified = false;
+        let mut restored: StoredDirectory =
+            serde_json::from_slice(&serde_json::to_vec(&stored).unwrap()).unwrap();
+        assert!(!registration_verified(&restored, &replacement));
+        apply_user_policies(&mut restored, &owner).unwrap();
+        assert!(restored.book.grants.is_empty());
+        update_grant(
+            &mut restored,
+            &owner,
+            &replacement,
+            permissions,
+            true,
+            false,
+        )
+        .unwrap();
+        assert!(registration_verified(&restored, &replacement));
+        assert!(
+            restored
+                .book
+                .grant(&replacement, owner.machine_id)
+                .is_some()
+        );
+        revoke_user_records(&mut restored, 84);
+        assert!(restored.book.grants.is_empty());
+        assert!(restored.user_grants.is_empty());
+        assert!(restored.machines.is_empty());
+    }
     #[test]
     fn guest_permissions_persist_without_hosting_and_stay_bound_to_the_device() {
         let host = SignalIdentity::from_private_key(42, &[1; 32]).unwrap();

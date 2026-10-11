@@ -36,6 +36,12 @@ pub enum Error {
     Crypto,
     #[error("Erreur locale.")]
     Local,
+    #[error("La file d’envoi est pleine. Attends la synchronisation avant de renvoyer un message.")]
+    OutboxFull,
+    #[error("Limite GitHub atteinte. La synchronisation reprendra après le délai demandé.")]
+    RateLimited,
+    #[error("Une mise à jour est en cours d’installation.")]
+    Updating,
 }
 
 pub type Result<T> = std::result::Result<T, Error>;

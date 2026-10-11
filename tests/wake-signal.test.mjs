@@ -40,7 +40,7 @@ void test('messages et appels produisent un changement d’étoile et une notifi
   assert.match(page, /setSelectedId\(notification\.conversationId\)/);
   assert.match(
     page,
-    /if \(!sendMessageSignal\(conversationId, message\.id\)\)/,
+    /if \(published && !sendMessageSignal\(conversationId, message\.id\)\)/,
   );
 });
 

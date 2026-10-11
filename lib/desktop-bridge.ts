@@ -56,6 +56,7 @@ export type WakeSignals = {
 };
 
 export type Message = {
+  pending?: boolean;
   version: 1;
   id: string;
   conversationId: string;
@@ -115,7 +116,11 @@ export type NoosphereDesktopApi = {
       conversationId: string,
     ) => Promise<{ declined: true }>;
     removeFriend: (conversationId: string) => Promise<{ removed: true }>;
-    sendMessage: (conversationId: string, text: string) => Promise<Message>;
+    sendMessage: (
+      conversationId: string,
+      text: string,
+      messageId: string,
+    ) => Promise<{ message: Message; published: boolean }>;
     signalWake: (conversationId: string) => Promise<{ published: true }>;
     signalCall: (conversationId: string, callId: string) => Promise<CallSignal>;
     readCallSignal: (conversationId: string) => Promise<CallSignal | null>;

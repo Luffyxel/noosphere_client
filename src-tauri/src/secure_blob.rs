@@ -110,7 +110,7 @@ impl SecureBlobStore {
         }
     }
 
-    #[cfg(any(target_os = "linux", all(test, windows)))]
+    #[cfg(any(target_os = "linux", windows))]
     pub fn remove(&self, account: &str) -> Result<()> {
         validate_account(account)?;
         #[cfg(windows)]
@@ -289,6 +289,9 @@ mod linux {
             let _ = std::fs::remove_file(&temporary);
             return Err(Error::SecureStorageUnavailable);
         }
+        std::fs::File::open(parent)
+            .and_then(|directory| directory.sync_all())
+            .map_err(|_| Error::SecureStorageUnavailable)?;
         Ok(())
     }
 

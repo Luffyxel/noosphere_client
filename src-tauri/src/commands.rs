@@ -35,7 +35,7 @@ type CommandResult<T> = std::result::Result<T, String>;
 
 const MAX_FRIENDS: usize = 100;
 const MAX_REQUESTS_PER_USER: usize = 100;
-const MAX_MESSAGES_PER_CONVERSATION: usize = 500;
+const MAX_MESSAGES_PER_CONVERSATION: usize = 10_000;
 
 fn command_error(error: Error) -> String {
     error.to_string()
@@ -49,7 +49,11 @@ pub async fn github_restore(state: State<'_, AppState>) -> CommandResult<Option<
 #[tauri::command]
 pub async fn github_validate_session(
     state: State<'_, AppState>,
+    directory: State<'_, crate::remote_directory::RemoteDirectory>,
+    remote: State<'_, crate::remote_access::RemoteAccess>,
 ) -> CommandResult<Option<GitHubViewer>> {
+    let _directory = directory.operation.lock().await;
+    let _operation = state.operations.lock().await;
     let saved = {
         let session = state.session.read().await;
         session.as_ref().map(|session| session.viewer.clone())
@@ -65,8 +69,11 @@ pub async fn github_validate_session(
     };
     match validate_restored_session(&state, saved).await {
         Ok(viewer) => Ok(Some(viewer)),
-        Err(error @ (Error::Network | Error::GitHubDenied)) => Err(command_error(error)),
+        Err(error @ (Error::Network | Error::GitHubDenied | Error::RateLimited)) => {
+            Err(command_error(error))
+        }
         Err(_) => {
+            crate::remote_access::shutdown(&remote).await;
             state.clear_session().await.map_err(command_error)?;
             Ok(None)
         }
@@ -127,6 +134,8 @@ async fn validate_restored_session(state: &AppState, saved: GitHubViewer) -> Res
 pub async fn github_connect(
     app: DesktopAppHandle,
     state: State<'_, AppState>,
+    directory: State<'_, crate::remote_directory::RemoteDirectory>,
+    remote: State<'_, crate::remote_access::RemoteAccess>,
     consent: ProvisioningConsent,
 ) -> CommandResult<GitHubViewer> {
     if !consent.validate() {
@@ -136,6 +145,10 @@ pub async fn github_connect(
         .setup
         .try_lock()
         .map_err(|_| command_error(Error::SetupInProgress))?;
+    let _directory = directory.operation.lock().await;
+    let _operation = state.operations.lock().await;
+    crate::remote_access::shutdown(&remote).await;
+    state.clear_session().await.map_err(command_error)?;
     let result = connect_github(&app, &state).await.map_err(command_error);
     let _ = app.emit("github-device-code", Value::Null);
     let _ = app.emit("github-setup-status", Value::Null);
@@ -830,7 +843,14 @@ pub(crate) async fn write_repository_file(
 }
 
 #[tauri::command]
-pub async fn github_sign_out(state: State<'_, AppState>) -> CommandResult<SignedOut> {
+pub async fn github_sign_out(
+    state: State<'_, AppState>,
+    directory: State<'_, crate::remote_directory::RemoteDirectory>,
+    remote: State<'_, crate::remote_access::RemoteAccess>,
+) -> CommandResult<SignedOut> {
+    let _directory = directory.operation.lock().await;
+    let _operation = state.operations.lock().await;
+    crate::remote_access::shutdown(&remote).await;
     state.clear_session().await.map_err(command_error)?;
     Ok(SignedOut { signed_out: true })
 }
@@ -1223,7 +1243,6 @@ async fn send_friend_request(
         .as_mut()
         .ok_or(Error::Crypto)?
         .secret = secret;
-    state.persist_identity(viewer.repository.id).await?;
     let request = OutgoingRequestState {
         id,
         created_at,
@@ -1354,6 +1373,12 @@ async fn ensure_temporary_star(
 }
 
 pub(crate) async fn session_viewer(state: &AppState) -> Result<GitHubViewer> {
+    if state
+        .update_installing
+        .load(std::sync::atomic::Ordering::Acquire)
+    {
+        return Err(Error::Updating);
+    }
     state
         .session
         .read()
@@ -1778,7 +1803,7 @@ async fn recover_local_publications(
             social.conversations.clone(),
             social.outgoing.clone(),
             social
-                .messages
+                .outbox
                 .iter()
                 .filter(|record| !record.published)
                 .cloned()
@@ -2444,10 +2469,23 @@ async fn remove_temporary_star(
 #[tauri::command]
 pub async fn noosphere_remove_friend(
     state: State<'_, AppState>,
+    directory: State<'_, crate::remote_directory::RemoteDirectory>,
+    remote: State<'_, crate::remote_access::RemoteAccess>,
     conversation_id: String,
 ) -> CommandResult<FriendRemoved> {
     validation::conversation_id(&conversation_id).map_err(command_error)?;
+    let _directory = directory.operation.lock().await;
     let _operation = state.operations.lock().await;
+    crate::remote_access::stop_live_if_running(&remote)
+        .await
+        .map_err(|_| command_error(Error::Local))?;
+    let viewer = session_viewer(&state).await.map_err(command_error)?;
+    let peer = find_conversation(&state, &conversation_id)
+        .await
+        .map_err(command_error)?
+        .peer;
+    crate::remote_directory::revoke_user(&state, viewer.repository.id, peer.user.id)
+        .map_err(|_| command_error(Error::Local))?;
     remove_friend(&state, &conversation_id)
         .await
         .map_err(command_error)
@@ -2506,6 +2544,9 @@ fn remove_friend_records(
         .messages
         .retain(|record| record.message.conversation_id != conversation_id);
     social
+        .outbox
+        .retain(|record| record.message.conversation_id != conversation_id);
+    social
         .seen_message_ids
         .retain(|message_id| !removed_message_ids.contains(message_id));
     social
@@ -2517,6 +2558,19 @@ fn remove_friend_records(
 #[cfg(test)]
 mod friend_removal_tests {
     use super::*;
+
+    #[test]
+    fn message_trees_accept_long_histories_and_reject_truncation() {
+        let entries: Vec<_> = (0..1501).map(|index| serde_json::json!({"type": "blob", "path": format!("msg-{index:032x}.enc.json")})).collect();
+        assert_eq!(
+            parse_git_tree(serde_json::json!({"tree": entries, "truncated": false}))
+                .unwrap()
+                .len(),
+            1501
+        );
+        assert!(parse_git_tree(serde_json::json!({"tree": [], "truncated": true})).is_err());
+        assert!(parse_git_tree(serde_json::json!({"tree": []})).is_err());
+    }
 
     #[test]
     fn removing_a_friend_clears_their_conversation_messages_and_request() {
@@ -2571,6 +2625,9 @@ mod friend_removal_tests {
         social
             .seen_message_ids
             .push("msg-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".to_owned());
+        let mut queued = social.messages[0].clone();
+        queued.published = false;
+        social.outbox.push(queued);
         social.temporary_stars.push(peer.repository_id);
 
         let removed = remove_friend_records(&mut social, conversation_id).unwrap();
@@ -2579,6 +2636,7 @@ mod friend_removal_tests {
         assert!(social.conversations.is_empty());
         assert!(social.outgoing.is_empty());
         assert!(social.messages.is_empty());
+        assert!(social.outbox.is_empty());
         assert!(social.seen_message_ids.is_empty());
         assert!(social.temporary_stars.is_empty());
     }
@@ -2589,11 +2647,13 @@ pub async fn noosphere_send_message(
     state: State<'_, AppState>,
     conversation_id: String,
     text: String,
-) -> CommandResult<Message> {
+    message_id: String,
+) -> CommandResult<MessageDelivery> {
     validation::conversation_id(&conversation_id).map_err(command_error)?;
     validation::message_text(&text).map_err(command_error)?;
+    validation::message_id(&message_id).map_err(command_error)?;
     let _operation = state.operations.lock().await;
-    send_message(&state, conversation_id, text)
+    send_message(&state, conversation_id, text, message_id)
         .await
         .map_err(command_error)
 }
@@ -2602,19 +2662,92 @@ pub async fn noosphere_send_message(
 pub async fn noosphere_list_messages(
     state: State<'_, AppState>,
     conversation_id: String,
-) -> CommandResult<Vec<Message>> {
+) -> CommandResult<Vec<ListedMessage>> {
     validation::conversation_id(&conversation_id).map_err(command_error)?;
     let _operation = state.operations.lock().await;
-    list_messages(&state, &conversation_id)
-        .await
-        .map_err(command_error)
+    let messages = match list_messages(&state, &conversation_id).await {
+        Ok(messages) => messages,
+        Err(Error::Network | Error::RateLimited | Error::GitHubDenied) => {
+            find_conversation(&state, &conversation_id)
+                .await
+                .map_err(command_error)?;
+            cached_messages(&state, &conversation_id).await
+        }
+        Err(error) => return Err(command_error(error)),
+    };
+    let social = state.social.read().await;
+    Ok(messages
+        .into_iter()
+        .map(|message| ListedMessage {
+            pending: social
+                .outbox
+                .iter()
+                .any(|record| record.message.id == message.id),
+            message,
+        })
+        .collect())
 }
 
-async fn send_message(state: &AppState, conversation_id: String, text: String) -> Result<Message> {
+#[derive(serde::Serialize)]
+pub struct ListedMessage {
+    #[serde(flatten)]
+    message: Message,
+    pending: bool,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MessageDelivery {
+    message: Message,
+    published: bool,
+}
+
+async fn send_message(
+    state: &AppState,
+    conversation_id: String,
+    text: String,
+    id: String,
+) -> Result<MessageDelivery> {
     let viewer = session_viewer(state).await?;
     let token = oauth_token(state).await?;
     let conversation = find_conversation(state, &conversation_id).await?;
-    let id = format!("msg-{}", uuid::Uuid::new_v4().simple());
+    let existing = {
+        let social = state.social.read().await;
+        social
+            .outbox
+            .iter()
+            .chain(social.messages.iter())
+            .find(|record| record.message.id == id)
+            .cloned()
+    };
+    if let Some(record) = existing {
+        if !record.message.own
+            || record.message.conversation_id != conversation_id
+            || record.message.text != text
+        {
+            return Err(Error::InvalidData);
+        }
+        let published = record.published
+            || publish_message(state, &token, &viewer, &record.message, &record.envelope)
+                .await
+                .is_ok();
+        if published {
+            let _ = mark_message_published(state, viewer.repository.id, &id).await;
+        }
+        return Ok(MessageDelivery {
+            message: record.message,
+            published,
+        });
+    }
+    {
+        let social = state.social.read().await;
+        if social.outbox.len() >= 500 {
+            return Err(Error::OutboxFull);
+        }
+        if social.seen_message_ids.contains(&id) {
+            return Err(Error::InvalidData);
+        }
+    }
     let sent_at = crate::protocol::current_timestamp()?;
     let secret = state
         .identity
@@ -2660,13 +2793,14 @@ async fn send_message(state: &AppState, conversation_id: String, text: String) -
             published: false,
         })
         .await?;
-    // Persist the plaintext queue before advancing the durable ratchet. A crash can
-    // then replay the encrypted publication without losing the user's message.
     state.persist_social(viewer.repository.id).await?;
-    state.persist_identity(viewer.repository.id).await?;
-    publish_message(state, &token, &viewer, &message, &envelope).await?;
-    mark_message_published(state, viewer.repository.id, &message.id).await?;
-    Ok(message)
+    let published = publish_message(state, &token, &viewer, &message, &envelope)
+        .await
+        .is_ok();
+    if published {
+        let _ = mark_message_published(state, viewer.repository.id, &message.id).await;
+    }
+    Ok(MessageDelivery { message, published })
 }
 
 #[tauri::command]
@@ -2738,13 +2872,12 @@ async fn list_messages(state: &AppState, conversation_id: &str) -> Result<Vec<Me
     publish_pending_messages(state, &token, &viewer, conversation_id).await?;
 
     let path = format!("conv/{conversation_id}/messages");
-    let entries = list_repository_directory(
+    let entries = list_message_tree(
         state,
         &token,
         &conversation.peer.user.login,
         &conversation.peer.user.repository,
         &path,
-        MAX_MESSAGES_PER_CONVERSATION,
     )
     .await?;
     let mut known = state
@@ -2756,6 +2889,9 @@ async fn list_messages(state: &AppState, conversation_id: &str) -> Result<Vec<Me
         .cloned()
         .collect::<BTreeSet<_>>();
     for name in entries {
+        if state.social.read().await.outbox.len() >= 500 {
+            break;
+        }
         let Some(id) = name.strip_suffix(".enc.json") else {
             continue;
         };
@@ -2842,18 +2978,20 @@ async fn list_messages(state: &AppState, conversation_id: &str) -> Result<Vec<Me
             })
             .await?;
         state.persist_social(viewer.repository.id).await?;
-        state.persist_identity(viewer.repository.id).await?;
         publish_message(state, &token, &viewer, &message, &envelope).await?;
         mark_message_published(state, viewer.repository.id, id).await?;
         known.insert(id.to_owned());
     }
 
-    let mut messages = state
-        .social
-        .read()
-        .await
+    Ok(cached_messages(state, conversation_id).await)
+}
+
+async fn cached_messages(state: &AppState, conversation_id: &str) -> Vec<Message> {
+    let social = state.social.read().await;
+    let mut messages = social
         .messages
         .iter()
+        .chain(social.outbox.iter())
         .filter(|record| record.message.conversation_id == conversation_id)
         .map(|record| record.message.clone())
         .collect::<Vec<_>>();
@@ -2862,7 +3000,92 @@ async fn list_messages(state: &AppState, conversation_id: &str) -> Result<Vec<Me
             .cmp(&right.sent_at)
             .then_with(|| left.id.cmp(&right.id))
     });
-    Ok(messages)
+    messages.dedup_by(|left, right| left.id == right.id);
+    messages
+}
+
+async fn list_message_tree(
+    state: &AppState,
+    token: &OAuthToken,
+    owner: &str,
+    repository: &str,
+    directory: &str,
+) -> Result<Vec<String>> {
+    validation::github_login(owner)?;
+    validation::repository_name_exact(repository)?;
+    let mut reference = "HEAD".to_owned();
+    for component in directory.split('/') {
+        let tree = read_git_tree(state, token, owner, repository, &reference).await?;
+        let Some(entry) = tree.iter().find(|entry| {
+            entry.get("type").and_then(Value::as_str) == Some("tree")
+                && entry.get("path").and_then(Value::as_str) == Some(component)
+        }) else {
+            return Ok(Vec::new());
+        };
+        reference = entry
+            .get("sha")
+            .and_then(Value::as_str)
+            .filter(|sha| sha.len() == 40 && sha.bytes().all(|byte| byte.is_ascii_hexdigit()))
+            .ok_or(Error::InvalidGitHubResponse)?
+            .to_owned();
+    }
+    let entries = read_git_tree(state, token, owner, repository, &reference).await?;
+    let mut names = Vec::new();
+    for entry in entries {
+        if entry.get("type").and_then(Value::as_str) != Some("blob") {
+            continue;
+        }
+        let name = entry
+            .get("path")
+            .and_then(Value::as_str)
+            .ok_or(Error::InvalidGitHubResponse)?;
+        if let Some(id) = name.strip_suffix(".enc.json")
+            && validation::message_id(id).is_ok()
+        {
+            names.push(name.to_owned());
+        }
+    }
+    names.sort_unstable();
+    names.dedup();
+    Ok(names)
+}
+
+async fn read_git_tree(
+    state: &AppState,
+    token: &OAuthToken,
+    owner: &str,
+    repository: &str,
+    reference: &str,
+) -> Result<Vec<Value>> {
+    let response = state
+        .github
+        .api_json::<Value>(
+            Method::GET,
+            &format!("/repos/{owner}/{repository}/git/trees/{reference}"),
+            Some(token.access_token.expose_secret()),
+            None,
+            None,
+            &[],
+        )
+        .await?;
+    let Some(value) = response.data else {
+        return Ok(Vec::new());
+    };
+    parse_git_tree(value)
+}
+
+fn parse_git_tree(value: Value) -> Result<Vec<Value>> {
+    if value.get("truncated").and_then(Value::as_bool) != Some(false) {
+        return Err(Error::ResponseTooLarge);
+    }
+    let entries = value
+        .get("tree")
+        .and_then(Value::as_array)
+        .ok_or(Error::InvalidGitHubResponse)?;
+    if entries.len() > MAX_MESSAGES_PER_CONVERSATION {
+        return Err(Error::ResponseTooLarge);
+    }
+    Ok(entries.clone())
 }
 
 async fn find_conversation(state: &AppState, conversation_id: &str) -> Result<ConversationState> {
@@ -2887,7 +3110,7 @@ async fn publish_pending_messages(
         .social
         .read()
         .await
-        .messages
+        .outbox
         .iter()
         .filter(|record| record.message.conversation_id == conversation_id && !record.published)
         .cloned()
@@ -2936,16 +3159,18 @@ async fn mark_message_published(
     repository_id: u64,
     message_id: &str,
 ) -> Result<()> {
-    if let Some(record) = state
-        .social
-        .write()
-        .await
+    let mut social = state.social.write().await;
+    if let Some(record) = social
         .messages
         .iter_mut()
         .find(|record| record.message.id == message_id)
     {
         record.published = true;
     }
+    social
+        .outbox
+        .retain(|record| record.message.id != message_id);
+    drop(social);
     state.persist_social(repository_id).await
 }
 

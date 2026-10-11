@@ -1,5 +1,7 @@
 'use client';
 
+import { invoke } from '@tauri-apps/api/core';
+
 import {
   AlertCircle,
   Bell,
@@ -1148,6 +1150,11 @@ function NoosphereApp({
   const [messages, setMessages] = useState<DisplayMessage[]>([]);
   const [messageDraft, setMessageDraft] = useState('');
   const [sendingMessage, setSendingMessage] = useState(false);
+  const failedSubmission = useRef<{
+    conversationId: string;
+    text: string;
+    id: string;
+  } | null>(null);
   const [acceptingRequestId, setAcceptingRequestId] = useState<string | null>(
     null,
   );
@@ -1573,6 +1580,17 @@ function NoosphereApp({
   );
 
   useEffect(() => {
+    if (!('__TAURI_INTERNALS__' in window)) return;
+    void invoke('system_set_update_busy', {
+      busy:
+        displayedCallStatus !== 'idle' || sendingMessage || remoteAccess.busy,
+    }).catch(() => {});
+    return () => {
+      void invoke('system_set_update_busy', { busy: false }).catch(() => {});
+    };
+  }, [displayedCallStatus, sendingMessage, remoteAccess.busy]);
+
+  useEffect(() => {
     const previous = previousCallStatus.current;
     previousCallStatus.current = callStatus;
     if (callStatus !== 'idle' && callProbeTimer.current !== null) {
@@ -1832,7 +1850,12 @@ function NoosphereApp({
     const text = messageDraft.trim();
     if (!selectedConversation || !text || !window.noosphereDesktop) return;
     const conversationId = selectedConversation.id;
-    const renderKey = `pending-${crypto.randomUUID()}`;
+    const previous = failedSubmission.current;
+    const renderKey =
+      previous?.conversationId === conversationId && previous.text === text
+        ? previous.id
+        : `msg-${crypto.randomUUID().replaceAll('-', '')}`;
+    failedSubmission.current = { conversationId, text, id: renderKey };
     const optimisticMessage: DisplayMessage = {
       version: 1,
       id: renderKey,
@@ -1854,15 +1877,18 @@ function NoosphereApp({
     setSendingMessage(true);
     setSyncError('');
     try {
-      const message = await window.noosphereDesktop.noosphere.sendMessage(
-        conversationId,
-        text,
-      );
+      const { message, published } =
+        await window.noosphereDesktop.noosphere.sendMessage(
+          conversationId,
+          text,
+          renderKey,
+        );
+      failedSubmission.current = null;
       const publishedMessages = (
         messageCache.current.get(conversationId) ?? []
       ).map((item) =>
         item.renderKey === renderKey
-          ? { ...message, renderKey: item.renderKey }
+          ? { ...message, pending: !published, renderKey: item.renderKey }
           : item,
       );
       messageCache.current.set(conversationId, publishedMessages);
@@ -1876,7 +1902,7 @@ function NoosphereApp({
           message.id,
         ]),
       );
-      if (!sendMessageSignal(conversationId, message.id)) {
+      if (published && !sendMessageSignal(conversationId, message.id)) {
         void window.noosphereDesktop.noosphere
           .signalWake(conversationId)
           .catch(() => {});

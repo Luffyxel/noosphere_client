@@ -9,7 +9,7 @@ import { useEffect, useState } from 'react';
 import { updatePercentage } from '@/lib/app-update';
 
 type Notice = {
-  phase: 'downloading' | 'installing' | 'installed' | 'error';
+  phase: 'downloading' | 'waiting' | 'installing' | 'installed' | 'error';
   version: string;
   percentage: number | null;
   error?: string;
@@ -127,7 +127,7 @@ export function AppUpdater() {
           let downloaded = 0;
           let total: number | undefined;
           setNotice({ phase: 'downloading', version, percentage: null });
-          await update.downloadAndInstall(
+          await update.download(
             (event) => {
               if (!active) return;
               if (event.event === 'Started') {
@@ -143,10 +143,14 @@ export function AppUpdater() {
                 });
                 return;
               }
-              setNotice({ phase: 'installing', version, percentage: 100 });
+              setNotice({ phase: 'waiting', version, percentage: 100 });
             },
-            { timeout: 30 * 60_000, restartAfterInstall: true },
+            { timeout: 30 * 60_000 },
           );
+          await invoke('system_wait_for_update');
+          if (!active) return;
+          setNotice({ phase: 'installing', version, percentage: 100 });
+          await update.install({ restartAfterInstall: true });
           installed = true;
           if (active) {
             setNotice({ phase: 'installing', version, percentage: 100 });
@@ -156,6 +160,7 @@ export function AppUpdater() {
             if (!handled) await relaunch();
           }
         } catch (error) {
+          await invoke('system_cancel_update').catch(() => {});
           console.error('Noosphere update failed', error);
           if (active && (foundUpdate || !updateTargetReady)) {
             setNotice((current) => ({
@@ -180,78 +185,85 @@ export function AppUpdater() {
 
   const busy = notice.phase === 'downloading' || notice.phase === 'installing';
   return (
-    <aside
-      aria-live="polite"
-      className="fixed right-5 top-5 z-[100] w-[280px] overflow-hidden rounded-[16px] border border-white/[.1] bg-[#29292c]/95 p-3.5 text-[#f5f5f7] shadow-2xl backdrop-blur-xl"
-    >
-      <div className="flex items-center gap-3">
-        <div className="grid size-9 shrink-0 place-items-center rounded-[10px] bg-[var(--noosphere-accent)]/[.1] text-[var(--noosphere-accent)]">
-          {busy ? (
-            <LoaderCircle className="size-4 animate-spin" />
-          ) : (
-            <RefreshCw className="size-4" />
+    <>
+      {notice.phase === 'installing' && (
+        <div className="fixed inset-0 z-[99] bg-black/40" aria-hidden="true" />
+      )}
+      <aside
+        aria-live="polite"
+        className="fixed right-5 top-5 z-[100] w-[280px] overflow-hidden rounded-[16px] border border-white/[.1] bg-[#29292c]/95 p-3.5 text-[#f5f5f7] shadow-2xl backdrop-blur-xl"
+      >
+        <div className="flex items-center gap-3">
+          <div className="grid size-9 shrink-0 place-items-center rounded-[10px] bg-[var(--noosphere-accent)]/[.1] text-[var(--noosphere-accent)]">
+            {busy ? (
+              <LoaderCircle className="size-4 animate-spin" />
+            ) : (
+              <RefreshCw className="size-4" />
+            )}
+          </div>
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-[13px] font-medium">
+              {notice.phase === 'error'
+                ? 'Mise à jour interrompue'
+                : notice.phase === 'installed'
+                  ? 'Mise à jour installée'
+                  : `Mise à jour ${notice.version}`}
+            </p>
+            <p className="mt-0.5 text-[11px] text-[#a1a1a6]">
+              {notice.phase === 'downloading'
+                ? notice.percentage === null
+                  ? 'Téléchargement…'
+                  : `Téléchargement · ${notice.percentage}%`
+                : notice.phase === 'waiting'
+                  ? 'En attente de la fin de l’activité…'
+                  : notice.phase === 'installing'
+                    ? 'Installation…'
+                    : notice.phase === 'installed'
+                      ? 'Relancez Noosphere'
+                      : notice.error}
+            </p>
+          </div>
+          {notice.phase === 'error' && (
+            <button
+              type="button"
+              aria-label="Réessayer"
+              onClick={() => {
+                setNotice(null);
+                setAttempt((value) => value + 1);
+              }}
+              className="grid size-8 shrink-0 place-items-center rounded-[9px] text-[#a1a1a6] transition hover:bg-white/[.07] hover:text-white"
+            >
+              <RefreshCw className="size-3.5" />
+            </button>
+          )}
+          {(notice.phase === 'error' || notice.phase === 'installed') && (
+            <button
+              type="button"
+              aria-label="Fermer"
+              onClick={() => setNotice(null)}
+              className="grid size-8 shrink-0 place-items-center rounded-[9px] text-[#a1a1a6] transition hover:bg-white/[.07] hover:text-white"
+            >
+              <X className="size-3.5" />
+            </button>
           )}
         </div>
-        <div className="min-w-0 flex-1">
-          <p className="truncate text-[13px] font-medium">
-            {notice.phase === 'error'
-              ? 'Mise à jour interrompue'
-              : notice.phase === 'installed'
-                ? 'Mise à jour installée'
-                : `Mise à jour ${notice.version}`}
-          </p>
-          <p className="mt-0.5 text-[11px] text-[#a1a1a6]">
-            {notice.phase === 'downloading'
-              ? notice.percentage === null
-                ? 'Téléchargement…'
-                : `Téléchargement · ${notice.percentage}%`
-              : notice.phase === 'installing'
-                ? 'Installation…'
-                : notice.phase === 'installed'
-                  ? 'Relancez Noosphere'
-                  : notice.error}
-          </p>
-        </div>
-        {notice.phase === 'error' && (
-          <button
-            type="button"
-            aria-label="Réessayer"
-            onClick={() => {
-              setNotice(null);
-              setAttempt((value) => value + 1);
-            }}
-            className="grid size-8 shrink-0 place-items-center rounded-[9px] text-[#a1a1a6] transition hover:bg-white/[.07] hover:text-white"
-          >
-            <RefreshCw className="size-3.5" />
-          </button>
+        {busy && (
+          <div className="mt-3 h-1 overflow-hidden rounded-full bg-white/[.08]">
+            <div
+              className={
+                notice.percentage === null
+                  ? 'h-full w-1/2 animate-pulse rounded-full bg-[var(--noosphere-accent)]'
+                  : 'h-full rounded-full bg-[var(--noosphere-accent)] transition-[width] duration-200'
+              }
+              style={
+                notice.percentage === null
+                  ? undefined
+                  : { width: `${notice.percentage}%` }
+              }
+            />
+          </div>
         )}
-        {(notice.phase === 'error' || notice.phase === 'installed') && (
-          <button
-            type="button"
-            aria-label="Fermer"
-            onClick={() => setNotice(null)}
-            className="grid size-8 shrink-0 place-items-center rounded-[9px] text-[#a1a1a6] transition hover:bg-white/[.07] hover:text-white"
-          >
-            <X className="size-3.5" />
-          </button>
-        )}
-      </div>
-      {busy && (
-        <div className="mt-3 h-1 overflow-hidden rounded-full bg-white/[.08]">
-          <div
-            className={
-              notice.percentage === null
-                ? 'h-full w-1/2 animate-pulse rounded-full bg-[var(--noosphere-accent)]'
-                : 'h-full rounded-full bg-[var(--noosphere-accent)] transition-[width] duration-200'
-            }
-            style={
-              notice.percentage === null
-                ? undefined
-                : { width: `${notice.percentage}%` }
-            }
-          />
-        </div>
-      )}
-    </aside>
+      </aside>
+    </>
   );
 }

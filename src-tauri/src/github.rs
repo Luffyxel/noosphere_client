@@ -1,11 +1,17 @@
-use std::time::Duration;
+use std::{
+    sync::Arc,
+    time::{Duration, SystemTime, UNIX_EPOCH},
+};
 
 use rand::Rng as _;
 use reqwest::{Client, Method, Response, header};
 use secrecy::{ExposeSecret as _, SecretString};
 use serde::de::DeserializeOwned;
 use serde_json::{Map, Value};
-use tokio::time::sleep;
+use tokio::{
+    sync::Mutex,
+    time::{Instant, sleep},
+};
 use url::Url;
 
 use crate::{
@@ -15,7 +21,7 @@ use crate::{
 
 const API_ORIGIN: &str = "https://api.github.com";
 const LOGIN_ORIGIN: &str = "https://github.com";
-const MAX_API_RESPONSE_BYTES: usize = 2 * 1024 * 1024;
+const MAX_API_RESPONSE_BYTES: usize = 8 * 1024 * 1024;
 const MAX_TOKEN_BYTES: usize = 4_096;
 
 pub const CLIENT_ID: &str = "Iv23liJ0O7tSu2HcfAlD";
@@ -70,6 +76,14 @@ pub struct ApiResponse<T> {
 #[derive(Clone)]
 pub struct GitHubClient {
     client: Client,
+    budget: Arc<Mutex<RequestBudget>>,
+}
+
+#[derive(Default)]
+struct RequestBudget {
+    next_request: Option<Instant>,
+    next_write: Option<Instant>,
+    cooldown: Option<Instant>,
 }
 
 impl GitHubClient {
@@ -81,7 +95,10 @@ impl GitHubClient {
             .user_agent("Noosphere/0.1")
             .build()
             .map_err(|_| Error::Network)?;
-        Ok(Self { client })
+        Ok(Self {
+            client,
+            budget: Arc::new(Mutex::new(RequestBudget::default())),
+        })
     }
 
     pub async fn api_json<T: DeserializeOwned>(
@@ -140,6 +157,7 @@ impl GitHubClient {
             validate_token(token)?;
         }
         for attempt in 0..=3 {
+            self.reserve_request(&method).await?;
             let mut request = self
                 .client
                 .request(method.clone(), url.clone())
@@ -163,6 +181,10 @@ impl GitHubClient {
                 Err(_) => return Err(Error::Network),
             };
             let status = response.status().as_u16();
+            if let Some(delay) = rate_limit_delay(status, response.headers(), SystemTime::now()) {
+                self.budget.lock().await.cooldown = Some(Instant::now() + delay);
+                return Err(Error::RateLimited);
+            }
             let etag = response
                 .headers()
                 .get(header::ETAG)
@@ -204,6 +226,36 @@ impl GitHubClient {
             return Ok(ApiResponse { status, etag, data });
         }
         Err(Error::Network)
+    }
+
+    async fn reserve_request(&self, method: &Method) -> Result<()> {
+        let delay = {
+            let mut budget = self.budget.lock().await;
+            let now = Instant::now();
+            if budget.cooldown.is_some_and(|deadline| deadline > now) {
+                return Err(Error::RateLimited);
+            }
+            let mut next = budget.next_request.unwrap_or(now).max(now);
+            if method != Method::GET {
+                next = next.max(budget.next_write.unwrap_or(now));
+            }
+            budget.next_request = Some(next + Duration::from_millis(100));
+            if method != Method::GET {
+                budget.next_write = Some(next + Duration::from_secs(1));
+            }
+            next.saturating_duration_since(now)
+        };
+        sleep(delay).await;
+        if self
+            .budget
+            .lock()
+            .await
+            .cooldown
+            .is_some_and(|deadline| deadline > Instant::now())
+        {
+            return Err(Error::RateLimited);
+        }
+        Ok(())
     }
 
     pub async fn request_device_code(&self) -> Result<DeviceCode> {
@@ -566,6 +618,38 @@ fn validate_github_web_url(value: &str) -> Result<Url> {
     Ok(url)
 }
 
+fn rate_limit_delay(status: u16, headers: &header::HeaderMap, now: SystemTime) -> Option<Duration> {
+    let seconds = |name| {
+        headers
+            .get(name)
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| value.parse::<u64>().ok())
+    };
+    if status != 429
+        && !(status == 403
+            && (seconds("x-ratelimit-remaining") == Some(0) || headers.contains_key("retry-after")))
+    {
+        return None;
+    }
+    let retry = seconds("retry-after").or_else(|| {
+        let value = headers.get("retry-after")?.to_str().ok()?;
+        let deadline =
+            time::OffsetDateTime::parse(value, &time::format_description::well_known::Rfc2822)
+                .ok()?
+                .unix_timestamp();
+        let current = now.duration_since(UNIX_EPOCH).ok()?.as_secs();
+        Some(u64::try_from(deadline).ok()?.saturating_sub(current))
+    });
+    let reset = seconds("x-ratelimit-reset").map(|reset| {
+        reset
+            .saturating_sub(now.duration_since(UNIX_EPOCH).unwrap_or_default().as_secs())
+            .saturating_add(1)
+    });
+    Some(Duration::from_secs(
+        retry.or(reset).unwrap_or(60).clamp(1, 86_400),
+    ))
+}
+
 pub fn retry_delay(attempt: u8) -> Duration {
     let exponent = u32::from(attempt.min(6));
     let ceiling_ms = 500_u64.saturating_mul(2_u64.pow(exponent));
@@ -615,6 +699,45 @@ async fn consume_bounded(response: Response, maximum: usize) -> Result<Vec<u8>> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rate_limits_use_server_deadlines_without_retrying_denials() {
+        let mut headers = header::HeaderMap::new();
+        headers.insert("retry-after", header::HeaderValue::from_static("120"));
+        assert_eq!(
+            rate_limit_delay(429, &headers, UNIX_EPOCH),
+            Some(Duration::from_secs(120))
+        );
+        headers.remove("retry-after");
+        headers.insert(
+            "x-ratelimit-remaining",
+            header::HeaderValue::from_static("0"),
+        );
+        headers.insert(
+            "x-ratelimit-reset",
+            header::HeaderValue::from_static("3600"),
+        );
+        assert_eq!(
+            rate_limit_delay(403, &headers, UNIX_EPOCH + Duration::from_secs(100)),
+            Some(Duration::from_secs(3501))
+        );
+        headers.clear();
+        assert_eq!(rate_limit_delay(403, &headers, UNIX_EPOCH), None);
+        assert_eq!(
+            rate_limit_delay(429, &headers, UNIX_EPOCH),
+            Some(Duration::from_secs(60))
+        );
+    }
+
+    #[tokio::test]
+    async fn clones_share_the_rate_limit_cooldown() {
+        let client = GitHubClient::new().unwrap();
+        client.budget.lock().await.cooldown = Some(Instant::now() + Duration::from_secs(60));
+        assert!(matches!(
+            client.clone().reserve_request(&Method::GET).await,
+            Err(Error::RateLimited)
+        ));
+    }
 
     #[test]
     fn api_urls_cannot_escape_the_github_origin() {

@@ -119,6 +119,30 @@ export function UserGrantEditor({
             />
           </SettingRow>
         </SettingsGroup>
+        {user.machines
+          .filter((machine) => !machine.identityVerified)
+          .map((machine) => (
+            <div
+              key={machineId(machine.principal)}
+              className="rounded-xl border border-white/10 p-3"
+            >
+              <p className="text-xs text-[#ff9f9a]">
+                La clé de {machine.name} a changé.
+              </p>
+              <IdentityDetail machine={machine} />
+              <Button
+                variant="outline"
+                disabled={remote.busy}
+                onClick={() =>
+                  void remote.run((api) =>
+                    api.setGrant(machine.principal, permissions, unattended),
+                  )
+                }
+              >
+                Valider cette clé
+              </Button>
+            </div>
+          ))}
         {remote.error && (
           <p role="alert" className="text-xs text-[#ff9f9a]">
             {remote.error}
