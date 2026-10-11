@@ -63,7 +63,7 @@ export function UserGrantEditor({
   const current = userGrants(user, grants, userPolicies);
   const [permissions, setPermissions] = useState(
     editablePermissions(
-      current.allowedMachines
+      current.configured || current.allowedMachines
         ? current.permissions
         : { ...NO_PERMISSIONS, screen: true },
     ),
@@ -134,9 +134,18 @@ export function UserGrantEditor({
                 variant="outline"
                 disabled={remote.busy}
                 onClick={() =>
-                  void remote.run((api) =>
-                    api.setGrant(machine.principal, permissions, unattended),
-                  )
+                  void remote
+                    .run(async (api) => {
+                      await api.setUserGrant(user.id, permissions, unattended);
+                      return api.setGrant(
+                        machine.principal,
+                        permissions,
+                        unattended,
+                      );
+                    })
+                    .then((ok) => {
+                      if (ok) onClose();
+                    })
                 }
               >
                 Valider cette clé
