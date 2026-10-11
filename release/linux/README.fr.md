@@ -8,6 +8,10 @@ XWayland pour sa fenêtre principale dans les sessions Wayland.
 
 ## AppImage
 
+`noosphere --version` affiche la version et le commit du build. Pour un journal de démarrage détaillé, utilisez `noosphere --verbose` ou `NOOSPHERE_VERBOSE=1 noosphere`. Le journal indique la session graphique, le paquet lancé, les chemins des bibliothèques chargées et les erreurs du processus de rendu, sans afficher les identifiants de connexion.
+
+Le lanceur nettoie les chemins hérités d’une ancienne AppImage avant de charger la nouvelle version. La relance après une mise à jour attend aussi la fermeture des anciens processus.
+
 L’AppImage utilise les bibliothèques graphiques, de polices, de clavier et de chiffrement du système pour rester compatible avec ses pilotes et les services Plasma. La fenêtre principale utilise X11, y compris sous Wayland via XWayland.
 
 Utilisez l’AppImage sur les distributions sans paquet DEB ou RPM :

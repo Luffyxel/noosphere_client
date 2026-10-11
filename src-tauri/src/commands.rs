@@ -304,7 +304,7 @@ async fn try_linux_url_launcher(
 }
 
 #[cfg(target_os = "linux")]
-fn sanitize_linux_external_command(command: &mut std::process::Command) {
+pub(crate) fn sanitize_linux_external_command(command: &mut std::process::Command) {
     command.env_remove("GDK_BACKEND");
     let Some(app_dir) = std::env::var_os("APPDIR").map(PathBuf::from) else {
         return;

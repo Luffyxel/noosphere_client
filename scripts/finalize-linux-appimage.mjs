@@ -157,8 +157,18 @@ try {
 } finally {
   await rm(stagedIcon, { force: true });
 }
-await cp(appRun, path.join(appDirectory, 'AppRun'), { force: true });
+await cp(appRun, path.join(appDirectory, 'AppRun.bin'), { force: true });
+await chmod(path.join(appDirectory, 'AppRun.bin'), 0o755);
+await cp(
+  path.join(projectRoot, 'packaging', 'linux', 'AppRun'),
+  path.join(appDirectory, 'AppRun'),
+  { force: true },
+);
 await chmod(path.join(appDirectory, 'AppRun'), 0o755);
+await writeFile(
+  path.join(cefResourceDirectory, 'noosphere-version'),
+  `${packageMetadata.version}\n`,
+);
 
 await installLinuxMediaRuntime();
 await writeFile(

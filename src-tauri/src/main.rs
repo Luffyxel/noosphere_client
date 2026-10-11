@@ -1,10 +1,15 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
+    if std::env::args().any(|argument| argument == "--version") {
+        println!("{}", noosphere_core::startup_version());
+        return;
+    }
     #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
     if let Some(status) = noosphere_core::appimage_relaunch_helper_status() {
         std::process::exit(status);
     }
+    noosphere_core::log_startup();
     #[cfg(target_os = "linux")]
     noosphere_core::prepare_linux_media_runtime();
     let mode = std::env::args().nth(1);

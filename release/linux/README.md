@@ -8,6 +8,10 @@ for the main window in Wayland sessions.
 
 ## AppImage
 
+`noosphere --version` prints the version and build commit. Use `noosphere --verbose` or `NOOSPHERE_VERBOSE=1 noosphere` for detailed startup output. The log includes the desktop session, running package, loaded library paths and renderer failures without printing login credentials.
+
+The launcher removes paths inherited from an older AppImage before loading the new version. Relaunching after an update also waits for the old processes to exit.
+
 The AppImage uses system graphics, font, keyboard and cryptography libraries to remain compatible with its drivers and Plasma services. The main window uses X11, including XWayland in Wayland sessions.
 
 Use the AppImage on distributions without a DEB or RPM package:

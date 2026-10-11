@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+previous_appdir=${APPDIR:-}
+appdir=$(cd -P -- "${BASH_SOURCE[0]%/*}" && pwd)
+
+for name in LD_LIBRARY_PATH LD_PRELOAD PATH XDG_DATA_DIRS GDK_PIXBUF_MODULE_FILE GIO_EXTRA_MODULES GI_TYPELIB_PATH GSETTINGS_SCHEMA_DIR GST_PLUGIN_PATH GST_PLUGIN_PATH_1_0 GST_PLUGIN_SYSTEM_PATH GST_PLUGIN_SYSTEM_PATH_1_0 GST_PLUGIN_SCANNER GTK_PATH PIPEWIRE_CONFIG_DIR PIPEWIRE_MODULE_DIR SPA_PLUGIN_DIR XKB_CONFIG_ROOT NOOSPHERE_REMOTE_LD_PRELOAD; do
+  value=${!name-}
+  [[ -n "$value" ]] || continue
+  if [[ "$name" == LD_PRELOAD ]]; then value=${value// /:}; fi
+  IFS=: read -r -a entries <<< "$value"
+  clean=
+  removed=0
+  for entry in "${entries[@]}"; do
+    [[ -n "$entry" ]] || continue
+    if [[ ( -n "$previous_appdir" && "$previous_appdir" != / && ( "$entry" == "$previous_appdir" || "$entry" == "$previous_appdir/"* ) ) || "$entry" == */.mount_*/* || "$entry" == */appimage-run/* ]]; then
+      removed=$((removed + 1))
+      continue
+    fi
+    clean+="${clean:+:}$entry"
+  done
+  if ((removed > 0)); then
+    if [[ -n "$clean" ]]; then export "$name=$clean"; else unset "$name"; fi
+    printf '[launcher] removed inherited AppImage paths from %s (%s)\n' "$name" "$removed" >&2
+  fi
+done
+
+export APPDIR="$appdir"
+version=$(< "$appdir/usr/lib/Noosphere/noosphere-version")
+printf '[launcher] Noosphere %s appdir=%q\n' "$version" "$appdir" >&2
+exec "$appdir/AppRun.bin" "$@"

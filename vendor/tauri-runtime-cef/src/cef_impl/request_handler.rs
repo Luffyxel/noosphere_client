@@ -138,6 +138,14 @@ wrap_request_handler! {
       _error_code: ::std::os::raw::c_int,
       _error_string: Option<&CefString>,
     ) {
+      eprintln!(
+        "[cef] renderer terminated window={:?} webview={} status={:?} code={} message={:?}",
+        self.window_id,
+        self.webview_id,
+        _status,
+        _error_code,
+        _error_string.map(|value| value.to_string()).unwrap_or_default()
+      );
       if let Some(handler) = &self.web_content_process_terminate_handler {
         handler();
       }

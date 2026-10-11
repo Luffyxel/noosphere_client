@@ -159,7 +159,24 @@ try {
   second = startInstance(secondResultPath, 0);
   const secondMeasurement = await waitForResult(second, secondResultPath);
   const secondResult = secondMeasurement.result;
+  const expectedVersion = process.env.NOOSPHERE_SMOKE_EXPECT_VERSION;
+  const startupDiagnostics =
+    !expectedVersion ||
+    [first, second].every((instance) => {
+      const line = instance
+        .output()
+        .split(/\r?\n/)
+        .find((line) => line.startsWith('[startup] {'));
+      if (!line) return false;
+      const report = JSON.parse(line.slice('[startup] '.length));
+      return (
+        report.version === expectedVersion &&
+        report.pid > 0 &&
+        report.executable
+      );
+    });
   if (
+    !startupDiagnostics ||
     !validResult(firstResult) ||
     !validResult(secondResult) ||
     firstResult.instanceProfileSlot === secondResult.instanceProfileSlot
@@ -182,6 +199,7 @@ try {
       deviceCaptureRequired: requireDeviceCapture,
       brandAssets: true,
       isolated: true,
+      startupDiagnostics,
       firstReadyMilliseconds: firstMeasurement.elapsedMilliseconds,
       secondReadyMilliseconds: secondMeasurement.elapsedMilliseconds,
     })}`,

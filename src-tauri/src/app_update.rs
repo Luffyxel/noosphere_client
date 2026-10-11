@@ -250,7 +250,30 @@ pub fn system_relaunch_after_update(_app: crate::DesktopAppHandle) -> Result<boo
     {
         let app_dir = std::env::var_os("APPDIR");
         if !uses_appimage_run(app_dir.as_deref()) {
-            return Ok(false);
+            let Some(app_image) = std::env::var_os("APPIMAGE").map(PathBuf::from) else {
+                return Ok(false);
+            };
+            if !app_image.is_absolute() || !app_image.is_file() {
+                return Err("AppImage source unavailable".to_owned());
+            }
+            let executable = std::env::current_exe().map_err(|error| error.to_string())?;
+            let parent_pid = std::process::id();
+            Command::new(executable)
+                .arg(RELAUNCH_HELPER_ARGUMENT)
+                .arg(parent_pid.to_string())
+                .arg(encode_process_tokens(&runtime_process_tokens(parent_pid)))
+                .arg(&app_image)
+                .arg(&app_image)
+                .arg("--")
+                .args(relaunch_arguments())
+                .env_remove(WRAPPED_RELAUNCH_MARKER)
+                .stdin(Stdio::null())
+                .stdout(Stdio::inherit())
+                .stderr(Stdio::inherit())
+                .spawn()
+                .map_err(|error| error.to_string())?;
+            eprintln!("[updater] native AppImage relaunch scheduled source={app_image:?}");
+            std::process::exit(0);
         }
 
         let app_image = std::env::var_os("APPIMAGE")
@@ -494,18 +517,6 @@ fn wrapped_relaunch_command(
     Ok(command)
 }
 
-#[cfg(all(test, target_arch = "x86_64", target_os = "linux"))]
-fn wait_for_parent_and_launch(
-    parent_pid: u32,
-    runtime_processes: &[ProcessToken],
-    runner: &Path,
-    app_image: &Path,
-    arguments: Vec<OsString>,
-) -> std::io::Result<std::process::Child> {
-    wait_for_runtime_exit(parent_pid, runtime_processes)?;
-    relaunch_command(runner, app_image, arguments).spawn()
-}
-
 #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
 #[derive(Clone, Copy)]
 struct ProcessToken {
@@ -635,8 +646,12 @@ fn wait_for_runtime_exit(
 #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
 fn relaunch_command(runner: &Path, app_image: &Path, arguments: Vec<OsString>) -> Command {
     let mut command = Command::new(runner);
+    crate::commands::sanitize_linux_external_command(&mut command);
+    command.env_remove("GST_REGISTRY");
+    if runner != app_image {
+        command.arg(app_image);
+    }
     command
-        .arg(app_image)
         .args(arguments)
         .env("APPIMAGE", app_image)
         .env(RELAUNCH_MARKER, "1")
@@ -871,6 +886,15 @@ mod tests {
 
     #[test]
     fn replaces_and_relaunches_one_appimage_process() {
+        verify_appimage_transition(false);
+    }
+
+    #[test]
+    fn replaces_and_relaunches_one_native_appimage_process() {
+        verify_appimage_transition(true);
+    }
+
+    fn verify_appimage_transition(native: bool) {
         let writable = tempfile::tempdir().unwrap();
         let directory = writable.path();
         let appimage = directory.join("Noosphere.AppImage");
@@ -920,31 +944,37 @@ while [ ! -e "$NOOSPHERE_TRANSITION_TEST_DIRECTORY/release-$role" ]; do sleep 0.
         let new_digest = appimage_sha256(&appimage).unwrap();
         assert_ne!(old_digest, new_digest);
 
-        let runner = directory.join("appimage-run");
+        let runner = if native {
+            appimage.clone()
+        } else {
+            directory.join("appimage-run")
+        };
         let quoted_directory = directory.to_string_lossy().replace('\'', "'\\''");
         let quoted_token = token.replace('\'', "'\\''");
-        std::fs::write(
+        if !native {
+            std::fs::write(
             &runner,
             format!(
                 "#!/bin/sh\nexport NOOSPHERE_TRANSITION_TEST_DIRECTORY='{quoted_directory}'\nexport NOOSPHERE_TRANSITION_TEST_TOKEN='{quoted_token}'\nexec \"$@\"\n"
             ),
         )
         .unwrap();
-        std::fs::set_permissions(&runner, std::fs::Permissions::from_mode(0o755)).unwrap();
+            std::fs::set_permissions(&runner, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
 
         let helper_runner = runner.clone();
         let helper_appimage = appimage.clone();
         let helper_arguments = child_arguments.clone();
         let helper_runtime_processes = runtime_processes.clone();
+        let helper_directory = directory.to_owned();
+        let helper_token = token.clone();
         let helper = std::thread::spawn(move || {
-            wait_for_parent_and_launch(
-                old_pid,
-                &helper_runtime_processes,
-                &helper_runner,
-                &helper_appimage,
-                helper_arguments,
-            )
-            .unwrap()
+            wait_for_runtime_exit(old_pid, &helper_runtime_processes).unwrap();
+            relaunch_command(&helper_runner, &helper_appimage, helper_arguments)
+                .env("NOOSPHERE_TRANSITION_TEST_DIRECTORY", helper_directory)
+                .env("NOOSPHERE_TRANSITION_TEST_TOKEN", helper_token)
+                .spawn()
+                .unwrap()
         });
         std::fs::write(directory.join("release-old"), []).unwrap();
         let old_status = old.wait().unwrap();

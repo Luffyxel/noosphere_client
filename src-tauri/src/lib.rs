@@ -14,8 +14,17 @@ mod repository_content;
 mod secure_blob;
 #[cfg(windows)]
 mod secure_store;
+mod startup;
 mod state;
 mod validation;
+
+pub fn startup_version() -> String {
+    startup::version()
+}
+
+pub fn log_startup() {
+    startup::log();
+}
 
 #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
 pub fn appimage_relaunch_helper_status() -> Option<i32> {
@@ -362,6 +371,9 @@ fn configure_linux_runtime() -> bool {
 
     let smoke_test = std::env::var("NOOSPHERE_SMOKE_TEST").as_deref() == Ok("1");
     let resource_directory = linux_cef_resource_directory();
+    if startup::verbose() {
+        eprintln!("[runtime] CEF resources={resource_directory:?} ozone=x11 gtk=x11");
+    }
     let mut command_line_args = vec![
         ("--disable-setuid-sandbox".into(), None),
         ("password-store".into(), Some("basic".into())),
