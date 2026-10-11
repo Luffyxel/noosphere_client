@@ -1,6 +1,7 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs::File,
+    sync::atomic::AtomicBool,
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -60,6 +61,20 @@ struct IdentityCandidate {
     source: IdentitySource,
 }
 
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct StoredAccount {
+    version: u8,
+    identity: String,
+    social: LocalSocialState,
+}
+
+impl Drop for StoredAccount {
+    fn drop(&mut self) {
+        self.identity.zeroize();
+    }
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct PeerState {
@@ -102,6 +117,8 @@ pub struct LocalSocialState {
     pub outgoing: Vec<OutgoingRequestState>,
     pub messages: Vec<LocalMessageState>,
     #[serde(default)]
+    pub outbox: Vec<LocalMessageState>,
+    #[serde(default)]
     pub seen_message_ids: Vec<String>,
     #[serde(default)]
     pub declined_request_ids: Vec<String>,
@@ -121,6 +138,7 @@ impl Default for LocalSocialState {
             conversations: Vec::new(),
             outgoing: Vec::new(),
             messages: Vec::new(),
+            outbox: Vec::new(),
             seen_message_ids: Vec::new(),
             declined_request_ids: Vec::new(),
             temporary_stars: Vec::new(),
@@ -137,6 +155,8 @@ pub struct AppState {
     pub social: RwLock<LocalSocialState>,
     pub setup: Mutex<()>,
     pub operations: Mutex<()>,
+    pub update_busy: AtomicBool,
+    pub update_installing: AtomicBool,
     account_lock: Mutex<Option<AccountLock>>,
     pub wake_stargazers: Mutex<Option<BTreeMap<u64, String>>>,
     etags: Mutex<BTreeMap<String, String>>,
@@ -156,6 +176,8 @@ impl AppState {
             social: RwLock::new(LocalSocialState::default()),
             setup: Mutex::new(()),
             operations: Mutex::new(()),
+            update_busy: AtomicBool::new(false),
+            update_installing: AtomicBool::new(false),
             account_lock: Mutex::new(None),
             wake_stargazers: Mutex::new(None),
             etags: Mutex::new(BTreeMap::new()),
@@ -331,6 +353,28 @@ impl AppState {
         expected_profile: Option<&crate::protocol::PublicProfile>,
     ) -> Result<crate::protocol::PublicProfile> {
         self.ensure_account_lock(repository_id).await?;
+        let snapshot = self
+            .profile
+            .shared_account(&format!("state-{repository_id}"))?;
+        if let Some(serialized) = self.blobs.load(&snapshot)? {
+            let stored: StoredAccount = serde_json::from_str(serialized.expose_secret())
+                .map_err(|_| Error::SecureStorageUnavailable)?;
+            if stored.version != 1 {
+                return Err(Error::SecureStorageUnavailable);
+            }
+            let (secret, profile) =
+                crate::protocol::restore_identity(&stored.identity, github_user_id, repository_id)?;
+            if expected_profile
+                .is_some_and(|expected| !crate::protocol::same_public_profile(expected, &profile))
+            {
+                return Err(Error::Crypto);
+            }
+            validate_social(&stored.social, Some(github_user_id))?;
+            *self.identity.write().await = Some(IdentityState { secret });
+            *self.social.write().await = stored.social.clone();
+            self.cleanup_legacy_account(repository_id)?;
+            return Ok(profile);
+        }
         let identity_kind = format!("identity-{repository_id}");
         let shared_account = self.profile.shared_account(&identity_kind)?;
         let mut candidates = Vec::new();
@@ -401,10 +445,6 @@ impl AppState {
         } else {
             candidates.swap_remove(selected)
         };
-        self.blobs.save(
-            &shared_account,
-            crate::protocol::serialize_identity(&identity.secret)?,
-        )?;
         let profile = identity.profile.clone();
         let social =
             self.load_social_for_identity(github_user_id, repository_id, &identity.source)?;
@@ -413,7 +453,26 @@ impl AppState {
         });
         *self.social.write().await = social;
         self.persist_social(repository_id).await?;
+        self.cleanup_legacy_account(repository_id)?;
         Ok(profile)
+    }
+
+    fn cleanup_legacy_account(&self, repository_id: u64) -> Result<()> {
+        for kind in [
+            format!("identity-{repository_id}"),
+            format!("social-{repository_id}"),
+        ] {
+            self.blobs.remove(&self.profile.shared_account(&kind)?)?;
+            for slot in 0..crate::instance_profile::MAX_INSTANCE_PROFILES {
+                let directory = self.profile.directory_for_slot(slot)?;
+                if !directory.exists() {
+                    continue;
+                }
+                let store = SecureBlobStore::new(&directory)?;
+                store.remove(&InstanceProfile::secret_account_for_slot(slot, &kind)?)?;
+            }
+        }
+        Ok(())
     }
 
     async fn ensure_account_lock(&self, repository_id: u64) -> Result<()> {
@@ -434,28 +493,56 @@ impl AppState {
     }
 
     pub async fn persist_identity(&self, repository_id: u64) -> Result<()> {
-        let account = self
-            .profile
-            .shared_account(&format!("identity-{repository_id}"))?;
-        let identity = self.identity.read().await;
-        let identity = identity.as_ref().ok_or(Error::Crypto)?;
-        self.blobs.save(
-            &account,
-            crate::protocol::serialize_identity(&identity.secret)?,
-        )
+        self.persist_social(repository_id).await
     }
 
     pub async fn persist_social(&self, repository_id: u64) -> Result<()> {
         let account = self
             .profile
-            .shared_account(&format!("social-{repository_id}"))?;
-        let social = self.social.read().await;
-        validate_social(&social, None)?;
-        let serialized = serde_json::to_string(&*social).map_err(|_| Error::Local)?;
-        if serialized.len() > 24 * 1024 * 1024 {
-            return Err(Error::Local);
+            .shared_account(&format!("state-{repository_id}"))?;
+        let prepared = {
+            let identity = self.identity.read().await;
+            let social = self.social.read().await;
+            (|| {
+                validate_social(&social, None)?;
+                let stored = StoredAccount {
+                    version: 1,
+                    identity: crate::protocol::serialize_identity(
+                        &identity.as_ref().ok_or(Error::Crypto)?.secret,
+                    )?
+                    .expose_secret()
+                    .to_owned(),
+                    social: social.clone(),
+                };
+                let serialized = serde_json::to_string(&stored).map_err(|_| Error::Local)?;
+                if serialized.len() > 24 * 1024 * 1024 {
+                    return Err(Error::OutboxFull);
+                }
+                Ok(SecretString::from(serialized))
+            })()
+        };
+        let result = prepared.and_then(|serialized| self.blobs.save(&account, serialized));
+        if result.is_err() {
+            *self.identity.write().await = None;
+            *self.social.write().await = LocalSocialState::default();
+            if let Ok(Some(previous)) = self.blobs.load(&account)
+                && let Ok(stored) = serde_json::from_str::<StoredAccount>(previous.expose_secret())
+                && stored.version == 1
+                && let Some(viewer) = self
+                    .session
+                    .read()
+                    .await
+                    .as_ref()
+                    .map(|session| session.viewer.clone())
+                && let Ok((secret, _)) =
+                    crate::protocol::restore_identity(&stored.identity, viewer.id, repository_id)
+                && validate_social(&stored.social, Some(viewer.id)).is_ok()
+            {
+                *self.identity.write().await = Some(IdentityState { secret });
+                *self.social.write().await = stored.social.clone();
+            }
         }
-        self.blobs.save(&account, SecretString::from(serialized))
+        result
     }
 
     pub async fn record_message(&self, record: LocalMessageState) -> Result<()> {
@@ -475,6 +562,12 @@ impl AppState {
         {
             return Ok(());
         }
+        if !record.published && social.outbox.len() >= 500 {
+            return Err(Error::OutboxFull);
+        }
+        if !record.published {
+            social.outbox.push(record.clone());
+        }
         social.seen_message_ids.push(record.message.id.clone());
         social.messages.push(record);
         social.messages.sort_by(|left, right| {
@@ -488,8 +581,22 @@ impl AppState {
             social.messages.drain(..remove);
         }
         if social.seen_message_ids.len() > 10_000 {
-            let remove = social.seen_message_ids.len() - 10_000;
-            social.seen_message_ids.drain(..remove);
+            let protected: BTreeSet<_> = social
+                .outbox
+                .iter()
+                .chain(social.messages.iter())
+                .map(|record| record.message.id.clone())
+                .collect();
+            while social.seen_message_ids.len() > 10_000 {
+                let Some(index) = social
+                    .seen_message_ids
+                    .iter()
+                    .position(|id| !protected.contains(id))
+                else {
+                    break;
+                };
+                social.seen_message_ids.remove(index);
+            }
         }
         Ok(())
     }
@@ -615,6 +722,14 @@ fn valid_stored_token(value: &str) -> bool {
 fn deserialize_social(serialized: &str, github_user_id: u64) -> Result<LocalSocialState> {
     let mut social: LocalSocialState =
         serde_json::from_str(serialized).map_err(|_| Error::SecureStorageUnavailable)?;
+    if social.outbox.is_empty() {
+        social.outbox = social
+            .messages
+            .iter()
+            .filter(|record| !record.published)
+            .cloned()
+            .collect();
+    }
     if social.seen_message_ids.is_empty() && !social.messages.is_empty() {
         social.seen_message_ids = social
             .messages
@@ -631,6 +746,7 @@ fn validate_social(social: &LocalSocialState, own_id: Option<u64>) -> Result<()>
         || social.conversations.len() > 500
         || social.outgoing.len() > 500
         || social.messages.len() > 500
+        || social.outbox.len() > 500
         || social.seen_message_ids.len() > 10_000
         || social.declined_request_ids.len() > 2_000
         || social.temporary_stars.len() > 500
@@ -678,13 +794,40 @@ fn validate_social(social: &LocalSocialState, own_id: Option<u64>) -> Result<()>
         }
     }
     let mut seen = BTreeSet::new();
+    let mut pending = BTreeSet::new();
+    for record in &social.outbox {
+        let message = &record.message;
+        if record.published
+            || message.version != 1
+            || message.sender_id == 0
+            || !conversations.contains(message.conversation_id.as_str())
+            || !pending.insert(message.id.as_str())
+            || validation::message_id(&message.id).is_err()
+            || validation::message_text(&message.text).is_err()
+            || crate::protocol::validate_public_timestamp(&message.sent_at).is_err()
+            || crate::protocol::validate_ratchet_envelope_shape(&record.envelope).is_err()
+            || social.messages.iter().any(|cached| {
+                cached.message.id == message.id
+                    && (cached.message != *message
+                        || cached.published
+                        || serde_json::to_value(&cached.envelope).ok()
+                            != serde_json::to_value(&record.envelope).ok())
+            })
+        {
+            return Err(Error::SecureStorageUnavailable);
+        }
+    }
     for message_id in &social.seen_message_ids {
         validation::message_id(message_id).map_err(|_| Error::SecureStorageUnavailable)?;
         if !seen.insert(message_id.as_str()) {
             return Err(Error::SecureStorageUnavailable);
         }
     }
-    if messages.iter().any(|message_id| !seen.contains(message_id)) {
+    if messages
+        .iter()
+        .chain(pending.iter())
+        .any(|message_id| !seen.contains(message_id))
+    {
         return Err(Error::SecureStorageUnavailable);
     }
     let mut declined = BTreeSet::new();
@@ -731,6 +874,36 @@ fn validate_conversation_record(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn account_snapshot_restores_identity_and_social_together() {
+        let temporary = tempfile::tempdir().unwrap();
+        let state = AppState::new(InstanceProfile::acquire(temporary.path()).unwrap()).unwrap();
+        state.load_or_create_identity(42, 420, None).await.unwrap();
+        let (secret, profile) = crate::protocol::create_identity(42, 420).unwrap();
+        *state.identity.write().await = Some(IdentityState { secret });
+        state
+            .social
+            .write()
+            .await
+            .declined_request_ids
+            .push("dm-0123456789abcdef0123456789abcdef".to_owned());
+        state.persist_social(420).await.unwrap();
+        drop(state);
+        let restored = AppState::new(InstanceProfile::acquire(temporary.path()).unwrap()).unwrap();
+        let loaded = restored
+            .load_or_create_identity(42, 420, Some(&profile))
+            .await
+            .unwrap();
+        assert!(crate::protocol::same_public_profile(&loaded, &profile));
+        assert_eq!(restored.social.read().await.declined_request_ids.len(), 1);
+        assert!(
+            restored
+                .load_or_create_identity(99, 420, None)
+                .await
+                .is_err()
+        );
+    }
 
     #[cfg(windows)]
     #[tokio::test]
@@ -819,13 +992,15 @@ mod tests {
                         own: true,
                     },
                     envelope: envelope.clone(),
-                    published: true,
+                    published: index == 500,
                 })
                 .await
                 .unwrap();
         }
         let social = state.social.read().await;
         assert_eq!(social.messages.len(), 500);
+        assert_eq!(social.outbox.len(), 500);
+        assert_eq!(social.outbox[0].message.id, format!("msg-{:032x}", 0));
         assert_eq!(social.seen_message_ids.len(), 501);
         assert_eq!(
             social.messages[0].message.id,

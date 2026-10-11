@@ -518,6 +518,30 @@ pub(crate) async fn firewall_is_configured(_executable: String) -> bool {
 pub struct RemoteAccess {
     process: Mutex<Option<Host>>,
 }
+
+pub(crate) async fn shutdown(remote: &RemoteAccess) {
+    let mut process = remote.process.lock().await;
+    if let Some(host) = process.as_mut() {
+        let _ = host.stop().await;
+        let _ = host.child.kill();
+        let _ = host.child.wait();
+    }
+    *process = None;
+}
+
+pub(crate) async fn session_active(remote: &RemoteAccess) -> Result<bool, String> {
+    let process = remote.process.lock().await;
+    let Some(host) = process.as_ref() else {
+        return Ok(false);
+    };
+    let status: Status = daemon::ipc::request(&host.endpoint, &host.key, daemon::Command::Status)
+        .await
+        .map_err(|failure| failure.to_string())?;
+    Ok(!matches!(
+        status.session,
+        noosphere_remote::live::State::Idle | noosphere_remote::live::State::Failed { .. }
+    ))
+}
 struct Host {
     child: Child,
     endpoint: String,
@@ -527,8 +551,8 @@ struct Host {
 
 impl Drop for Host {
     fn drop(&mut self) {
-        // Closing the UI leaves the bounded diagnostic alive. The daemon owns its
-        // input cleanup and exits after its idle timeout; no signing key is saved.
+        let _ = self.child.kill();
+        let _ = self.child.wait();
         self.key.zeroize();
     }
 }
@@ -653,6 +677,12 @@ fn start_host(state: &AppState, repository_id: u64, settings: Settings) -> Resul
 
 impl RemoteAccess {
     pub(crate) async fn status(&self, state: &AppState) -> Result<Status, String> {
+        if state
+            .update_installing
+            .load(std::sync::atomic::Ordering::Acquire)
+        {
+            return Err("Une mise à jour est en cours d’installation.".into());
+        }
         let repository_id = repository_id(state).await?;
         let mut guard = self.process.lock().await;
         let restart = match guard.as_mut() {

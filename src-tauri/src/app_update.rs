@@ -24,16 +24,56 @@ const RELAUNCH_MARKER: &str = "NOOSPHERE_UPDATE_RELAUNCHED";
 const WRAPPED_RELAUNCH_MARKER: &str = "NOOSPHERE_UPDATE_WRAPPED_HELPER";
 
 #[tauri::command]
+pub fn system_set_update_busy(state: tauri::State<'_, crate::state::AppState>, busy: bool) {
+    state
+        .update_busy
+        .store(busy, std::sync::atomic::Ordering::Release);
+}
+
+#[tauri::command]
+pub fn system_cancel_update(state: tauri::State<'_, crate::state::AppState>) {
+    state
+        .update_installing
+        .store(false, std::sync::atomic::Ordering::Release);
+}
+
+#[tauri::command]
+pub async fn system_wait_for_update(
+    state: tauri::State<'_, crate::state::AppState>,
+    remote: tauri::State<'_, crate::remote_access::RemoteAccess>,
+    directory: tauri::State<'_, crate::remote_directory::RemoteDirectory>,
+) -> Result<(), String> {
+    wait_for_update(&state, &remote, &directory).await
+}
+
+async fn wait_for_update(
+    state: &crate::state::AppState,
+    remote: &crate::remote_access::RemoteAccess,
+    directory: &crate::remote_directory::RemoteDirectory,
+) -> Result<(), String> {
+    loop {
+        if let Ok(_directory) = directory.operation.try_lock()
+            && let Ok(_operation) = state.operations.try_lock()
+            && !state.update_busy.load(std::sync::atomic::Ordering::Acquire)
+            && state.social.read().await.outbox.is_empty()
+            && !crate::remote_access::session_active(remote).await?
+            && !state.update_busy.load(std::sync::atomic::Ordering::Acquire)
+        {
+            state
+                .update_installing
+                .store(true, std::sync::atomic::Ordering::Release);
+            return Ok(());
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    }
+}
+
+#[tauri::command]
 pub fn system_update_target(_app: crate::DesktopAppHandle) -> Result<Option<String>, String> {
     if cfg!(debug_assertions)
         || std::env::var("NOOSPHERE_SMOKE_TEST").as_deref() == Ok("1")
         || std::env::var("NOOSPHERE_DISABLE_UPDATES").as_deref() == Ok("1")
     {
-        return Ok(None);
-    }
-
-    #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
-    if std::env::var_os("APPIMAGE").is_some() && prepare_writable_appimage(&_app)? {
         return Ok(None);
     }
 
@@ -68,6 +108,9 @@ pub async fn system_install_appimage_update(
     _app: crate::DesktopAppHandle,
     _target: String,
     _on_event: tauri::ipc::Channel<AppImageUpdateEvent>,
+    _state: tauri::State<'_, crate::state::AppState>,
+    _remote: tauri::State<'_, crate::remote_access::RemoteAccess>,
+    _directory: tauri::State<'_, crate::remote_directory::RemoteDirectory>,
 ) -> Result<Option<String>, String> {
     #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
     {
@@ -145,6 +188,10 @@ pub async fn system_install_appimage_update(
             )
             .await
             .map_err(|error| update_failure("download", error))?;
+        wait_for_update(&_state, &_remote, &_directory).await?;
+        if prepare_writable_appimage(&_app)? {
+            return Ok(None);
+        }
         _on_event
             .send(AppImageUpdateEvent::Installing {
                 version: version.clone(),
@@ -976,5 +1023,43 @@ while [ ! -e "$NOOSPHERE_TRANSITION_TEST_DIRECTORY/release-$role" ]; do sleep 0.
                     .any(|variable| variable == expected.as_bytes())
             })
             .count()
+    }
+}
+
+#[cfg(test)]
+mod activity_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn installation_waits_for_the_current_activity_to_end() {
+        let temporary = tempfile::tempdir().unwrap();
+        let state = std::sync::Arc::new(
+            crate::state::AppState::new(
+                crate::instance_profile::InstanceProfile::acquire(temporary.path()).unwrap(),
+            )
+            .unwrap(),
+        );
+        state
+            .update_busy
+            .store(true, std::sync::atomic::Ordering::Release);
+        let waiting = state.clone();
+        let task = tokio::spawn(async move {
+            wait_for_update(
+                &waiting,
+                &crate::remote_access::RemoteAccess::default(),
+                &crate::remote_directory::RemoteDirectory::default(),
+            )
+            .await
+        });
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        assert!(!task.is_finished());
+        state
+            .update_busy
+            .store(false, std::sync::atomic::Ordering::Release);
+        tokio::time::timeout(std::time::Duration::from_secs(2), task)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
     }
 }

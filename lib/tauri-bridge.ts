@@ -122,8 +122,11 @@ export function installTauriBridge(): void {
         invoke<{ removed: true }>('noosphere_remove_friend', {
           conversationId,
         }),
-      sendMessage: (conversationId: string, text: string) =>
-        invoke<Message>('noosphere_send_message', { conversationId, text }),
+      sendMessage: (conversationId: string, text: string, messageId: string) =>
+        invoke<{ message: Message; published: boolean }>(
+          'noosphere_send_message',
+          { conversationId, text, messageId },
+        ),
       signalWake: (conversationId: string) =>
         invoke<{ published: true }>('noosphere_signal_wake', {
           conversationId,

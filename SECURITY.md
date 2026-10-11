@@ -15,7 +15,8 @@ Retirez les jetons, messages et informations personnelles des journaux joints.
   écrits sur GitHub.
 - Les clés privées et l’état des conversations restent sur l’ordinateur.
 - Sous Windows, les secrets locaux sont protégés avec Credential Manager et
-  DPAPI. Sous Linux, ils utilisent Secret Service.
+  DPAPI. Sous Linux, les fichiers sont chiffrés avec AES-GCM-SIV et une clé locale
+  accessible au seul utilisateur (fichiers en 0600, répertoire en 0700).
 - Une clé déjà connue ne peut pas être remplacée silencieusement. Noosphere
   signale le changement au lieu de poursuivre la conversation.
 - Les réponses GitHub, profils publics, chemins et données reçues d’un pair sont
@@ -39,3 +40,9 @@ un compte GitHub compromis ne fait pas partie des menaces contre lesquelles le
 client peut se protéger.
 
 Le binaire Windows fourni n’est pas signé avec un certificat Authenticode.
+
+Sous Linux, la clé locale permet le démarrage sans bureau ni trousseau ouvert.
+Une copie complète du profil inclut cette clé et permet de déchiffrer ses données.
+Le chiffrement du disque et des sauvegardes reste nécessaire contre un accès
+hors ligne. Secret Service sert uniquement à migrer d’anciens secrets déjà
+déverrouillés.

@@ -63,7 +63,7 @@ export function UserGrantEditor({
   const current = userGrants(user, grants, userPolicies);
   const [permissions, setPermissions] = useState(
     editablePermissions(
-      current.allowedMachines
+      current.configured || current.allowedMachines
         ? current.permissions
         : { ...NO_PERMISSIONS, screen: true },
     ),
@@ -119,6 +119,39 @@ export function UserGrantEditor({
             />
           </SettingRow>
         </SettingsGroup>
+        {user.machines
+          .filter((machine) => !machine.identityVerified)
+          .map((machine) => (
+            <div
+              key={machineId(machine.principal)}
+              className="rounded-xl border border-white/10 p-3"
+            >
+              <p className="text-xs text-[#ff9f9a]">
+                La clé de {machine.name} a changé.
+              </p>
+              <IdentityDetail machine={machine} />
+              <Button
+                variant="outline"
+                disabled={remote.busy}
+                onClick={() =>
+                  void remote
+                    .run(async (api) => {
+                      await api.setUserGrant(user.id, permissions, unattended);
+                      return api.setGrant(
+                        machine.principal,
+                        permissions,
+                        unattended,
+                      );
+                    })
+                    .then((ok) => {
+                      if (ok) onClose();
+                    })
+                }
+              >
+                Valider cette clé
+              </Button>
+            </div>
+          ))}
         {remote.error && (
           <p role="alert" className="text-xs text-[#ff9f9a]">
             {remote.error}
