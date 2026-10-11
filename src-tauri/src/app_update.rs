@@ -787,8 +787,8 @@ mod tests {
     use super::{
         appimage_directory_is_writable, appimage_sha256, clear_appimage_run_cache_at,
         configure_systemd_user_bus, install_appimage_update, install_managed_copy,
-        linux_target_for_kind, runtime_process_tokens, uses_appimage_run,
-        wait_for_parent_and_launch,
+        linux_target_for_kind, relaunch_command, runtime_process_tokens, uses_appimage_run,
+        wait_for_runtime_exit,
     };
 
     #[test]
