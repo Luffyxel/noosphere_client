@@ -17,6 +17,7 @@ import {
   getWorkspace,
   id,
   movePage,
+  normalizeColumnValues,
   pagePath,
   renamePage,
   restorePage,
@@ -305,4 +306,33 @@ void test('chaque Noosnote garde son dossier et ses identifiants propres', () =>
     () => createPage(files, second.workspaceId, first.pageId),
     /parente/,
   );
+});
+
+void test('les conversions compatibles conservent nombres et catégories', () => {
+  const { database } = school();
+  const column = database.columns[1];
+  let converted = normalizeColumnValues(database, {
+    ...column,
+    type: 'multiSelect',
+  });
+  assert.deepEqual(converted.rows[0].values[column.id], [column.options[0].id]);
+  converted = normalizeColumnValues(converted, { ...column, type: 'select' });
+  assert.equal(converted.rows[0].values[column.id], column.options[0].id);
+  converted = normalizeColumnValues(converted, {
+    ...column,
+    type: 'multiSelect',
+    options: [],
+  });
+  assert.deepEqual(converted.rows[0].values[column.id], []);
+  const number = { id: id(), name: 'Note', type: 'number' };
+  const graded = {
+    ...database,
+    columns: [...database.columns, number],
+    rows: database.rows.map((row) => ({
+      ...row,
+      values: { ...row.values, [number.id]: 18 },
+    })),
+  };
+  converted = normalizeColumnValues(graded, { ...number, type: 'text' });
+  assert.equal(converted.rows[0].values[number.id], '18');
 });

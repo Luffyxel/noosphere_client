@@ -1,0 +1,150 @@
+{
+  "notes/571cd6fb-21ea-4696-b4fd-4432d51bc88b/workspace.json": {
+    "version": 1,
+    "kind": "workspace",
+    "id": "571cd6fb-21ea-4696-b4fd-4432d51bc88b",
+    "title": "École",
+    "icon": "📚",
+    "color": "#78b89b",
+    "pages": [
+      {
+        "id": "b154dd81-9df8-4b63-b414-21c4e91f71e4",
+        "title": "École",
+        "icon": "📚",
+        "parentId": null
+      },
+      {
+        "id": "9d07bcd2-100b-4146-b6a5-69bc17b997e7",
+        "title": "Anglais",
+        "icon": "",
+        "parentId": "b154dd81-9df8-4b63-b414-21c4e91f71e4",
+        "databaseId": "877ceddc-8431-40c0-912f-718efc7a1667"
+      },
+      {
+        "id": "684160bb-1bc9-4bc6-abad-e1f5a5a8b424",
+        "title": "Français",
+        "icon": "",
+        "parentId": "b154dd81-9df8-4b63-b414-21c4e91f71e4",
+        "databaseId": "877ceddc-8431-40c0-912f-718efc7a1667"
+      }
+    ]
+  },
+  "notes/571cd6fb-21ea-4696-b4fd-4432d51bc88b/pages/b154dd81-9df8-4b63-b414-21c4e91f71e4.json": {
+    "version": 1,
+    "kind": "page",
+    "id": "b154dd81-9df8-4b63-b414-21c4e91f71e4",
+    "workspaceId": "571cd6fb-21ea-4696-b4fd-4432d51bc88b",
+    "title": "École",
+    "icon": "📚",
+    "content": {
+      "type": "doc",
+      "content": [
+        {
+          "type": "noosDatabase",
+          "attrs": {
+            "id": "902bc38b-15d2-49a6-a15c-416288985953",
+            "databaseId": "877ceddc-8431-40c0-912f-718efc7a1667"
+          }
+        },
+        {
+          "type": "paragraph",
+          "attrs": {
+            "id": "81577fa8-6553-41c5-b8d6-2cc502ac6680"
+          }
+        }
+      ]
+    }
+  },
+  "notes/571cd6fb-21ea-4696-b4fd-4432d51bc88b/databases/877ceddc-8431-40c0-912f-718efc7a1667.json": {
+    "version": 1,
+    "kind": "database",
+    "id": "877ceddc-8431-40c0-912f-718efc7a1667",
+    "workspaceId": "571cd6fb-21ea-4696-b4fd-4432d51bc88b",
+    "pageId": "b154dd81-9df8-4b63-b414-21c4e91f71e4",
+    "title": "École",
+    "columns": [
+      {
+        "id": "5cf444d9-1f2b-4060-8171-df6e781c1d8f",
+        "name": "Nom",
+        "type": "title"
+      },
+      {
+        "id": "8213c804-9e5d-4db4-a35f-9bcc022ddeaf",
+        "name": "Catégorie",
+        "type": "select",
+        "options": [
+          {
+            "id": "f7a20c18-7581-459d-939d-22e3a02e3b4e",
+            "name": "Cours",
+            "color": "#87a9da"
+          }
+        ]
+      }
+    ],
+    "rows": [
+      {
+        "id": "67e1acae-e9f8-46f3-bc2c-29d12623673c",
+        "pageId": "9d07bcd2-100b-4146-b6a5-69bc17b997e7",
+        "values": {
+          "8213c804-9e5d-4db4-a35f-9bcc022ddeaf": "f7a20c18-7581-459d-939d-22e3a02e3b4e"
+        }
+      },
+      {
+        "id": "caa1e4d9-e638-4a34-8746-96cea52e97cc",
+        "pageId": "684160bb-1bc9-4bc6-abad-e1f5a5a8b424",
+        "values": {
+          "8213c804-9e5d-4db4-a35f-9bcc022ddeaf": "f7a20c18-7581-459d-939d-22e3a02e3b4e"
+        }
+      }
+    ],
+    "views": [
+      {
+        "id": "5fb64db1-024e-46df-a459-6987388454ae",
+        "name": "Table",
+        "layout": "table",
+        "hidden": [],
+        "filters": [],
+        "sorts": [],
+        "groupBy": "8213c804-9e5d-4db4-a35f-9bcc022ddeaf"
+      }
+    ]
+  },
+  "notes/571cd6fb-21ea-4696-b4fd-4432d51bc88b/pages/9d07bcd2-100b-4146-b6a5-69bc17b997e7.json": {
+    "version": 1,
+    "kind": "page",
+    "id": "9d07bcd2-100b-4146-b6a5-69bc17b997e7",
+    "workspaceId": "571cd6fb-21ea-4696-b4fd-4432d51bc88b",
+    "title": "Anglais",
+    "icon": "",
+    "content": {
+      "type": "doc",
+      "content": [
+        {
+          "type": "paragraph",
+          "attrs": {
+            "id": "f7fa6e3d-f0de-49a2-ad82-af7e8d3da40f"
+          }
+        }
+      ]
+    }
+  },
+  "notes/571cd6fb-21ea-4696-b4fd-4432d51bc88b/pages/684160bb-1bc9-4bc6-abad-e1f5a5a8b424.json": {
+    "version": 1,
+    "kind": "page",
+    "id": "684160bb-1bc9-4bc6-abad-e1f5a5a8b424",
+    "workspaceId": "571cd6fb-21ea-4696-b4fd-4432d51bc88b",
+    "title": "Français",
+    "icon": "",
+    "content": {
+      "type": "doc",
+      "content": [
+        {
+          "type": "paragraph",
+          "attrs": {
+            "id": "fd0d0481-e402-4215-a696-6935b3f9fdd4"
+          }
+        }
+      ]
+    }
+  }
+}

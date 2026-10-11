@@ -97,6 +97,13 @@ pub struct Snapshot {
 pub struct Change {
     path: String,
     value: Option<Value>,
+    base: Option<EditBase>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct EditBase {
+    value: Option<Value>,
 }
 
 pub fn repository_name(owner_id: u64) -> String {
@@ -108,10 +115,10 @@ fn index_account(owner: u64) -> String {
 }
 
 fn document_prefix(owner: u64, path: &str) -> String {
-    format!(
-        "noosnote-{owner}-{}-",
-        hex::encode(Sha256::digest(path.as_bytes()))
-    )
+    let mut hash = Sha256::new();
+    hash.update(owner.to_be_bytes());
+    hash.update(path.as_bytes());
+    format!("nn-{}-", &hex::encode(hash.finalize())[..24])
 }
 
 fn now() -> String {
@@ -294,6 +301,15 @@ fn validate_file(path: &str, value: &Value) -> Result<()> {
                 .iter()
                 .map(|page| page["id"].as_str().unwrap_or_default())
                 .collect();
+            let parents: BTreeMap<_, _> = pages
+                .iter()
+                .map(|page| {
+                    (
+                        page["id"].as_str().unwrap_or_default(),
+                        page.get("parentId").and_then(Value::as_str),
+                    )
+                })
+                .collect();
             for page in pages {
                 field(page, "title", 512)?;
                 field(page, "icon", 32)?;
@@ -308,19 +324,21 @@ fn validate_file(path: &str, value: &Value) -> Result<()> {
                 {
                     return Err(Error::InvalidData);
                 }
+            }
+            let mut verified = BTreeSet::new();
+            for id in &ids {
                 let mut visited = BTreeSet::new();
-                let mut current = Some(page);
-                while let Some(entry) = current {
-                    if !visited.insert(entry["id"].as_str().unwrap_or_default()) {
+                let mut current = Some(*id);
+                while let Some(id) = current {
+                    if verified.contains(id) {
+                        break;
+                    }
+                    if !visited.insert(id) {
                         return Err(Error::InvalidData);
                     }
-                    current = entry
-                        .get("parentId")
-                        .and_then(Value::as_str)
-                        .and_then(|parent| {
-                            pages.iter().find(|candidate| candidate["id"] == parent)
-                        });
+                    current = parents.get(id).copied().flatten();
                 }
+                verified.extend(visited);
             }
         }
         "page" => {
@@ -434,9 +452,46 @@ fn validate_file(path: &str, value: &Value) -> Result<()> {
                 ) {
                     return Err(Error::InvalidData);
                 }
-                array(view, "hidden", 64)?;
-                array(view, "filters", 64)?;
-                array(view, "sorts", 64)?;
+                let property = |value: &Value| -> Result<()> {
+                    value
+                        .as_str()
+                        .filter(|id| uuid(id) && columns.iter().any(|column| column["id"] == *id))
+                        .ok_or(Error::InvalidData)?;
+                    Ok(())
+                };
+                for hidden in array(view, "hidden", 64)? {
+                    property(hidden)?;
+                }
+                for key in ["groupBy", "dateProperty"] {
+                    if let Some(value) = view.get(key) {
+                        property(value)?;
+                    }
+                }
+                let filters = array(view, "filters", 64)?;
+                unique_ids(filters)?;
+                for filter in filters {
+                    property(filter.get("propertyId").ok_or(Error::InvalidData)?)?;
+                    if !matches!(
+                        field(filter, "operator", 32)?,
+                        "contains"
+                            | "notContains"
+                            | "equals"
+                            | "notEquals"
+                            | "greater"
+                            | "less"
+                            | "empty"
+                            | "notEmpty"
+                    ) {
+                        return Err(Error::InvalidData);
+                    }
+                    field(filter, "value", 16_384)?;
+                }
+                for sort in array(view, "sorts", 64)? {
+                    property(sort.get("propertyId").ok_or(Error::InvalidData)?)?;
+                    if !matches!(field(sort, "direction", 4)?, "asc" | "desc") {
+                        return Err(Error::InvalidData);
+                    }
+                }
             }
         }
         _ => return Err(Error::InvalidData),
@@ -1112,6 +1167,9 @@ fn apply_changes(cache: &mut Cache, changes: Vec<Change>) -> Result<BTreeSet<Str
         if let Some(value) = &change.value {
             validate_file(&change.path, value)?;
         }
+        if let Some(value) = change.base.as_ref().and_then(|base| base.value.as_ref()) {
+            validate_file(&change.path, value)?;
+        }
         let document = cache
             .documents
             .entry(change.path.clone())
@@ -1123,7 +1181,33 @@ fn apply_changes(cache: &mut Cache, changes: Vec<Change>) -> Result<BTreeSet<Str
                 base_sha: None,
                 conflict: None,
             });
-        let next = change.value.map(Arc::new);
+        let mut next = change.value.map(Arc::new);
+        if let Some(base) = change.base {
+            match merge_value(
+                base.value.as_ref(),
+                next.as_deref(),
+                document.local.as_deref(),
+                0,
+            ) {
+                Ok(merged)
+                    if merged
+                        .as_ref()
+                        .is_none_or(|value| validate_file(&change.path, value).is_ok()) =>
+                {
+                    next = merged.map(Arc::new);
+                }
+                _ => {
+                    if document.conflict.is_none() {
+                        document.conflict = Some(Conflict {
+                            id: Uuid::new_v4().to_string(),
+                            path: change.path.clone(),
+                            local: next.clone(),
+                            remote: document.local.clone(),
+                        });
+                    }
+                }
+            }
+        }
         if document.local == next {
             continue;
         }
@@ -1212,10 +1296,9 @@ pub async fn noosnote_resolve(
             .ok_or(Error::InvalidData)?;
         let conflict = document.conflict.take().ok_or(Error::InvalidData)?;
         let recovery = serde_json::to_string(&conflict).map_err(|_| Error::Local)?;
-        state.blobs.save(
-            &format!("noosnote-{}-recovery-{id}", viewer.id),
-            SecretString::from(recovery),
-        )?;
+        state
+            .blobs
+            .save(&format!("nn-recovery-{id}"), SecretString::from(recovery))?;
         document.local = if choice == "local" {
             conflict.local
         } else {
@@ -1774,6 +1857,30 @@ mod tests {
     }
 
     #[test]
+    fn editor_school_documents_and_views_match_the_native_schema() {
+        let files: BTreeMap<String, Value> =
+            serde_json::from_str(include_str!("../../tests/fixtures/noosnote-school.json"))
+                .unwrap();
+        for (path, value) in &files {
+            validate_file(path, value).unwrap();
+        }
+        let (path, value) = files
+            .iter()
+            .find(|(_, value)| value["kind"] == "database")
+            .unwrap();
+        let mut database = value.clone();
+        let column = database["columns"][0]["id"].clone();
+        database["views"][0]["filters"] = json!([{"id":Uuid::new_v4().to_string(),"propertyId":column,"operator":"contains","value":"Anglais"}]);
+        database["views"][0]["sorts"] = json!([{"propertyId":column,"direction":"asc"}]);
+        validate_file(path, &database).unwrap();
+        database["views"][0]["filters"][0]["operator"] = json!("execute");
+        assert!(validate_file(path, &database).is_err());
+        database["views"][0]["filters"] = json!([]);
+        database["views"][0]["sorts"][0]["propertyId"] = json!(Uuid::new_v4().to_string());
+        assert!(validate_file(path, &database).is_err());
+    }
+
+    #[test]
     fn rich_text_rejects_executable_links_and_unknown_nodes() {
         let (path, mut value) = page();
         value["content"]["content"][0]["content"][0]["marks"] =
@@ -1827,6 +1934,7 @@ mod tests {
         apply_changes(
             &mut cache,
             vec![Change {
+                base: None,
                 path: path.clone(),
                 value: Some(base.clone()),
             }],
@@ -1844,6 +1952,7 @@ mod tests {
         apply_changes(
             &mut cache,
             vec![Change {
+                base: None,
                 path: path.clone(),
                 value: Some(edited.clone()),
             }],
@@ -1871,6 +1980,7 @@ mod tests {
         let changed = apply_changes(
             &mut cache,
             vec![Change {
+                base: None,
                 path: path.clone(),
                 value: Some(value.clone()),
             }],
@@ -1925,6 +2035,28 @@ mod tests {
     }
 
     #[test]
+    fn protected_document_keys_fit_the_store_for_large_account_ids() {
+        let temporary = tempfile::tempdir().unwrap();
+        let store = SecureBlobStore::new(temporary.path()).unwrap();
+        let (path, value) = page();
+        let mut cache = Cache::empty(u64::MAX);
+        let changed = apply_changes(
+            &mut cache,
+            vec![Change {
+                path: path.clone(),
+                value: Some(value.clone()),
+                base: None,
+            }],
+        )
+        .unwrap();
+        persist_cache(&store, &mut cache, &changed).unwrap();
+        assert!(cache.index.blobs[&path].len() <= 64);
+        assert_ne!(document_prefix(42, &path), document_prefix(99, &path));
+        let restored = load_cache(&store, u64::MAX).unwrap();
+        assert_eq!(restored.documents[&path].local.as_deref(), Some(&value));
+    }
+
+    #[test]
     fn clean_pages_are_loaded_only_when_opened_and_can_be_evicted() {
         let temporary = tempfile::tempdir().unwrap();
         let store = SecureBlobStore::new(temporary.path()).unwrap();
@@ -1959,6 +2091,7 @@ mod tests {
         apply_changes(
             &mut sent,
             vec![Change {
+                base: None,
                 path: path.clone(),
                 value: Some(value.clone()),
             }],
@@ -1970,6 +2103,7 @@ mod tests {
         apply_changes(
             &mut latest,
             vec![Change {
+                base: None,
                 path: path.clone(),
                 value: Some(edited.clone()),
             }],
@@ -1988,6 +2122,86 @@ mod tests {
         let b = Uuid::new_v4().to_string();
         let value = json!({"version":1,"kind":"workspace","id":workspace,"title":"École","icon":"📚","color":"#78b89b","pages":[{"id":a,"title":"Anglais","icon":"","parentId":b},{"id":b,"title":"Français","icon":"","parentId":a}]});
         assert!(validate_file(&format!("notes/{workspace}/workspace.json"), &value).is_err());
+    }
+
+    #[test]
+    fn typing_during_a_pull_keeps_the_received_changes() {
+        let (path, base) = page();
+        let mut cache = Cache::empty(42);
+        let mut remote = base.clone();
+        remote["title"] = json!("Advanced English");
+        merge_remote(
+            &mut cache,
+            BTreeMap::from([(path.clone(), Some(Arc::new(remote)))]),
+            BTreeMap::from([(path.clone(), "a".repeat(40))]),
+            "b".repeat(40),
+        )
+        .unwrap();
+        let mut typed = base.clone();
+        typed["content"]["content"][0]["content"][0]["text"] = json!("Cours du lundi et mardi");
+        apply_changes(
+            &mut cache,
+            vec![Change {
+                path: path.clone(),
+                value: Some(typed),
+                base: Some(EditBase { value: Some(base) }),
+            }],
+        )
+        .unwrap();
+        let document = &cache.documents[&path];
+        assert!(document.conflict.is_none());
+        let value = document.local.as_deref().unwrap();
+        assert_eq!(value["title"], "Advanced English");
+        assert_eq!(
+            value["content"]["content"][0]["content"][0]["text"],
+            "Cours du lundi et mardi"
+        );
+    }
+
+    #[test]
+    fn overlapping_typing_and_received_changes_keep_both_versions() {
+        let (path, base) = page();
+        let mut cache = Cache::empty(42);
+        let mut remote = base.clone();
+        remote["content"]["content"][0]["content"][0]["text"] = json!("Cours du vendredi");
+        merge_remote(
+            &mut cache,
+            BTreeMap::from([(path.clone(), Some(Arc::new(remote.clone())))]),
+            BTreeMap::from([(path.clone(), "a".repeat(40))]),
+            "b".repeat(40),
+        )
+        .unwrap();
+        let mut typed = base.clone();
+        typed["content"]["content"][0]["content"][0]["text"] = json!("Cours du mercredi");
+        apply_changes(
+            &mut cache,
+            vec![Change {
+                path: path.clone(),
+                value: Some(typed.clone()),
+                base: Some(EditBase { value: Some(base) }),
+            }],
+        )
+        .unwrap();
+        let conflict = cache.documents[&path].conflict.as_ref().unwrap();
+        assert_eq!(conflict.local.as_deref(), Some(&typed));
+        assert_eq!(conflict.remote.as_deref(), Some(&remote));
+        assert!(commit_tree(&cache).is_err());
+    }
+
+    #[test]
+    fn deep_page_trees_are_validated_without_repeated_parent_scans() {
+        let workspace = Uuid::new_v4().to_string();
+        let mut parent = None;
+        let pages: Vec<_> = (0..4096)
+            .map(|_| {
+                let id = Uuid::new_v4().to_string();
+                let page = json!({"id":id,"title":"Cours","icon":"","parentId":parent});
+                parent = Some(id);
+                page
+            })
+            .collect();
+        let value = json!({"version":1,"kind":"workspace","id":workspace,"title":"École","icon":"📚","color":"#78b89b","pages":pages});
+        assert!(validate_file(&format!("notes/{workspace}/workspace.json"), &value).is_ok());
     }
 
     type HttpRequest = (String, Value);
@@ -2142,10 +2356,12 @@ mod tests {
             &mut cache,
             vec![
                 Change {
+                    base: None,
                     path: page_path.clone(),
                     value: Some(page),
                 },
                 Change {
+                    base: None,
                     path: workspace_path,
                     value: Some(workspace),
                 },

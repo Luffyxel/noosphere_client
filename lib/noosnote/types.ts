@@ -138,7 +138,9 @@ export type NoosnoteApi = {
   page: (workspaceId: string, pageId: string) => Promise<NoteSnapshot>;
   setup: () => Promise<NoteSnapshot>;
   openSetup: (mode: 'repository' | 'installation') => Promise<void>;
-  save: (changes: NoteChange[]) => Promise<NoteSnapshot>;
+  save: (
+    changes: (NoteChange & { base?: { value: NoteDocument | null } })[],
+  ) => Promise<NoteSnapshot>;
   sync: () => Promise<NoteSnapshot>;
   resolve: (id: string, choice: 'local' | 'remote') => Promise<NoteSnapshot>;
 };

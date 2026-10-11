@@ -571,13 +571,43 @@ export function normalizeColumnValues(
               ? Number(old)
               : null;
       else if (column.type === 'checkbox') values[column.id] = old === true;
-      else if (column.type === 'multiSelect' || column.type === 'relation')
-        values[column.id] = Array.isArray(old) ? old : [];
-      else if (column.type === 'select')
-        values[column.id] = column.options?.some((option) => option.id === old)
-          ? (old ?? null)
+      else if (column.type === 'multiSelect')
+        values[column.id] = (
+          Array.isArray(old) ? old : typeof old === 'string' ? [old] : []
+        ).filter((value) =>
+          column.options?.some((option) => option.id === value),
+        );
+      else if (column.type === 'relation') {
+        const previous = database.columns.find(
+          (current) => current.id === column.id,
+        );
+        values[column.id] =
+          previous?.type === 'relation' &&
+          previous.databaseId === column.databaseId &&
+          Array.isArray(old)
+            ? old
+            : [];
+      } else if (column.type === 'select') {
+        const selected = Array.isArray(old) ? old[0] : old;
+        values[column.id] = column.options?.some(
+          (option) => option.id === selected,
+        )
+          ? (selected ?? null)
           : null;
-      else values[column.id] = typeof old === 'string' ? old : '';
+      } else
+        values[column.id] = Array.isArray(old)
+          ? old
+              .map(
+                (value) =>
+                  database.columns
+                    .find((current) => current.id === column.id)
+                    ?.options?.find((option) => option.id === value)?.name ??
+                  value,
+              )
+              .join(', ')
+          : old === null || old === undefined
+            ? ''
+            : String(old);
       return { ...row, values };
     }),
   };

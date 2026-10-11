@@ -24,12 +24,13 @@ Installation notes and checksums are kept in [`release/`](release/README.md).
 - audio calls with an optional camera;
 - microphone, audio output, and camera selection;
 - microphone test, noise suppression, echo cancellation, and gain control;
+- private Noosnote workspaces with nested pages and databases;
 - desktop packages for Windows and Linux.
 
 ## How it works
 
-Each user connects Noosphere to GitHub and gives the application access to one
-public repository. The repository stores encrypted protocol data. Private keys
+For messaging, each user gives Noosphere access to a dedicated public
+GitHub repository. The repository stores encrypted protocol data. Private keys
 and readable messages remain on the user's computer. Each GitHub account keeps
 its own cryptographic identity regardless of the order in which accounts are
 opened.
@@ -46,6 +47,12 @@ firewalls.
 GitHub can observe repository metadata such as commit dates, activity volume,
 and the accounts involved. WebRTC exposes the network information required by
 ICE to both peers.
+
+## Noosnote
+
+The sidebar **+** creates notes alongside discussions. Pages and customizable
+databases sync through one private repository per account across computers.
+The [Noosnote guide](docs/noosnote.md) covers setup, nested pages, views and sync.
 
 ## Remote desktop development
 
@@ -71,7 +78,7 @@ some CGNAT paths remain unreachable. No router port forwarding is required. Wind
 asks once for administrator approval to allow inbound UDP for the exact executable;
 the UAC prompt opens Noosphere directly without a PowerShell window. Moving or
 replacing the portable build triggers that approval again. This is a validation
-build rather than the cross-platform V0.2.0. See the [engine documentation](docs/remote-desktop.md)
+build; the full cross-platform remote desktop target is still being developed. See the [engine documentation](docs/remote-desktop.md)
 for implementation status and reproducible benchmarks.
 
 The “Start with the computer” setting keeps the signed-in host available after

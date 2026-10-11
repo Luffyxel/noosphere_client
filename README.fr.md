@@ -25,12 +25,13 @@ Les instructions d’installation et les sommes de contrôle se trouvent dans
 - appels audio avec caméra activable ;
 - choix du microphone, de la sortie audio et de la caméra ;
 - test du microphone, réduction du bruit, annulation d’écho et réglage du gain ;
+- espaces Noosnote privés avec pages et tables imbriquées ;
 - paquets de bureau pour Windows et Linux.
 
 ## Fonctionnement
 
-Chaque utilisateur relie Noosphere à GitHub et autorise l’application sur un
-seul dépôt public. Ce dépôt contient les données chiffrées du protocole. Les
+Pour la messagerie, chaque utilisateur autorise Noosphere sur un dépôt
+GitHub public dédié. Ce dépôt contient les données chiffrées du protocole. Les
 clés privées et les messages lisibles restent sur l’ordinateur. Chaque compte
 GitHub conserve sa propre identité cryptographique, quel que soit l’ordre dans
 lequel les comptes sont ouverts.
@@ -47,6 +48,13 @@ derrière un NAT symétrique, un CGNAT ou un pare-feu restrictif.
 GitHub peut voir les métadonnées du dépôt, notamment les dates de commit, le
 volume d’activité et les comptes impliqués. WebRTC révèle aux deux pairs les
 informations réseau nécessaires à ICE.
+
+## Noosnote
+
+Le **+** de la barre latérale crée des notes à côté des discussions. Les pages et
+les tables personnalisables se synchronisent entre machines grâce à un seul
+dépôt privé par compte. Le [guide Noosnote](docs/noosnote.fr.md) décrit la
+configuration, les pages imbriquées, les vues et la synchronisation.
 
 ## Développement du bureau à distance
 
@@ -76,7 +84,7 @@ Noosphere ne demande aucune redirection de port sur la box. Windows demande une 
 l’autorisation administrateur d’autoriser l’UDP entrant pour l’exécutable exact ;
 la fenêtre UAC ouvre Noosphere directement, sans fenêtre PowerShell. La version
 portable redemande cette autorisation si elle est déplacée ou remplacée.
-Cette version de validation n’est pas encore la V0.2.0 multiplateforme.
+La version complète du bureau à distance multiplateforme reste en développement.
 La [documentation du moteur](docs/remote-desktop.md) précise l’état de
 l’implémentation et les benchmarks reproductibles.
 

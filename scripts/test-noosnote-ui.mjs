@@ -143,7 +143,9 @@ try {
   await page
     .getByRole('button', { name: 'Ouvrir Lundi 12 octobre', exact: true })
     .waitFor();
-  await page.getByLabel('Jour', { exact: true }).fill('2026-10-12');
+  const today = new Date();
+  const lessonDate = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+  await page.getByLabel('Jour', { exact: true }).fill(lessonDate);
   await page
     .getByRole('button', { name: 'Ajouter une vue', exact: true })
     .click();

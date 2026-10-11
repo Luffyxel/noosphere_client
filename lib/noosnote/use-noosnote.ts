@@ -32,7 +32,14 @@ export function useNoosnote(ownerId: number, visible: boolean) {
   const [error, setError] = useState('');
   const current = useRef<NoteSnapshot>(EMPTY);
   const pending = useRef(
-    new Map<string, { value: NoteDocument | null; revision: number }>(),
+    new Map<
+      string,
+      {
+        value: NoteDocument | null;
+        base: NoteDocument | null;
+        revision: number;
+      }
+    >(),
   );
   const revision = useRef(0);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -110,12 +117,21 @@ export function useNoosnote(ownerId: number, visible: boolean) {
       while (pending.current.size && ownScope === scope.current) {
         const batch = [...pending.current].slice(0, 256);
         const response = await api.save(
-          batch.map(([path, entry]) => ({ path, value: entry.value })),
+          batch.map(([path, entry]) => ({
+            path,
+            value: entry.value,
+            base: { value: entry.base },
+          })),
         );
         if (ownScope !== scope.current) return;
-        for (const [path, entry] of batch)
+        for (const [path, entry] of batch) {
           if (pending.current.get(path)?.revision === entry.revision)
             pending.current.delete(path);
+          else {
+            const next = pending.current.get(path);
+            if (next) next.base = entry.value;
+          }
+        }
         accept(response);
       }
     })();
@@ -137,11 +153,16 @@ export function useNoosnote(ownerId: number, visible: boolean) {
     (changes: NoteChange[]) => {
       if (!changes.length) return;
       revision.current += 1;
-      for (const change of changes)
+      for (const change of changes) {
+        const previous = pending.current.get(change.path);
         pending.current.set(change.path, {
           value: change.value,
+          base: previous
+            ? previous.base
+            : (current.current.files[change.path] ?? null),
           revision: revision.current,
         });
+      }
       current.current = {
         ...current.current,
         files: applyFiles(current.current.files, changes),

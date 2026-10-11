@@ -1,4 +1,5 @@
 import { useMemo, useRef, useState } from 'react';
+import { Popover } from '@base-ui/react/popover';
 import {
   ArrowUpRight,
   CalendarDays,
@@ -84,10 +85,12 @@ function Cell({
   database,
   row,
   column,
+  reader,
 }: {
   database: NoteDatabase;
   row: DatabaseRow;
   column: Column;
+  reader: ReturnType<typeof createCellReader>;
 }) {
   const { notes, workspaceId, openPage, report } = useNoteContext();
   const title = rowPageTitle(notes.files, database, row);
@@ -211,8 +214,8 @@ function Cell({
           : [];
     const selected = Array.isArray(value) ? value : [];
     return (
-      <details className="note-cell-picker">
-        <summary>
+      <Popover.Root>
+        <Popover.Trigger className="note-cell-picker" aria-label={column.name}>
           {selected.length
             ? selected
                 .map(
@@ -222,44 +225,54 @@ function Cell({
                 )
                 .join(', ')
             : '—'}
-        </summary>
-        <div className="note-cell-options">
-          {options.length === 0 && <p>Aucun élément</p>}
-          {options.map((option) => (
-            <label key={option.id}>
-              <input
-                type="checkbox"
-                checked={selected.includes(option.id)}
-                onChange={(event) =>
-                  write(
-                    event.target.checked
-                      ? [...selected, option.id].slice(0, 200)
-                      : selected.filter((value) => value !== option.id),
-                  )
-                }
-              />
-              {option.name}
-              {column.type === 'relation' && (
-                <button
-                  type="button"
-                  aria-label={`Ouvrir ${option.name}`}
-                  onClick={() => {
-                    if (related?.workspaceId === workspaceId)
-                      openPage(option.id);
-                  }}
-                  disabled={related?.workspaceId !== workspaceId}
-                >
-                  <ArrowUpRight size={13} />
-                </button>
-              )}
-            </label>
-          ))}
-        </div>
-      </details>
+        </Popover.Trigger>
+        <Popover.Portal>
+          <Popover.Positioner
+            sideOffset={5}
+            align="start"
+            className="note-cell-positioner"
+          >
+            <Popover.Popup
+              className="note-cell-options"
+              aria-label={column.name}
+            >
+              {options.length === 0 && <p>Aucun élément</p>}
+              {options.map((option) => (
+                <label key={option.id}>
+                  <input
+                    type="checkbox"
+                    checked={selected.includes(option.id)}
+                    onChange={(event) =>
+                      write(
+                        event.target.checked
+                          ? [...selected, option.id].slice(0, 200)
+                          : selected.filter((value) => value !== option.id),
+                      )
+                    }
+                  />
+                  {option.name}
+                  {column.type === 'relation' && (
+                    <button
+                      type="button"
+                      aria-label={`Ouvrir ${option.name}`}
+                      onClick={() => {
+                        if (related?.workspaceId === workspaceId)
+                          openPage(option.id);
+                      }}
+                      disabled={related?.workspaceId !== workspaceId}
+                    >
+                      <ArrowUpRight size={13} />
+                    </button>
+                  )}
+                </label>
+              ))}
+            </Popover.Popup>
+          </Popover.Positioner>
+        </Popover.Portal>
+      </Popover.Root>
     );
   }
   if (column.type === 'formula' || column.type === 'rollup') {
-    const reader = createCellReader(notes.files);
     const result = reader.read(database, row, column);
     const label = reader.label(column, result.value);
     return (
@@ -1137,7 +1150,12 @@ export function Database({ databaseId }: { databaseId: string }) {
             .map((column) => (
               <label key={column.id}>
                 {column.name}
-                <Cell database={database!} row={row} column={column} />
+                <Cell
+                  database={database!}
+                  row={row}
+                  column={column}
+                  reader={reader}
+                />
               </label>
             ))}
         </details>
@@ -1182,7 +1200,12 @@ export function Database({ databaseId }: { databaseId: string }) {
               <tr key={row.id}>
                 {columns.map((column) => (
                   <td key={column.id}>
-                    <Cell database={database!} row={row} column={column} />
+                    <Cell
+                      database={database!}
+                      row={row}
+                      column={column}
+                      reader={reader}
+                    />
                   </td>
                 ))}
                 <td>

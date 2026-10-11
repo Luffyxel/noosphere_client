@@ -374,6 +374,8 @@ export function createCellReader(files: NoteFiles, clock = new Date()) {
         const related = allDatabases.find(
           (database) => database.id === relation?.databaseId,
         );
+        if (!relation || !related)
+          throw new Error('Choisis une relation pour cette agrégation.');
         const links = relation ? row.values[relation.id] : [];
         const rows =
           related && Array.isArray(links)
@@ -386,10 +388,15 @@ export function createCellReader(files: NoteFiles, clock = new Date()) {
         );
         if (column.aggregate === 'count') value = rows.length;
         else {
-          const values =
-            related && property
-              ? rows.map((row) => read(related, row, property).value)
-              : [];
+          if (!property)
+            throw new Error('Choisis la propriété liée à calculer.');
+          const values = rows.map((row) => {
+            const result = read(related, row, property);
+            if (result.error) throw new Error(result.error);
+            return column.aggregate === 'show'
+              ? displayCell(property, result.value, pageNames)
+              : result.value;
+          });
           const numbers = values.filter(
             (value): value is number =>
               typeof value === 'number' && Number.isFinite(value),

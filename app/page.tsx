@@ -2166,7 +2166,12 @@ function NoosphereApp({
             size="icon"
             className="size-9 rounded-[10px] text-[#8e8e93] hover:bg-white/[.06] hover:text-white"
             aria-label="Se déconnecter"
-            onClick={onSignOut}
+            onClick={() => {
+              void notes
+                .flush()
+                .then(onSignOut)
+                .catch((error) => setSyncError(readableError(error)));
+            }}
           >
             <LogOut />
           </Button>

@@ -325,8 +325,8 @@ function ConflictDialog({
   return (
     <NoteDialog title="Choisir la version à garder" open onClose={onClose}>
       <p className="note-muted">
-        Cette modification et celle d’une autre machine touchent le même
-        contenu. Les deux versions restent conservées jusqu’à ton choix.
+        Deux modifications touchent le même contenu. Les deux versions restent
+        conservées jusqu’à ton choix.
       </p>
       <div className="note-conflict-heading">
         <strong>{title}</strong>
@@ -346,7 +346,9 @@ function ConflictDialog({
       <div className="note-conflict-versions">
         {(['local', 'remote'] as const).map((choice) => (
           <div key={choice}>
-            <strong>{choice === 'local' ? 'Cette machine' : 'GitHub'}</strong>
+            <strong>
+              {choice === 'local' ? 'Cette machine' : 'Version enregistrée'}
+            </strong>
             <pre>{summary(conflict[choice])}</pre>
             <button
               className="note-primary"

@@ -679,22 +679,20 @@
   font-size: 11px;
 }
 .note-cell-picker {
-  position: relative;
   max-width: 220px;
-}
-.note-cell-picker > summary {
-  list-style: none;
+  display: block;
+  width: 100%;
+  text-align: left;
   padding: 8px 2px;
   cursor: pointer;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
+.note-cell-positioner {
+  z-index: 100;
+}
 .note-cell-options {
-  position: absolute;
-  left: 0;
-  top: 33px;
-  z-index: 25;
   width: 235px;
   max-height: 260px;
   overflow: auto;
@@ -703,6 +701,8 @@
   border-radius: 9px;
   padding: 7px;
   box-shadow: 0 8px 30px #0006;
+  color: #e5e5ec;
+  font-size: 12px;
 }
 .note-cell-options label {
   display: flex;
