@@ -31,6 +31,14 @@ const hostLibraries = new Set([
   'libssl.so.3',
   'libcrypto.so.3',
   'liblzma.so.5',
+  'libexpat.so.1',
+  'libX11.so.6',
+  'libX11-xcb.so.1',
+  'libxcb.so.1',
+  'libwayland-client.so.0',
+  'libwayland-server.so.0',
+  'libwayland-cursor.so.0',
+  'libwayland-egl.so.1',
 ]);
 
 export function usesHostLibrary(name) {

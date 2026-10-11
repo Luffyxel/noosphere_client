@@ -40,6 +40,10 @@ type DesktopAppHandle = tauri::AppHandle<DesktopRuntime>;
 #[cfg(target_os = "linux")]
 pub fn prepare_linux_media_runtime() {
     unsafe { std::env::set_var("GDK_BACKEND", "x11") };
+    let egl_vendors = std::path::Path::new("/run/opengl-driver/share/glvnd/egl_vendor.d");
+    if egl_vendors.is_dir() {
+        prepend_linux_path("__EGL_VENDOR_LIBRARY_DIRS", egl_vendors);
+    }
     let Some(app_dir) = std::env::var_os("APPDIR").map(std::path::PathBuf::from) else {
         return;
     };
@@ -362,12 +366,7 @@ fn configure_linux_runtime() -> bool {
         ("--disable-setuid-sandbox".into(), None),
         ("password-store".into(), Some("basic".into())),
     ];
-    if !smoke_test || std::env::var("NOOSPHERE_SMOKE_GPU").as_deref() == Ok("1") {
-        command_line_args.extend([
-            ("use-gl".into(), Some("angle".into())),
-            ("use-angle".into(), Some("gl-egl".into())),
-        ]);
-    } else {
+    if smoke_test && std::env::var("NOOSPHERE_SMOKE_GPU").as_deref() != Ok("1") {
         command_line_args.extend([
             ("--single-process".into(), None),
             ("--disable-gpu".into(), None),
