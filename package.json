@@ -1,7 +1,7 @@
 {
   "name": "noosphere",
   "productName": "Noosphere",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "private": true,
   "license": "AGPL-3.0-only",
   "engines": {
@@ -41,7 +41,8 @@
     "format": "oxfmt && node scripts/native-toolchain.mjs cargo fmt --manifest-path src-tauri/Cargo.toml -p noosphere-desktop -p noosphere-remote",
     "format:check": "oxfmt --check && node scripts/native-toolchain.mjs cargo fmt --manifest-path src-tauri/Cargo.toml -p noosphere-desktop -p noosphere-remote -- --check",
     "test:noosnote-ui": "node scripts/test-noosnote-ui.mjs",
-    "generate:note-emojis": "node scripts/generate-note-emojis.mjs"
+    "generate:note-emojis": "node scripts/generate-note-emojis.mjs",
+    "test:noosnote-files": "node scripts/test-noosnote-files-ui.mjs"
   },
   "dependencies": {
     "@base-ui/react": "1.7.0",
@@ -54,9 +55,13 @@
     "@tiptap/pm": "3.31.4",
     "@tiptap/react": "3.31.4",
     "@tiptap/starter-kit": "3.31.4",
+    "cfb": "1.2.2",
     "class-variance-authority": "0.7.1",
     "clsx": "2.1.1",
+    "docx": "9.10.0",
     "lucide-react": "1.31.0",
+    "mammoth": "1.13.0",
+    "pdfjs-dist": "5.4.624",
     "react": "19.2.8",
     "react-dom": "19.2.8",
     "tailwind-merge": "3.6.0",

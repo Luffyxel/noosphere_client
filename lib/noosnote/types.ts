@@ -14,6 +14,16 @@ export type PageEntry = {
   parentId: string | null;
   databaseId?: string;
   trashedAt?: string;
+  file?: Pick<NoteAttachment, 'name' | 'mediaType' | 'size'>;
+};
+
+export type NoteAttachment = {
+  id: string;
+  name: string;
+  mediaType: string;
+  size: number;
+  checksum: string;
+  chunks: { sha: string; size: number }[];
 };
 
 export type Workspace = {
@@ -36,6 +46,8 @@ export type NotePage = {
   icon: string;
   emoji?: string;
   content: RichNode;
+  attachment?: NoteAttachment;
+  importNotice?: string;
 };
 
 export type PropertyType =
@@ -136,6 +148,12 @@ export type NoteSnapshot = {
   setup: 'repository' | 'installation' | 'ready';
 };
 export type NoosnoteApi = {
+  importFile: (
+    workspaceId: string,
+    name: string,
+    content: string,
+  ) => Promise<NoteAttachment>;
+  readFile: (workspaceId: string, pageId: string) => Promise<string>;
   cached: () => Promise<NoteSnapshot>;
   discover: () => Promise<NoteSnapshot>;
   page: (workspaceId: string, pageId: string) => Promise<NoteSnapshot>;

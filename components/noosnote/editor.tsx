@@ -36,6 +36,8 @@ import {
   Heading1,
   Heading2,
   Minus,
+  Paperclip,
+  Loader2,
 } from 'lucide-react';
 import {
   change,
@@ -47,6 +49,14 @@ import {
   noteIcon,
 } from '@/lib/noosnote/model';
 import type { NotePage } from '@/lib/noosnote/types';
+import {
+  bytesBase64,
+  convertWord,
+  documentChanges,
+  isWord,
+  MAX_ATTACHMENT_BYTES,
+} from '@/lib/noosnote/files';
+import { FileCard, FilePage, DocumentHeader } from './file-card';
 import { useNoteContext } from './context';
 import { PageContextMenu } from './page-menu';
 const Database = lazy(() =>
@@ -115,6 +125,14 @@ function PageNode({ node }: NodeViewProps) {
   const entry = getWorkspace(notes.files, workspaceId)?.pages.find(
     (page) => page.id === node.attrs.pageId,
   );
+  if (entry?.file && !entry.trashedAt)
+    return (
+      <NodeViewWrapper className="note-file-node" contentEditable={false}>
+        <PageContextMenu pageId={entry.id}>
+          <FileCard entry={entry} />
+        </PageContextMenu>
+      </NodeViewWrapper>
+    );
   return (
     <NodeViewWrapper contentEditable={false}>
       <PageContextMenu pageId={node.attrs.pageId as string}>
@@ -169,6 +187,22 @@ const PageBlock = Node.create({
 });
 
 export function NoteEditor({ page }: { page: NotePage }) {
+  if (page.attachment && !isWord(page.attachment.name))
+    return (
+      <>
+        <FilePage page={page} />
+        <TextEditor page={page} />
+      </>
+    );
+  return (
+    <>
+      {page.attachment && <DocumentHeader page={page} />}
+      <TextEditor page={page} />
+    </>
+  );
+}
+
+function TextEditor({ page }: { page: NotePage }) {
   const { notes, workspaceId, openPage, report } = useNoteContext();
   const latest = useRef(notes);
   useEffect(() => {
@@ -177,6 +211,17 @@ export function NoteEditor({ page }: { page: NotePage }) {
   const [insertOpen, setInsertOpen] = useState(false);
   const [linkOpen, setLinkOpen] = useState(false);
   const [linkValue, setLinkValue] = useState('');
+  const fileInput = useRef<HTMLInputElement>(null);
+  const importing = useRef(false);
+  const alive = useRef(true);
+  const [importingName, setImportingName] = useState('');
+  const [dragging, setDragging] = useState(false);
+  useEffect(() => {
+    alive.current = true;
+    return () => {
+      alive.current = false;
+    };
+  }, []);
   const editor = useEditor(
     {
       immediatelyRender: false,
@@ -191,7 +236,8 @@ export function NoteEditor({ page }: { page: NotePage }) {
         TaskList,
         TaskItem.configure({ nested: true }),
         Placeholder.configure({
-          placeholder: 'Écris ici, ou utilise + pour ajouter une table…',
+          placeholder:
+            'Écris ici, ou utilise + pour ajouter un fichier, une table…',
         }),
         StableIds,
         DatabaseBlock,
@@ -236,6 +282,16 @@ export function NoteEditor({ page }: { page: NotePage }) {
       JSON.stringify(editor.getJSON()) === JSON.stringify(page.content)
     )
       return;
+    const latestPage = getPage(
+      latest.current.filesRef.current.files,
+      workspaceId,
+      page.id,
+    );
+    if (
+      latestPage &&
+      JSON.stringify(latestPage.content) !== JSON.stringify(page.content)
+    )
+      return;
     const { from, to } = editor.state.selection;
     editor.commands.setContent(page.content as JSONContent, {
       emitUpdate: false,
@@ -245,7 +301,7 @@ export function NoteEditor({ page }: { page: NotePage }) {
       from: Math.min(from, end),
       to: Math.min(to, end),
     });
-  }, [editor, page.content]);
+  }, [editor, page.content, page.id, workspaceId]);
   if (!editor) return <p className="note-muted">Ouverture de l’éditeur…</p>;
   const buttons = [
     {
@@ -342,6 +398,53 @@ export function NoteEditor({ page }: { page: NotePage }) {
       run: () => editor.chain().focus().redo().run(),
     },
   ];
+  async function importFiles(files: File[]) {
+    if (importing.current) return;
+    importing.current = true;
+    setInsertOpen(false);
+    setDragging(false);
+    try {
+      for (const file of files) {
+        if (!alive.current || editor!.isDestroyed) return;
+        if (!file.size || file.size > MAX_ATTACHMENT_BYTES)
+          throw new Error('Choisis un fichier de moins de 20 Mo.');
+        setImportingName(file.name);
+        const converted = isWord(file.name)
+          ? await convertWord(file)
+          : undefined;
+        if (!alive.current || editor!.isDestroyed) return;
+        const content = bytesBase64(new Uint8Array(await file.arrayBuffer()));
+        const attachment = await window.noosphereDesktop!.noosnote.importFile(
+          workspaceId,
+          file.name,
+          content,
+        );
+        if (!alive.current || editor!.isDestroyed) return;
+        const imported = documentChanges(
+          latest.current.filesRef.current.files,
+          workspaceId,
+          page.id,
+          attachment,
+          converted,
+        );
+        latest.current.edit(imported.changes);
+        editor!
+          .chain()
+          .focus()
+          .insertContent([
+            { type: 'noosPage', attrs: { id: id(), pageId: imported.page.id } },
+            { type: 'paragraph', attrs: { id: id() } },
+          ])
+          .run();
+        await latest.current.flush();
+      }
+    } catch (error) {
+      if (alive.current) report(error);
+    } finally {
+      importing.current = false;
+      if (alive.current) setImportingName('');
+    }
+  }
   function insert(kind: 'table' | 'page') {
     try {
       const files = latest.current.filesRef.current.files;
@@ -378,7 +481,42 @@ export function NoteEditor({ page }: { page: NotePage }) {
     }
   }
   return (
-    <div className="note-editor">
+    <div
+      className={`note-editor${dragging ? ' note-file-drop-active' : ''}`}
+      onDragOver={(event) => {
+        if (event.dataTransfer.types.includes('Files')) {
+          event.preventDefault();
+          event.dataTransfer.dropEffect = 'copy';
+          setDragging(true);
+        }
+      }}
+      onDragLeave={(event) => {
+        if (
+          !event.currentTarget.contains(
+            event.relatedTarget as globalThis.Node | null,
+          )
+        )
+          setDragging(false);
+      }}
+      onDrop={(event) => {
+        if (event.dataTransfer.files.length) {
+          event.preventDefault();
+          event.stopPropagation();
+          void importFiles([...event.dataTransfer.files]);
+        }
+      }}
+    >
+      <input
+        ref={fileInput}
+        className="note-file-input"
+        aria-label="Ajouter des fichiers à la page"
+        type="file"
+        multiple
+        onChange={(event) => {
+          void importFiles([...(event.target.files ?? [])]);
+          event.target.value = '';
+        }}
+      />
       <div className="note-toolbar" role="toolbar" aria-label="Mise en forme">
         {buttons.map((button) => (
           <button
@@ -402,8 +540,29 @@ export function NoteEditor({ page }: { page: NotePage }) {
           <Plus size={17} />
         </button>
       </div>
+      {dragging && (
+        <div className="note-file-drop-hint">
+          <Paperclip size={22} /> Dépose le fichier dans cette page
+        </div>
+      )}
+      {importingName && (
+        <output className="note-file-import-status">
+          <Loader2 size={16} className="animate-spin" /> Importation de{' '}
+          {importingName}…
+        </output>
+      )}
       {insertOpen && (
         <div className="note-insert-menu">
+          <button
+            onClick={() => fileInput.current?.click()}
+            disabled={!!importingName}
+          >
+            <Paperclip size={18} />
+            <span>
+              <strong>Fichier</strong>
+              <small>PDF, document Word ou pièce jointe</small>
+            </span>
+          </button>
           <button onClick={() => insert('table')}>
             <Table2 size={18} />
             <span>

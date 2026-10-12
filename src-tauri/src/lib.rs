@@ -6,6 +6,7 @@ mod github;
 mod instance_profile;
 mod models;
 mod noosnote;
+mod noosnote_files;
 #[cfg(target_os = "linux")]
 mod notification;
 mod protocol;
@@ -573,6 +574,8 @@ pub fn run() {
             noosnote::noosnote_sync,
             noosnote::noosnote_resolve,
             noosnote::noosnote_page,
+            noosnote_files::noosnote_import_file,
+            noosnote_files::noosnote_read_file,
             app_update::system_update_target,
             app_update::system_install_appimage_update,
             app_update::system_set_update_busy,

@@ -52,6 +52,23 @@ The owner marker binds the repository to its GitHub account. Workspace files
 index page titles, icons and parents. Pages hold structured editor documents;
 database rows reference page UUIDs. Renaming and moving pages preserve paths.
 
+## Files and Word documents
+
+Use **+ → File** in the editor or drop a file into the page. Attachments appear
+as cards and support files up to 20 MiB. PDFs expand inline with pagination,
+zoom, rotation, text selection, password entry and download.
+
+Word documents open as editable Noosnote pages with automatic saving.
+Text, headings, lists and tables are editable; the modified document exports
+as `.docx`. Legacy `.doc` files import as text. Images and complex layouts
+remain available in the original file.
+
+Original files stay separate from editable page content under
+`notes/<workspace-id>/attachments/<file-id>/`. Their 4 MiB parts and the page
+publish in the same private commit. Git blobs are reused, original bytes are
+checked against their checksum, and files load only for preview or download.
+Downloaded parts remain in the protected local cache.
+
 ## Sync and recovery
 
 Local checkpoints follow a 400 ms typing pause, capped at 1.8 seconds. Automatic

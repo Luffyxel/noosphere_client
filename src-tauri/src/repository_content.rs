@@ -23,15 +23,14 @@ pub fn decode_file_bytes(
         .and_then(Value::as_u64)
         .and_then(|value| usize::try_from(value).ok())
         .ok_or(Error::InvalidGitHubResponse)?;
-    if kind != "file"
-        || encoding != "base64"
-        || size > maximum_bytes
-        || (!allow_empty && size == 0)
-        || content.len() > maximum_bytes.div_ceil(3).saturating_mul(4) + BASE64_SLACK
+    if kind != "file" || encoding != "base64" || size > maximum_bytes || (!allow_empty && size == 0)
     {
         return Err(Error::InvalidGitHubResponse);
     }
     let compact = content.replace('\n', "");
+    if compact.len() > maximum_bytes.div_ceil(3).saturating_mul(4) {
+        return Err(Error::InvalidGitHubResponse);
+    }
     let bytes = STANDARD
         .decode(compact.as_bytes())
         .map_err(|_| Error::InvalidGitHubResponse)?;
@@ -64,6 +63,24 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+
+    #[test]
+    fn large_github_blobs_accept_wrapped_base64_without_relaxing_size_checks() {
+        let bytes = vec![b'a'; 4 * 1024 * 1024];
+        let encoded = STANDARD.encode(&bytes);
+        let wrapped = encoded
+            .as_bytes()
+            .chunks(60)
+            .map(|line| std::str::from_utf8(line).unwrap())
+            .collect::<Vec<_>>()
+            .join("\n");
+        let value = json!({"type":"file","encoding":"base64","size":bytes.len(),"content":wrapped});
+        assert_eq!(
+            decode_file_bytes(&value, bytes.len(), false).unwrap(),
+            bytes
+        );
+        assert!(decode_file_bytes(&value, bytes.len() - 1, false).is_err());
+    }
 
     #[test]
     fn accepts_canonical_bounded_github_file() {

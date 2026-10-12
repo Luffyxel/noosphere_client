@@ -3909,7 +3909,7 @@ dependencies = [
 
 [[package]]
 name = "noosphere-desktop"
-version = "0.2.3"
+version = "0.2.4"
 dependencies = [
  "aes-gcm-siv",
  "ashpd",
@@ -3927,6 +3927,7 @@ dependencies = [
  "secret-service",
  "serde",
  "serde_json",
+ "sha1",
  "sha2 0.11.0",
  "tauri",
  "tauri-build",

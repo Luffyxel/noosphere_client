@@ -21,6 +21,29 @@ l’application. Les notes de la 0.2.0 restent accessibles et éditables après
 la mise à jour sans recréer le dépôt. Les nouveaux emojis conservent
 une icône de remplacement compatible avec la 0.2.0.
 
+## Fichiers dans une page
+
+Le bouton **+** de l’éditeur propose **Fichier**. Il est aussi possible de
+glisser un fichier dans le contenu d’une page. Chaque fichier apparaît sous
+forme de carte, avec son nom, son type et sa taille, jusqu’à 20 Mio.
+
+**Aperçu** déplie un PDF directement dans la page. Le lecteur permet de
+changer de page, zoomer, tourner le document, sélectionner le texte et
+télécharger le fichier. Un PDF protégé demande son mot de passe.
+
+**Modifier** ouvre un document Word comme une page Noosnote : texte, titres,
+listes et tableaux sont éditables et enregistrés automatiquement. **Exporter
+en Word** télécharge la version modifiée en `.docx` ; **Original** conserve
+le fichier importé. Les anciens `.doc` sont convertis en texte. Les images
+et les mises en page complexes restent disponibles dans l’original.
+
+Les originaux sont stockés séparément du contenu éditable, dans
+`notes/<noosnote-id>/attachments/<fichier-id>/`. Les fichiers sont découpés
+en parties de 4 Mio pour la synchronisation ; leur page et leurs parties
+sont publiées dans le même commit privé. Les parties inchangées sont
+réutilisées. L’original se charge à l’ouverture de son aperçu ou à son
+téléchargement et reste ensuite disponible dans le cache local protégé.
+
 ## Premier Noosnote
 
 1. Cliquer sur **+**, puis **Noosnote**.

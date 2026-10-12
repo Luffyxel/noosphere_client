@@ -1535,3 +1535,228 @@
     grid-template-columns: 1fr;
   }
 }
+.note-file-input {
+  display: none;
+}
+.note-file-drop-active {
+  position: relative;
+  outline: 2px dashed var(--noosphere-accent, #78b89b);
+  outline-offset: 10px;
+  border-radius: 12px;
+}
+.note-file-drop-hint {
+  position: absolute;
+  z-index: 5;
+  inset: 52px 0 0;
+  min-height: 180px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  background: #1c1c1ef2;
+  border-radius: 12px;
+  color: var(--noosphere-accent, #78b89b);
+  pointer-events: none;
+}
+.note-file-import-status {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 14px;
+  margin: 12px 0;
+  background: #252528;
+  border-radius: 12px;
+  font-size: 13px;
+}
+.note-file-node {
+  margin: 12px 0;
+  min-width: 0;
+}
+.note-file-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid #ffffff12;
+  background: #242426;
+  border-radius: 16px;
+  padding: 12px;
+  transition:
+    border-color 150ms,
+    background 150ms;
+}
+.note-file-card:hover {
+  background: #29292c;
+  border-color: #ffffff24;
+}
+.note-file-main {
+  display: flex;
+  justify-content: flex-start;
+  align-items: center;
+  gap: 14px;
+  min-width: 0;
+  flex: 1;
+  text-align: left;
+  padding: 3px;
+  border: 0;
+  background: transparent;
+}
+.note-file-main > span:last-child {
+  min-width: 0;
+}
+.note-file-main strong {
+  display: block;
+  color: #f5f5f7;
+  font-size: 14px;
+  font-weight: 550;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.note-file-main small {
+  display: block;
+  color: #93939d;
+  font-size: 12px;
+  margin-top: 4px;
+}
+.note-file-icon {
+  display: grid;
+  place-items: center;
+  width: 48px;
+  height: 54px;
+  flex-shrink: 0;
+  border-radius: 12px;
+  color: #b8b8c3;
+  background: #ffffff08;
+}
+.note-file-word .note-file-icon {
+  color: #85b7fa;
+  background: #0a84ff18;
+}
+.note-file-pdf .note-file-icon {
+  color: #f5a09a;
+  background: #ff453a12;
+}
+.note-file-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 0;
+  border-radius: 9px;
+  padding: 8px;
+  font-size: 12px;
+  color: #d1d1d6;
+  background: transparent;
+}
+.note-file-action:hover {
+  background: #ffffff0c;
+}
+.note-document-header {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  border: 1px solid #ffffff10;
+  border-radius: 14px;
+  background: #242426;
+  padding: 13px 15px;
+  margin-bottom: 22px;
+  color: #a5a5b0;
+  font-size: 12px;
+}
+.note-document-header > div {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+.note-document-header > div:first-child {
+  flex: 1;
+}
+.note-document-header button {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 10px;
+  border: 1px solid #ffffff10;
+  border-radius: 8px;
+  color: #e1e1e6;
+  background: #ffffff06;
+  white-space: nowrap;
+}
+.note-document-header p {
+  flex-basis: 100%;
+  margin: 0;
+  line-height: 1.5;
+  color: #a5a5b0;
+}
+.note-pdf-reader {
+  overflow: hidden;
+  border: 1px solid #ffffff12;
+  border-radius: 14px;
+  margin: 12px 0 22px;
+  background: #141416;
+}
+.note-pdf-toolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 5px;
+  padding: 9px;
+  background: #242426;
+  color: #c7c7ce;
+  font-size: 12px;
+}
+.note-pdf-toolbar button {
+  display: grid;
+  place-items: center;
+  padding: 7px;
+  background: transparent;
+  border: 0;
+  border-radius: 7px;
+}
+.note-pdf-toolbar button:hover {
+  background: #ffffff0d;
+}
+.note-pdf-toolbar button:disabled {
+  opacity: 0.3;
+}
+.note-pdf-toolbar input {
+  width: 42px;
+  border: 1px solid #ffffff10;
+  border-radius: 6px;
+  padding: 4px;
+  background: #151517;
+  color: #f5f5f7;
+  text-align: center;
+}
+.note-pdf-toolbar-spacer {
+  flex: 1;
+}
+.note-pdf-scroll {
+  overflow: auto;
+  max-height: 720px;
+  padding: 12px;
+  min-height: 150px;
+}
+.note-pdf-sheet {
+  width: max-content;
+  position: relative;
+  margin: auto;
+  background: #fff;
+  box-shadow: 0 4px 18px #0005;
+}
+.note-pdf-sheet canvas {
+  display: block;
+}
+.note-pdf-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 15px;
+  margin: 0;
+}
+.note-file-error {
+  color: #ff9f9a;
+  font-size: 13px;
+  padding: 12px;
+}

@@ -18,6 +18,10 @@ on:
         description: Run focused authentication checks instead of the full regression suite
         type: boolean
         default: false
+      notes_feature:
+        description: Run focused Noosnote and attachment checks
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -92,7 +96,7 @@ jobs:
           echo 'LDAI_RUNTIME_FILE=/usr/local/lib/appimage-runtime' >> "$GITHUB_ENV"
           echo 'APPIMAGETOOL_RUNTIME_FILE=/usr/local/lib/appimage-runtime' >> "$GITHUB_ENV"
       - name: Run tests
-        if: ${{ !inputs.auth_hotfix }}
+        if: ${{ !inputs.auth_hotfix && !inputs.notes_feature }}
         run: |
           npm run format:check
           npm run lint
@@ -104,6 +108,27 @@ jobs:
       - name: Test GitHub installation validation
         if: ${{ inputs.auth_hotfix && runner.os == 'Linux' }}
         run: node scripts/test-github-installation.mjs
+      - name: Check Noosnote files
+        if: ${{ inputs.notes_feature }}
+        run: |
+          npm run format:check
+          npx tsc --noEmit
+          node --experimental-strip-types --test tests/noosnote.test.mjs tests/noosnote-files.test.mjs
+          node scripts/native-toolchain.mjs cargo test --manifest-path src-tauri/Cargo.toml -p noosphere-desktop noosnote
+          node scripts/native-toolchain.mjs cargo test --manifest-path src-tauri/Cargo.toml -p noosphere-desktop repository_content
+      - name: Install attachment test browser
+        if: ${{ inputs.notes_feature && runner.os == 'Linux' }}
+        run: npx playwright install --with-deps --only-shell chromium
+      - name: Test attachment interface
+        if: ${{ inputs.notes_feature && runner.os == 'Linux' }}
+        run: npm run test:noosnote-files
+      - name: Store attachment interface results
+        if: ${{ always() && inputs.notes_feature && runner.os == 'Linux' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: noosnote-files-ui
+          path: remote-test-results/noosnote-files/**
+          if-no-files-found: ignore
       - name: Build Windows package
         if: runner.os == 'Windows'
         run: |
@@ -120,7 +145,7 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
       - name: Smoke test native remote host
-        if: ${{ !inputs.auth_hotfix }}
+        if: ${{ !inputs.auth_hotfix && !inputs.notes_feature }}
         run: npm run smoke:remote
       - name: Smoke test Windows package
         if: runner.os == 'Windows'

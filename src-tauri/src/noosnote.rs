@@ -285,6 +285,12 @@ fn validate_file(path: &str, value: &Value) -> Result<()> {
         return Err(Error::InvalidData);
     }
     field(value, "title", 512)?;
+    if let Some(attachment) = value.get("attachment") {
+        if kind != "page" {
+            return Err(Error::InvalidData);
+        }
+        crate::noosnote_files::validate(attachment)?;
+    }
     if value.get("emoji").is_some() {
         field(value, "emoji", 128)?;
     }
@@ -924,7 +930,7 @@ fn validate_marker(value: &Value, owner: u64) -> Result<()> {
     Ok(())
 }
 
-fn normalize_repository(value: &Value, viewer: &GitHubViewer) -> Result<Repository> {
+pub(crate) fn normalize_repository(value: &Value, viewer: &GitHubViewer) -> Result<Repository> {
     if value.get("private").and_then(Value::as_bool) != Some(true) {
         return Err(Error::NoosnoteRepositoryPublic);
     }
@@ -1643,13 +1649,35 @@ async fn sync(state: &AppState) -> Result<Snapshot> {
     {
         return Ok(cache.snapshot(Some(&changed), "ready"));
     }
-    let updates = commit_tree(&cache)?;
+    let mut updates = commit_tree(&cache)?;
     if updates.is_empty() {
         return Ok(cache.snapshot(Some(&changed), "ready"));
     }
     if commands::session_viewer(state).await?.id != viewer.id {
         return Err(Error::SessionExpired);
     }
+    let remote_files: BTreeMap<String, String> = array(&tree, "tree", 30_000)?
+        .iter()
+        .filter(|entry| entry["type"] == "blob" && entry["mode"] == "100644")
+        .map(|entry| Ok((field(entry, "path", 512)?.to_owned(), sha(entry, "sha")?)))
+        .collect::<Result<_>>()?;
+    let attached_pages: Vec<Value> = cache
+        .index
+        .dirty
+        .iter()
+        .filter_map(|path| {
+            cache
+                .documents
+                .get(path)
+                .and_then(|document| document.local.as_deref())
+        })
+        .filter(|value| value.get("attachment").is_some())
+        .cloned()
+        .collect();
+    updates.extend(
+        crate::noosnote_files::publish_chunks(state, &root, &token, &attached_pages, &remote_files)
+            .await?,
+    );
     let response = request(
         &state.github,
         &token,
@@ -1715,7 +1743,11 @@ pub async fn noosnote_sync(state: State<'_, AppState>) -> CommandResult<Snapshot
     result.map_err(|error| error.to_string())
 }
 
-async fn load_page(state: &AppState, workspace_id: &str, page_id: &str) -> Result<Snapshot> {
+pub(crate) async fn load_page(
+    state: &AppState,
+    workspace_id: &str,
+    page_id: &str,
+) -> Result<Snapshot> {
     if !uuid(workspace_id) || !uuid(page_id) {
         return Err(Error::InvalidData);
     }
@@ -2371,7 +2403,14 @@ mod tests {
     }
 
     async fn publish_fixture(status: u16) -> (Snapshot, Cache, Vec<HttpRequest>) {
-        let (origin, server) = http_fixture(vec![
+        publish_fixture_with_file(status, false).await
+    }
+
+    async fn publish_fixture_with_file(
+        status: u16,
+        with_file: bool,
+    ) -> (Snapshot, Cache, Vec<HttpRequest>) {
+        let mut responses = vec![
             (
                 "GET /repos/octocat/noosnote_42",
                 404,
@@ -2409,11 +2448,38 @@ mod tests {
                 status,
                 json!({"message":"fixture"}),
             ),
-        ]);
+        ];
+        let file_bytes = b"%PDF-1.7\nfixture";
+        if with_file {
+            let mut hash = sha1::Sha1::new();
+            hash.update(format!("blob {}\0", file_bytes.len()).as_bytes());
+            hash.update(file_bytes);
+            responses.insert(
+                6,
+                (
+                    "POST /repos/octocat/noosnote_42/git/blobs",
+                    201,
+                    json!({"sha":hex::encode(hash.finalize())}),
+                ),
+            );
+        }
+        let (origin, server) = http_fixture(responses);
         let temporary = tempfile::tempdir().unwrap();
         let state = state(temporary.path(), origin).await;
         assert_eq!(prepare(&state, true).await.unwrap().setup, "ready");
-        let (page_path, page) = page();
+        let (page_path, mut page) = page();
+        if with_file {
+            page["attachment"] = serde_json::to_value(
+                crate::noosnote_files::cache_file(
+                    &state.blobs,
+                    42,
+                    "cours.pdf".into(),
+                    STANDARD.encode(file_bytes),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        }
         let (workspace_path, workspace) = workspace(&page);
         let mut cache = cached(&state, 42).await.unwrap();
         let changed = apply_changes(
@@ -2461,6 +2527,31 @@ mod tests {
         assert_eq!(requests[6].1["tree"].as_array().unwrap().len(), 3);
         assert_eq!(requests[7].1["parents"], json!(["a".repeat(40)]));
         assert_eq!(requests[8].1["force"], false);
+    }
+
+    #[tokio::test]
+    async fn attached_file_and_page_are_published_in_one_private_commit() {
+        let (snapshot, cache, requests) = publish_fixture_with_file(200, true).await;
+        assert_eq!(snapshot.dirty_count, 0);
+        assert!(cache.index.dirty.is_empty());
+        assert_eq!(requests[1].1["private"], true);
+        assert_eq!(requests[6].1["encoding"], "base64");
+        assert_eq!(
+            STANDARD
+                .decode(requests[6].1["content"].as_str().unwrap())
+                .unwrap(),
+            b"%PDF-1.7\nfixture"
+        );
+        let tree = requests[7].1["tree"].as_array().unwrap();
+        assert_eq!(tree.len(), 4);
+        let file = tree
+            .iter()
+            .find(|entry| entry["path"].as_str().unwrap().contains("/attachments/"))
+            .unwrap();
+        assert!(file.get("content").is_none());
+        assert!(file["path"].as_str().unwrap().ends_with("/0000.bin"));
+        assert_eq!(requests[8].1["parents"], json!(["a".repeat(40)]));
+        assert_eq!(requests[9].1["force"], false);
     }
 
     #[tokio::test]

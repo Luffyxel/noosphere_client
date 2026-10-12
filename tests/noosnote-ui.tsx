@@ -10,6 +10,7 @@ import type {
   NoosnoteApi,
   NoteFiles,
   NoteSnapshot,
+  NoteAttachment,
 } from '@/lib/noosnote/types';
 import type { NoosphereDesktopApi } from '@/lib/desktop-bridge';
 import { useNoosnote } from '@/lib/noosnote/use-noosnote';
@@ -18,6 +19,7 @@ import '@/app/globals.css';
 const school = createWorkspace('École', '📚', '#78b89b', 'school');
 let files: NoteFiles = applyFiles({}, school.changes);
 let dirtyPaths: string[] = [];
+const attachments = new Map<string, string>();
 const repository = {
   id: 421,
   name: 'noosnote_42',
@@ -38,6 +40,50 @@ function snapshot(partial?: NoteFiles): NoteSnapshot {
   };
 }
 const api: NoosnoteApi = {
+  importFile: async (_workspaceId, name, content) => {
+    const bytes = Uint8Array.from(atob(content), (character) =>
+      character.charCodeAt(0),
+    );
+    const hash = async (data: Uint8Array, algorithm: string) =>
+      [
+        ...new Uint8Array(
+          await crypto.subtle.digest(algorithm, data.buffer as ArrayBuffer),
+        ),
+      ]
+        .map((byte) => byte.toString(16).padStart(2, '0'))
+        .join('');
+    const attachment: NoteAttachment = {
+      id: crypto.randomUUID(),
+      name,
+      mediaType: /\.pdf$/i.test(name)
+        ? 'application/pdf'
+        : /\.docx$/i.test(name)
+          ? 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+          : 'application/octet-stream',
+      size: bytes.length,
+      checksum: await hash(bytes, 'SHA-256'),
+      chunks: [],
+    };
+    for (let offset = 0; offset < bytes.length; offset += 4 * 1024 * 1024) {
+      const chunk = bytes.slice(offset, offset + 4 * 1024 * 1024);
+      const prefix = new TextEncoder().encode(`blob ${chunk.length}\0`);
+      const blob = new Uint8Array(prefix.length + chunk.length);
+      blob.set(prefix);
+      blob.set(chunk, prefix.length);
+      attachment.chunks.push({
+        sha: await hash(blob, 'SHA-1'),
+        size: chunk.length,
+      });
+    }
+    attachments.set(attachment.id, content);
+    return attachment;
+  },
+  readFile: async (workspaceId, pageId) => {
+    const page = getPage(files, workspaceId, pageId);
+    const content = page?.attachment && attachments.get(page.attachment.id);
+    if (!content) throw new Error('Fichier introuvable.');
+    return content;
+  },
   cached: async () => snapshot(),
   discover: async () => snapshot(),
   setup: async () => snapshot(),
