@@ -1,8 +1,15 @@
 import { lazy, Suspense, useState } from 'react';
 import { Download, FileText, File, Loader2, X } from 'lucide-react';
 import type { NotePage, PageEntry } from '@/lib/noosnote/types';
-import { base64Bytes, fileSize, isWord, saveBlob } from '@/lib/noosnote/files';
+import {
+  base64Bytes,
+  fileSize,
+  isImage,
+  isWord,
+  saveBlob,
+} from '@/lib/noosnote/files';
 import { getPage } from '@/lib/noosnote/model';
+import { ImagePreview } from './image-preview';
 import { useNoteContext } from './context';
 const PdfReader = lazy(() =>
   import('./pdf-reader').then((module) => ({ default: module.PdfReader })),
@@ -102,6 +109,14 @@ export function FileCard({ entry }: { entry: PageEntry }) {
           )}
         </button>
       </div>
+      {isImage(file) && (
+        <ImagePreview
+          key={entry.id}
+          pageId={entry.id}
+          name={file.name}
+          onOpen={() => openPage(entry.id)}
+        />
+      )}
       {preview && (
         <Suspense fallback={<p className="note-muted">Ouverture du PDF…</p>}>
           <PdfReader page={preview} />
@@ -173,6 +188,13 @@ export function FilePage({ page }: { page: NotePage }) {
   return (
     <>
       <DocumentHeader page={page} />
+      {page.attachment && isImage(page.attachment) && (
+        <ImagePreview
+          key={page.id}
+          pageId={page.id}
+          name={page.attachment.name}
+        />
+      )}
       {page.attachment?.mediaType === 'application/pdf' && (
         <Suspense fallback={<p className="note-muted">Ouverture du PDF…</p>}>
           <PdfReader page={page} />

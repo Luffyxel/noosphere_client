@@ -1760,3 +1760,37 @@
   font-size: 13px;
   padding: 12px;
 }
+
+.note-image-preview {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 96px;
+  margin: 8px 0 18px;
+  overflow: hidden;
+  border-radius: 12px;
+  background: #ffffff03;
+}
+.note-image-preview img {
+  display: block;
+  max-width: 100%;
+  max-height: 720px;
+  width: auto;
+  height: auto;
+  object-fit: contain;
+  border-radius: 12px;
+}
+.noosnote-workspace .note-image-open {
+  display: flex;
+  justify-content: center;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: zoom-in;
+}
+.note-image-preview .note-muted {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}

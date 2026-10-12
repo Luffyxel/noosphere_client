@@ -92,6 +92,26 @@ fn media_type(name: &str, bytes: &[u8]) -> Result<&'static str> {
         .next()
         .unwrap_or_default()
         .to_ascii_lowercase();
+    let image = if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
+        Some("image/png")
+    } else if bytes.starts_with(&[0xff, 0xd8, 0xff]) {
+        Some("image/jpeg")
+    } else if bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a") {
+        Some("image/gif")
+    } else if bytes.starts_with(b"RIFF") && bytes.get(8..12) == Some(b"WEBP") {
+        Some("image/webp")
+    } else if bytes.starts_with(b"BM") {
+        Some("image/bmp")
+    } else if bytes.get(4..8) == Some(b"ftyp")
+        && matches!(bytes.get(8..12), Some(b"avif" | b"avis"))
+    {
+        Some("image/avif")
+    } else {
+        None
+    };
+    if let Some(media_type) = image {
+        return Ok(media_type);
+    }
     match extension.as_str() {
         "pdf" if bytes.starts_with(b"%PDF-") => Ok("application/pdf"),
         "docx" if bytes.starts_with(b"PK\x03\x04") => {
@@ -348,6 +368,28 @@ pub async fn noosnote_read_file(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn image_types_are_detected_from_content() {
+        for (bytes, expected) in [
+            (b"\x89PNG\r\n\x1a\n".as_slice(), "image/png"),
+            (&[0xff, 0xd8, 0xff], "image/jpeg"),
+            (b"GIF89a".as_slice(), "image/gif"),
+            (b"RIFF1234WEBP".as_slice(), "image/webp"),
+            (b"BM1234".as_slice(), "image/bmp"),
+            (b"1234ftypavif".as_slice(), "image/avif"),
+        ] {
+            assert_eq!(media_type("clipboard", bytes).unwrap(), expected);
+        }
+        assert_eq!(
+            media_type("fake.png", b"<html>").unwrap(),
+            "application/octet-stream"
+        );
+        assert_eq!(
+            media_type("vector.svg", b"<svg>").unwrap(),
+            "application/octet-stream"
+        );
+    }
 
     #[test]
     fn protected_file_chunks_survive_a_restart_without_crossing_accounts() {

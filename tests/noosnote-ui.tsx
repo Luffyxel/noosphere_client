@@ -5,6 +5,7 @@ import {
   NoosnoteRail,
   NoosnoteWorkspace,
 } from '@/components/noosnote/workspace';
+import { imageMediaType } from '@/lib/noosnote/files';
 import { applyFiles, createWorkspace, getPage } from '@/lib/noosnote/model';
 import type {
   NoosnoteApi,
@@ -55,11 +56,13 @@ const api: NoosnoteApi = {
     const attachment: NoteAttachment = {
       id: crypto.randomUUID(),
       name,
-      mediaType: /\.pdf$/i.test(name)
-        ? 'application/pdf'
-        : /\.docx$/i.test(name)
-          ? 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
-          : 'application/octet-stream',
+      mediaType:
+        imageMediaType(bytes) ??
+        (/\.pdf$/i.test(name)
+          ? 'application/pdf'
+          : /\.docx$/i.test(name)
+            ? 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+            : 'application/octet-stream'),
       size: bytes.length,
       checksum: await hash(bytes, 'SHA-256'),
       chunks: [],

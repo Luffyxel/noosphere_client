@@ -17,6 +17,35 @@ import {
 } from './model';
 
 export const MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024;
+export function imageMediaType(bytes: Uint8Array): string | undefined {
+  const starts = (...signature: number[]) =>
+    signature.every((byte, index) => bytes[index] === byte);
+  if (starts(137, 80, 78, 71, 13, 10, 26, 10)) return 'image/png';
+  if (starts(255, 216, 255)) return 'image/jpeg';
+  const header = String.fromCharCode(...bytes.subarray(0, 12));
+  if (header.startsWith('GIF87a') || header.startsWith('GIF89a'))
+    return 'image/gif';
+  if (header.startsWith('RIFF') && header.slice(8) === 'WEBP')
+    return 'image/webp';
+  if (starts(66, 77)) return 'image/bmp';
+  if (
+    header.slice(4, 8) === 'ftyp' &&
+    ['avif', 'avis'].includes(header.slice(8))
+  )
+    return 'image/avif';
+}
+export const isImage = (file: { name: string; mediaType: string }) =>
+  /^(image\/(png|jpeg|gif|webp|bmp|avif))$/.test(file.mediaType) ||
+  (file.mediaType === 'application/octet-stream' &&
+    /\.(png|jpe?g|gif|webp|bmp|avif)$/i.test(file.name));
+export function transferFiles(transfer: DataTransfer): File[] {
+  const files = [...transfer.files];
+  if (files.length) return files;
+  return [...transfer.items].flatMap((item) => {
+    const file = item.kind === 'file' ? item.getAsFile() : null;
+    return file ? [file] : [];
+  });
+}
 export const isWord = (name: string) => /\.docx?$/i.test(name);
 export const fileSize = (bytes: number) =>
   bytes < 1024 * 1024
@@ -333,7 +362,7 @@ export function documentChanges(
   }
   const page: NotePage = {
     ...created.page,
-    icon: isWord(file.name) ? '📝' : '📎',
+    icon: isWord(file.name) ? '📝' : isImage(file) ? '🖼️' : '📎',
     attachment: file,
     ...(converted?.notice ? { importNotice: converted.notice } : {}),
     content: {

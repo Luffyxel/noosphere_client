@@ -16,7 +16,7 @@ import StarterKit from '@tiptap/starter-kit';
 import TaskList from '@tiptap/extension-task-list';
 import TaskItem from '@tiptap/extension-task-item';
 import Placeholder from '@tiptap/extension-placeholder';
-import { Plugin } from '@tiptap/pm/state';
+import { Plugin, type SelectionBookmark } from '@tiptap/pm/state';
 import {
   Bold,
   Italic,
@@ -50,6 +50,7 @@ import {
 } from '@/lib/noosnote/model';
 import type { NotePage } from '@/lib/noosnote/types';
 import {
+  transferFiles,
   bytesBase64,
   convertWord,
   documentChanges,
@@ -213,6 +214,7 @@ function TextEditor({ page }: { page: NotePage }) {
   const [linkValue, setLinkValue] = useState('');
   const fileInput = useRef<HTMLInputElement>(null);
   const importing = useRef(false);
+  const importQueue = useRef<{ file: File; bookmark: SelectionBookmark }[]>([]);
   const alive = useRef(true);
   const [importingName, setImportingName] = useState('');
   const [dragging, setDragging] = useState(false);
@@ -302,6 +304,22 @@ function TextEditor({ page }: { page: NotePage }) {
       to: Math.min(to, end),
     });
   }, [editor, page.content, page.id, workspaceId]);
+  useEffect(() => {
+    if (!editor) return;
+    const map = ({
+      transaction,
+    }: {
+      transaction: import('@tiptap/pm/state').Transaction;
+    }) => {
+      for (const item of importQueue.current)
+        item.bookmark = item.bookmark.map(transaction.mapping);
+    };
+    editor.on('transaction', map);
+    return () => {
+      editor.off('transaction', map);
+      importQueue.current = [];
+    };
+  }, [editor]);
   if (!editor) return <p className="note-muted">Ouverture de l’éditeur…</p>;
   const buttons = [
     {
@@ -399,47 +417,63 @@ function TextEditor({ page }: { page: NotePage }) {
     },
   ];
   async function importFiles(files: File[]) {
+    if (!editor || editor.isDestroyed) return;
+    const bookmark = editor.state.selection.getBookmark();
+    importQueue.current.push(...files.map((file) => ({ file, bookmark })));
     if (importing.current) return;
     importing.current = true;
     setInsertOpen(false);
     setDragging(false);
     try {
-      for (const file of files) {
-        if (!alive.current || editor!.isDestroyed) return;
-        if (!file.size || file.size > MAX_ATTACHMENT_BYTES)
-          throw new Error('Choisis un fichier de moins de 20 Mo.');
-        setImportingName(file.name);
-        const converted = isWord(file.name)
-          ? await convertWord(file)
-          : undefined;
-        if (!alive.current || editor!.isDestroyed) return;
-        const content = bytesBase64(new Uint8Array(await file.arrayBuffer()));
-        const attachment = await window.noosphereDesktop!.noosnote.importFile(
-          workspaceId,
-          file.name,
-          content,
-        );
-        if (!alive.current || editor!.isDestroyed) return;
-        const imported = documentChanges(
-          latest.current.filesRef.current.files,
-          workspaceId,
-          page.id,
-          attachment,
-          converted,
-        );
-        latest.current.edit(imported.changes);
-        editor!
-          .chain()
-          .focus()
-          .insertContent([
-            { type: 'noosPage', attrs: { id: id(), pageId: imported.page.id } },
-            { type: 'paragraph', attrs: { id: id() } },
-          ])
-          .run();
-        await latest.current.flush();
+      while (importQueue.current.length) {
+        const item = importQueue.current[0];
+        const { file } = item;
+        try {
+          if (!alive.current || editor!.isDestroyed) return;
+          if (!file.size || file.size > MAX_ATTACHMENT_BYTES)
+            throw new Error('Choisis un fichier de moins de 20 Mo.');
+          setImportingName(file.name);
+          const converted = isWord(file.name)
+            ? await convertWord(file)
+            : undefined;
+          if (!alive.current || editor!.isDestroyed) return;
+          const content = bytesBase64(new Uint8Array(await file.arrayBuffer()));
+          const attachment = await window.noosphereDesktop!.noosnote.importFile(
+            workspaceId,
+            file.name,
+            content,
+          );
+          if (!alive.current || editor!.isDestroyed) return;
+          const imported = documentChanges(
+            latest.current.filesRef.current.files,
+            workspaceId,
+            page.id,
+            attachment,
+            converted,
+          );
+          latest.current.edit(imported.changes);
+          editor!
+            .chain()
+            .focus()
+            .command(({ tr }) => {
+              tr.setSelection(item.bookmark.resolve(tr.doc));
+              return true;
+            })
+            .insertContent([
+              {
+                type: 'noosPage',
+                attrs: { id: id(), pageId: imported.page.id },
+              },
+              { type: 'paragraph', attrs: { id: id() } },
+            ])
+            .run();
+          await latest.current.flush();
+        } catch (error) {
+          if (alive.current) report(error);
+        } finally {
+          importQueue.current.shift();
+        }
       }
-    } catch (error) {
-      if (alive.current) report(error);
     } finally {
       importing.current = false;
       if (alive.current) setImportingName('');
@@ -498,11 +532,29 @@ function TextEditor({ page }: { page: NotePage }) {
         )
           setDragging(false);
       }}
-      onDrop={(event) => {
-        if (event.dataTransfer.files.length) {
+      onPasteCapture={(event) => {
+        if (
+          !(event.target instanceof HTMLElement) ||
+          !event.target.closest('.note-prose')
+        )
+          return;
+        const files = transferFiles(event.clipboardData);
+        if (!files.length) return;
+        event.preventDefault();
+        event.stopPropagation();
+        void importFiles(files);
+      }}
+      onDropCapture={(event) => {
+        const files = transferFiles(event.dataTransfer);
+        if (files.length) {
           event.preventDefault();
           event.stopPropagation();
-          void importFiles([...event.dataTransfer.files]);
+          const position = editor.view.posAtCoords({
+            left: event.clientX,
+            top: event.clientY,
+          });
+          if (position) editor.commands.setTextSelection(position.pos);
+          void importFiles(files);
         }
       }}
     >
@@ -560,7 +612,7 @@ function TextEditor({ page }: { page: NotePage }) {
             <Paperclip size={18} />
             <span>
               <strong>Fichier</strong>
-              <small>PDF, document Word ou pièce jointe</small>
+              <small>Image, PDF, document Word ou pièce jointe</small>
             </span>
           </button>
           <button onClick={() => insert('table')}>
