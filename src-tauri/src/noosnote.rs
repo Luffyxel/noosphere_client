@@ -81,7 +81,7 @@ pub struct Cache {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Snapshot {
-    files: BTreeMap<String, Arc<Value>>,
+    pub(crate) files: BTreeMap<String, Arc<Value>>,
     deleted_paths: Vec<String>,
     incremental: bool,
     repository: Option<Repository>,

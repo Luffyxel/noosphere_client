@@ -110,6 +110,7 @@ jobs:
         run: node scripts/test-github-installation.mjs
       - name: Check Noosnote files
         if: ${{ inputs.notes_feature }}
+        shell: bash
         run: |
           npm run format:check
           npx tsc --noEmit
