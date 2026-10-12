@@ -455,11 +455,7 @@ function TextEditor({ page }: { page: NotePage }) {
           editor!
             .chain()
             .focus()
-            .command(({ tr }) => {
-              tr.setSelection(item.bookmark.resolve(tr.doc));
-              return true;
-            })
-            .insertContent([
+            .insertContentAt(item.bookmark.resolve(editor!.state.doc).to, [
               {
                 type: 'noosPage',
                 attrs: { id: id(), pageId: imported.page.id },

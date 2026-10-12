@@ -271,6 +271,12 @@ try {
     }),
   });
   await card.waitFor();
+  assert.equal(
+    await page
+      .getByRole('button', { name: 'Modifier Mon cours.docx', exact: true })
+      .count(),
+    1,
+  );
   await card.getByRole('button', { name: 'Aperçu', exact: true }).click();
   await page
     .locator('.note-pdf-reader .textLayer')
@@ -429,7 +435,21 @@ try {
   await page
     .getByRole('button', { name: 'Ouvrir Image déposée.png', exact: true })
     .waitFor();
-  assert.equal(await page.locator('.note-image-preview').count(), 3);
+  await page.waitForFunction(
+    () => document.querySelectorAll('.note-image-preview').length === 3,
+  );
+  assert.equal(
+    await page
+      .getByRole('button', { name: 'Modifier Mon cours.docx', exact: true })
+      .count(),
+    1,
+  );
+  assert.equal(
+    await page
+      .getByRole('button', { name: 'Ouvrir Le cours.pdf', exact: true })
+      .count(),
+    1,
+  );
   for (let index = 0; index < 3; index += 1) {
     await page
       .locator('.note-image-preview')
