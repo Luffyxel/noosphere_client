@@ -6,6 +6,14 @@ on:
       - 'v*.*.*'
   workflow_dispatch:
     inputs:
+      release_tag:
+        description: Existing version tag to package
+        type: string
+        default: ''
+      reuse_windows_run:
+        description: Run containing a validated Windows package for the same tag
+        type: string
+        default: ''
       auth_hotfix:
         description: Run focused authentication checks instead of the full regression suite
         type: boolean
@@ -14,8 +22,12 @@ on:
 permissions:
   contents: read
 
+env:
+  RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
+  REUSE_WINDOWS_RUN: ${{ inputs.reuse_windows_run }}
+
 concurrency:
-  group: release-${{ github.ref }}
+  group: release-${{ inputs.release_tag && format('refs/tags/{0}', inputs.release_tag) || github.ref }}
   cancel-in-progress: false
 
 jobs:
@@ -24,17 +36,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - os: ubuntu-22.04
-            bundles: deb,rpm,appimage
-            artifact: noosphere-linux
-          - os: windows-2025
-            bundles: nsis
-            artifact: noosphere-windows
+        include: ${{ fromJSON(inputs.auth_hotfix && inputs.reuse_windows_run != '' && '[{"os":"ubuntu-22.04","bundles":"deb,rpm,appimage","artifact":"noosphere-linux"}]' || '[{"os":"ubuntu-22.04","bundles":"deb,rpm,appimage","artifact":"noosphere-linux"},{"os":"windows-2025","bundles":"nsis","artifact":"noosphere-windows"}]') }}
     runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ inputs.release_tag || github.ref }}
       - name: Configure Node.js
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
@@ -53,7 +61,26 @@ jobs:
         run: npm ci
       - name: Verify tag
         shell: bash
-        run: node scripts/check-release-version.mjs "$GITHUB_REF_NAME"
+        run: node scripts/check-release-version.mjs "$RELEASE_TAG"
+      - name: Prepare verified Linux packaging tools
+        if: runner.os == 'Linux'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p "$HOME/.cache/tauri"
+          while read -r repository asset filename checksum; do
+            destination="$HOME/.cache/tauri/$filename"
+            gh api "repos/$repository/releases/assets/$asset?cache_bust=$(date +%s)" \
+              --header 'Accept: application/octet-stream' \
+              --header 'Cache-Control: no-cache' > "$destination"
+            printf '%s  %s\n' "$checksum" "$destination" | sha256sum --check
+            chmod 755 "$destination"
+          done <<'TOOLS'
+          tauri-apps/binary-releases 182515537 linuxdeploy-x86_64.AppImage e762bea85c8eb0d4b3508d46e5c1f037f717d0f9303ae3b4aafc8b04991fa1ef
+          linuxdeploy/linuxdeploy-plugin-appimage 602435573 linuxdeploy-plugin-appimage.AppImage 49d6a17160675a6bd1781699aae6bdf7692d98552e02a3671d2183d10547842e
+          tauri-apps/binary-releases 274691722 AppRun-x86_64 f30140a43a0a59e46db21bdefdf749b9e9f2c6946e92afabbacf98b8ae73fb4f
+          TOOLS
       - name: Pin AppImage runtime
         if: runner.os == 'Linux'
         shell: bash
@@ -79,13 +106,16 @@ jobs:
         run: node scripts/test-github-installation.mjs
       - name: Build Windows package
         if: runner.os == 'Windows'
-        run: npm run package:windows
+        run: |
+          $env:GITHUB_SHA = git rev-parse HEAD
+          npm run package:windows
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
       - name: Build Linux packages
         if: runner.os == 'Linux'
-        run: npm run package:linux
+        shell: bash
+        run: env GITHUB_SHA="$(git rev-parse HEAD)" npm run package:linux
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
@@ -142,11 +172,21 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ inputs.release_tag || github.ref }}
       - name: Download packages
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-        run: gh run download "$GITHUB_RUN_ID" --dir release-assets
+        shell: bash
+        run: |
+          gh run download "$GITHUB_RUN_ID" --dir release-assets
+          if [[ -n "$REUSE_WINDOWS_RUN" ]]; then
+            [[ "$REUSE_WINDOWS_RUN" =~ ^[1-9][0-9]+$ ]]
+            source_commit=$(gh run view "$REUSE_WINDOWS_RUN" --json headSha --jq .headSha)
+            test "$source_commit" = "$(git rev-parse HEAD)"
+            gh run download "$REUSE_WINDOWS_RUN" --name noosphere-windows --dir release-assets/noosphere-windows
+          fi
       - name: Publish GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -159,4 +199,4 @@ jobs:
           for asset in "${assets[@]}"; do
             printf '%s  %s\n' "$(sha256sum "$asset" | cut -d ' ' -f 1)" "$(basename "$asset")"
           done | sort -k 2 > SHA256SUMS.txt
-          gh release create "$GITHUB_REF_NAME" "${assets[@]}" SHA256SUMS.txt --verify-tag --generate-notes --title "Noosphere $GITHUB_REF_NAME"
+          gh release create "$RELEASE_TAG" "${assets[@]}" SHA256SUMS.txt --verify-tag --generate-notes --title "Noosphere $RELEASE_TAG"
