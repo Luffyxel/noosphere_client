@@ -420,10 +420,10 @@ function TextEditor({ page }: { page: NotePage }) {
     if (!editor || editor.isDestroyed) return;
     const bookmark = editor.state.selection.getBookmark();
     importQueue.current.push(...files.map((file) => ({ file, bookmark })));
-    if (importing.current) return;
-    importing.current = true;
     setInsertOpen(false);
     setDragging(false);
+    if (importing.current) return;
+    importing.current = true;
     try {
       while (importQueue.current.length) {
         const item = importQueue.current[0];

@@ -364,12 +364,20 @@ try {
   await page
     .getByRole('button', { name: 'Ouvrir Cours.txt', exact: true })
     .waitFor();
-  await page.waitForFunction(
-    () =>
-      [...document.querySelectorAll('.note-image-preview img')].filter(
-        (img) => img.naturalWidth === 480,
-      ).length === 2,
-  );
+  assert.equal(await page.locator('.note-image-preview').count(), 2);
+  for (let index = 0; index < 2; index += 1) {
+    await page
+      .locator('.note-image-preview')
+      .nth(index)
+      .scrollIntoViewIfNeeded();
+    await page.waitForFunction(
+      (index) =>
+        document
+          .querySelectorAll('.note-image-preview')
+          [index]?.querySelector('img')?.naturalWidth === 480,
+      index,
+    );
+  }
   assert.equal(
     await page
       .getByRole('button', { name: 'Ouvrir Capture.png', exact: true })
@@ -421,12 +429,20 @@ try {
   await page
     .getByRole('button', { name: 'Ouvrir Image déposée.png', exact: true })
     .waitFor();
-  await page.waitForFunction(
-    () =>
-      [...document.querySelectorAll('.note-image-preview img')].filter(
-        (img) => img.naturalWidth === 480,
-      ).length === 3,
-  );
+  assert.equal(await page.locator('.note-image-preview').count(), 3);
+  for (let index = 0; index < 3; index += 1) {
+    await page
+      .locator('.note-image-preview')
+      .nth(index)
+      .scrollIntoViewIfNeeded();
+    await page.waitForFunction(
+      (index) =>
+        document
+          .querySelectorAll('.note-image-preview')
+          [index]?.querySelector('img')?.naturalWidth === 480,
+      index,
+    );
+  }
   await page.evaluate(() =>
     navigator.clipboard.writeText('Un texte collé normalement.'),
   );
