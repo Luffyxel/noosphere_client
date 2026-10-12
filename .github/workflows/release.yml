@@ -14,6 +14,10 @@ on:
         description: Run containing a validated Windows package for the same tag
         type: string
         default: ''
+      packages_run:
+        description: Run containing validated Linux and Windows packages for the same tag
+        type: string
+        default: ''
       auth_hotfix:
         description: Run focused authentication checks instead of the full regression suite
         type: boolean
@@ -29,6 +33,7 @@ permissions:
 env:
   RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
   REUSE_WINDOWS_RUN: ${{ inputs.reuse_windows_run }}
+  PACKAGES_RUN: ${{ inputs.packages_run || github.run_id }}
 
 concurrency:
   group: release-${{ inputs.release_tag && format('refs/tags/{0}', inputs.release_tag) || github.ref }}
@@ -36,6 +41,7 @@ concurrency:
 
 jobs:
   package:
+    if: ${{ !inputs.packages_run }}
     timeout-minutes: 45
     strategy:
       fail-fast: false
@@ -190,6 +196,7 @@ jobs:
           if-no-files-found: error
 
   publish:
+    if: ${{ always() && (needs.package.result == 'success' || (inputs.packages_run && needs.package.result == 'skipped')) }}
     needs: package
     runs-on: ubuntu-24.04
     permissions:
@@ -206,7 +213,13 @@ jobs:
           GH_REPO: ${{ github.repository }}
         shell: bash
         run: |
-          gh run download "$GITHUB_RUN_ID" --dir release-assets
+          if [[ "$PACKAGES_RUN" != "$GITHUB_RUN_ID" ]]; then
+            [[ "$PACKAGES_RUN" =~ ^[1-9][0-9]+$ ]]
+            source_commit=$(gh run view "$PACKAGES_RUN" --json headSha --jq .headSha)
+            test "$source_commit" = "$(git rev-parse HEAD)"
+            test "$(gh run view "$PACKAGES_RUN" --json jobs --jq '[.jobs[] | select(.name | startswith("package (")) | .conclusion] | length == 2 and all(. == "success")')" = true
+          fi
+          gh run download "$PACKAGES_RUN" --pattern 'noosphere-*' --dir release-assets
           if [[ -n "$REUSE_WINDOWS_RUN" ]]; then
             [[ "$REUSE_WINDOWS_RUN" =~ ^[1-9][0-9]+$ ]]
             source_commit=$(gh run view "$REUSE_WINDOWS_RUN" --json headSha --jq .headSha)
