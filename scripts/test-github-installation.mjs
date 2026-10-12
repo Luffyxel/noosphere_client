@@ -44,7 +44,7 @@ try {
     path.join(directory, 'installation.rs'),
     [
       'use serde_json::{Map, Value};',
-      '#[derive(Debug)] enum Error { InvalidInstallation, InvalidGitHubResponse }',
+      "#[derive(Debug)] enum Error { InvalidInstallation, InvalidGitHubResponse, InstallationConfiguration(&'static str) }",
       'type Result<T> = std::result::Result<T, Error>;',
       appSlug,
       `mod noosnote { ${extract(notes, 'repository_name')} }`,

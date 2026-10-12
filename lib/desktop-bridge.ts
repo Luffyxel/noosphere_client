@@ -149,6 +149,7 @@ export type GitHubProvisioningConsent = {
 export type GitHubSetupStatus = {
   stage: 'authorization' | 'repository' | 'installation' | 'initialization';
   repositoryName?: string;
+  detail?: string;
 };
 
 declare global {

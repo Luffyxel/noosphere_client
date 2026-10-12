@@ -24,6 +24,8 @@ pub enum Error {
     SetupInProgress,
     #[error("Installation GitHub App invalide.")]
     InvalidInstallation,
+    #[error("Configuration GitHub App à corriger : {0}")]
+    InstallationConfiguration(&'static str),
     #[error("Stockage sécurisé indisponible.")]
     SecureStorageUnavailable,
     #[error("Trop d’instances Noosphere sont déjà ouvertes.")]

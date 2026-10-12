@@ -239,7 +239,7 @@ function LoginScreen({
         }
       : setupStatus?.stage === 'installation'
         ? {
-            title: 'Autorisation GitHub',
+            title: 'Configuration de Noosphere sur GitHub',
           }
         : setupStatus?.stage === 'initialization'
           ? {
@@ -343,72 +343,81 @@ function LoginScreen({
                 </p>
                 <BrandLoader className="size-4" />
               </div>
+              {setupStatus?.detail && (
+                <p
+                  role="status"
+                  className="mt-3 text-[13px] leading-5 text-[#b9b9bd]"
+                >
+                  {setupStatus.detail}
+                </p>
+              )}
             </div>
           )}
 
-          {deviceCode && (
-            <div className="mb-5 rounded-[20px] border border-white/[.08] bg-[#242426] p-4">
-              <div className="flex items-center justify-between gap-3">
-                <p className="text-[13px] font-medium text-[#f5f5f7]">
-                  Code GitHub
+          {deviceCode &&
+            (!setupStatus || setupStatus.stage === 'authorization') && (
+              <div className="mb-5 rounded-[20px] border border-white/[.08] bg-[#242426] p-4">
+                <div className="flex items-center justify-between gap-3">
+                  <p className="text-[13px] font-medium text-[#f5f5f7]">
+                    Code GitHub
+                  </p>
+                  {copied && (
+                    <div className="flex items-center gap-1 text-[11px] text-[var(--noosphere-accent)]">
+                      <Check className="size-3.5" />
+                      Copié
+                    </div>
+                  )}
+                </div>
+                <p className="mt-1 text-[12px] text-[#8e8e93]">
+                  Code à saisir sur GitHub
                 </p>
-                {copied && (
-                  <div className="flex items-center gap-1 text-[11px] text-[var(--noosphere-accent)]">
-                    <Check className="size-3.5" />
-                    Copié
-                  </div>
-                )}
-              </div>
-              <p className="mt-1 text-[12px] text-[#8e8e93]">
-                Code à saisir sur GitHub
-              </p>
-              <div
-                className="mt-4 flex items-center gap-2"
-                onCopy={(event) => {
-                  event.preventDefault();
-                  event.clipboardData.setData(
-                    'text/plain',
-                    cleanDeviceCode(deviceCode),
-                  );
-                  setCopied(true);
-                }}
-              >
-                <code className="flex min-w-0 flex-1 items-center justify-center rounded-[14px] bg-[#121214] px-4 py-3.5 text-[22px] font-semibold tracking-[.16em] text-white selection:bg-[var(--noosphere-accent-strong)]">
-                  <span>{deviceCode.slice(0, 4)}</span>
-                  <span
-                    aria-hidden="true"
-                    className="pointer-events-none mx-1 select-none text-[#636366]"
+                <div
+                  className="mt-4 flex items-center gap-2"
+                  onCopy={(event) => {
+                    event.preventDefault();
+                    event.clipboardData.setData(
+                      'text/plain',
+                      cleanDeviceCode(deviceCode),
+                    );
+                    setCopied(true);
+                  }}
+                >
+                  <code className="flex min-w-0 flex-1 items-center justify-center rounded-[14px] bg-[#121214] px-4 py-3.5 text-[22px] font-semibold tracking-[.16em] text-white selection:bg-[var(--noosphere-accent-strong)]">
+                    <span>{deviceCode.slice(0, 4)}</span>
+                    <span
+                      aria-hidden="true"
+                      className="pointer-events-none mx-1 select-none text-[#636366]"
+                    >
+                      -
+                    </span>
+                    <span>{deviceCode.slice(-4)}</span>
+                  </code>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="size-12 rounded-[14px] border border-white/[.08] bg-[#2c2c2e] text-[#d1d1d6] hover:bg-[#3a3a3c] hover:text-white"
+                    aria-label="Copier le code"
+                    onClick={() => void copyCode()}
                   >
-                    -
-                  </span>
-                  <span>{deviceCode.slice(-4)}</span>
-                </code>
+                    {copied ? (
+                      <Check className="text-[var(--noosphere-accent)]" />
+                    ) : (
+                      <Clipboard />
+                    )}
+                  </Button>
+                </div>
                 <Button
                   type="button"
                   variant="ghost"
-                  size="icon"
-                  className="size-12 rounded-[14px] border border-white/[.08] bg-[#2c2c2e] text-[#d1d1d6] hover:bg-[#3a3a3c] hover:text-white"
-                  aria-label="Copier le code"
-                  onClick={() => void copyCode()}
+                  className="mt-3 h-10 w-full rounded-[12px] border border-white/[.08] bg-[#2c2c2e] text-[12px] text-[#d1d1d6] hover:bg-[#3a3a3c] hover:text-white"
+                  onClick={() => void openGitHubDevicePage()}
                 >
-                  {copied ? (
-                    <Check className="text-[var(--noosphere-accent)]" />
-                  ) : (
-                    <Clipboard />
-                  )}
+                  <ExternalLink className="size-4" />
+                  Ouvrir GitHub
                 </Button>
               </div>
-              <Button
-                type="button"
-                variant="ghost"
-                className="mt-3 h-10 w-full rounded-[12px] border border-white/[.08] bg-[#2c2c2e] text-[12px] text-[#d1d1d6] hover:bg-[#3a3a3c] hover:text-white"
-                onClick={() => void openGitHubDevicePage()}
-              >
-                <ExternalLink className="size-4" />
-                Ouvrir GitHub
-              </Button>
-            </div>
-          )}
+            )}
         </div>
       </section>
     </main>

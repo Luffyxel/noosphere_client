@@ -204,14 +204,28 @@ async fn connect_github(app: &DesktopAppHandle, state: &AppState) -> Result<GitH
             wait_for_repository(&state.github, &token, &viewer, &selection.0).await?
         }
     };
-    if !auth_step(
+    let (installed, installation_issue) = match auth_step(
         "installation-check",
         installation_is_valid(&state.github, &token, &viewer, &repository).await,
-    )? {
-        emit_setup_status(app, "installation", Some(&repository.name))?;
-        let url = crate::github::installation_url(viewer.id, repository.id)?;
+    ) {
+        Ok(installed) => (installed, None),
+        Err(Error::InstallationConfiguration(reason)) => (false, Some(reason)),
+        Err(error) => return Err(error),
+    };
+    if !installed {
+        emit_installation_status(app, &repository.name, viewer.id, installation_issue)?;
+        let url = match find_installation(&state.github, &token, viewer.id).await? {
+            Some(installation) => {
+                let id = installation
+                    .get("id")
+                    .and_then(Value::as_u64)
+                    .ok_or(Error::InvalidInstallation)?;
+                crate::github::installation_settings_url(id)?
+            }
+            None => crate::github::installation_url(viewer.id, repository.id)?,
+        };
         open_github_url(app, &url).await?;
-        wait_for_installation(&state.github, &token, &viewer, &repository).await?;
+        wait_for_installation(app, &state.github, &token, &viewer, &repository).await?;
     }
     emit_setup_status(app, "initialization", Some(&repository.name))?;
     auth_step(
@@ -529,6 +543,31 @@ fn emit_setup_status(
         .map_err(|_| Error::Local)
 }
 
+fn emit_installation_status(
+    app: &DesktopAppHandle,
+    repository_name: &str,
+    account_id: u64,
+    reason: Option<&str>,
+) -> Result<()> {
+    let notes = crate::noosnote::repository_name(account_id);
+    let instruction = format!(
+        "Sur GitHub, sélectionne « {repository_name} » et, si tu utilises les notes, « {notes} », puis enregistre. La connexion reprendra automatiquement."
+    );
+    let detail = match reason {
+        Some(reason) => format!("{reason} {instruction}"),
+        None => instruction,
+    };
+    app.emit(
+        "github-setup-status",
+        serde_json::json!({
+            "stage": "installation",
+            "repositoryName": repository_name,
+            "detail": detail,
+        }),
+    )
+    .map_err(|_| Error::Local)
+}
+
 async fn wait_for_device_token(
     client: &GitHubClient,
     device: crate::github::DeviceCode,
@@ -698,18 +737,30 @@ async fn find_installation(
 }
 
 async fn wait_for_installation(
+    app: &DesktopAppHandle,
     client: &GitHubClient,
     token: &OAuthToken,
     viewer: &ViewerIdentity,
     repository: &RepositoryIdentity,
 ) -> Result<()> {
-    for _ in 0..300 {
+    let deadline = Instant::now() + Duration::from_secs(600);
+    let mut last_issue = None;
+    while Instant::now() < deadline {
         match installation_is_valid(client, token, viewer, repository).await {
             Ok(true) => return Ok(()),
-            Ok(false) => sleep(Duration::from_secs(3)).await,
-            Err(Error::InvalidInstallation) => return Err(Error::InvalidInstallation),
+            Ok(false) => {}
+            Err(Error::InstallationConfiguration(reason)) => {
+                if last_issue != Some(reason) {
+                    crate::startup::write_log(format_args!(
+                        "[auth] phase=installation-configuration reason={reason}"
+                    ));
+                    emit_installation_status(app, &repository.name, viewer.id, Some(reason))?;
+                    last_issue = Some(reason);
+                }
+            }
             Err(error) => return Err(error),
         }
+        sleep(Duration::from_secs(5)).await;
     }
     Err(Error::AuthorizationExpired)
 }

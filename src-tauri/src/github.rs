@@ -566,6 +566,16 @@ pub fn installation_url(account_id: u64, repository_id: u64) -> Result<Url> {
     Ok(url)
 }
 
+pub fn installation_settings_url(installation_id: u64) -> Result<Url> {
+    if installation_id == 0 {
+        return Err(Error::InvalidData);
+    }
+    fixed_origin_url(
+        LOGIN_ORIGIN,
+        &format!("/settings/installations/{installation_id}"),
+    )
+}
+
 pub fn validate_installation(
     installation: &Value,
     repositories: &Value,
@@ -583,39 +593,66 @@ pub fn validate_installation(
         .ok_or(Error::InvalidInstallation)?;
     if required_string(installation, "app_slug", 100)? != APP_SLUG
         || positive_u64(account, "id")? != account_id
-        || required_string(installation, "repository_selection", 32)? != "selected"
-        || permissions.keys().any(|key| {
-            !matches!(
-                key.as_str(),
-                "contents" | "metadata" | "repository_creation" | "starring"
-            )
-        })
-        || permissions
-            .get("repository_creation")
-            .is_some_and(|value| value.as_str() != Some("write"))
+    {
+        return Err(Error::InvalidInstallation);
+    }
+    if installation
+        .get("suspended_at")
+        .is_some_and(|value| !value.is_null())
+    {
+        return Err(Error::InstallationConfiguration(
+            "réactive l’installation Noosphere dans GitHub.",
+        ));
+    }
+    if required_string(installation, "repository_selection", 32)? != "selected" {
+        return Err(Error::InstallationConfiguration(
+            "choisis « Only select repositories » dans GitHub.",
+        ));
+    }
+    if permissions.keys().any(|key| {
+        !matches!(
+            key.as_str(),
+            "contents" | "metadata" | "repository_creation" | "starring"
+        )
+    }) || permissions
+        .get("repository_creation")
+        .is_some_and(|value| value.as_str() != Some("write"))
         || permissions
             .get("starring")
             .is_some_and(|value| value.as_str() != Some("write"))
         || permissions.get("contents").and_then(Value::as_str) != Some("write")
         || permissions.get("metadata").and_then(Value::as_str) != Some("read")
     {
-        return Err(Error::InvalidInstallation);
+        return Err(Error::InstallationConfiguration(
+            "vérifie les permissions de Noosphere dans GitHub : contenu en écriture et métadonnées en lecture.",
+        ));
     }
     let repositories = repositories.as_object().ok_or(Error::InvalidInstallation)?;
     let entries = repositories
         .get("repositories")
         .and_then(Value::as_array)
         .ok_or(Error::InvalidInstallation)?;
-    let count = positive_u64(repositories, "total_count")?;
-    if !(1..=2).contains(&count)
-        || entries.len() != count as usize
-        || entries
-            .iter()
-            .filter(|entry| entry.get("id").and_then(Value::as_u64) == Some(repository_id))
-            .count()
-            != 1
+    let count = repositories
+        .get("total_count")
+        .and_then(Value::as_u64)
+        .ok_or(Error::InvalidGitHubResponse)?;
+    if count > 2 {
+        return Err(Error::InstallationConfiguration(
+            "garde uniquement les dépôts de messagerie Noosphere et de notes Noosnote.",
+        ));
+    }
+    if entries.len() != count as usize {
+        return Err(Error::InvalidGitHubResponse);
+    }
+    if entries
+        .iter()
+        .filter(|entry| entry.get("id").and_then(Value::as_u64) == Some(repository_id))
+        .count()
+        != 1
     {
-        return Err(Error::InvalidInstallation);
+        return Err(Error::InstallationConfiguration(
+            "ajoute le dépôt de messagerie Noosphere à la sélection GitHub.",
+        ));
     }
     for entry in entries
         .iter()
@@ -630,7 +667,9 @@ pub fn validate_installation(
             || entry.get("private").and_then(Value::as_bool) != Some(true)
             || entry.pointer("/owner/id").and_then(Value::as_u64) != Some(account_id)
         {
-            return Err(Error::InvalidInstallation);
+            return Err(Error::InstallationConfiguration(
+                "garde uniquement le dépôt de messagerie et le dépôt privé Noosnote de ce compte.",
+            ));
         }
     }
     positive_u64(installation, "id").map_err(|_| Error::InvalidInstallation)
@@ -1208,6 +1247,29 @@ mod tests {
             7
         );
 
+        let empty = serde_json::json!({"total_count":0,"repositories":[]});
+        assert!(matches!(
+            validate_installation(&installation, &empty, 42, 420),
+            Err(Error::InstallationConfiguration(_))
+        ));
+        let missing = serde_json::json!({"total_count":1,"repositories":[{"id":421}]});
+        assert!(matches!(
+            validate_installation(&installation, &missing, 42, 420),
+            Err(Error::InstallationConfiguration(_))
+        ));
+        let mut foreign_installation = installation.clone();
+        foreign_installation["account"]["id"] = serde_json::json!(99);
+        assert!(matches!(
+            validate_installation(&foreign_installation, &repositories, 42, 420),
+            Err(Error::InvalidInstallation)
+        ));
+        let mut suspended = installation.clone();
+        suspended["suspended_at"] = serde_json::json!("2026-10-12T00:00:00Z");
+        assert!(matches!(
+            validate_installation(&suspended, &repositories, 42, 420),
+            Err(Error::InstallationConfiguration(_))
+        ));
+
         let mut current = installation.clone();
         current["permissions"]["starring"] = Value::String("write".to_owned());
         assert_eq!(
@@ -1236,7 +1298,25 @@ mod tests {
 
         let mut broad = installation.clone();
         broad["repository_selection"] = Value::String("all".to_owned());
-        assert!(validate_installation(&broad, &repositories, 42, 420).is_err());
+        assert!(matches!(
+            validate_installation(&broad, &repositories, 42, 420),
+            Err(Error::InstallationConfiguration(_))
+        ));
+
+        let excessive_repositories = serde_json::json!({
+            "total_count":3,
+            "repositories":[{"id":420},{"id":421},{"id":422}]
+        });
+        assert!(matches!(
+            validate_installation(&installation, &excessive_repositories, 42, 420),
+            Err(Error::InstallationConfiguration(_))
+        ));
+
+        let truncated = serde_json::json!({"total_count":2,"repositories":[{"id":420}]});
+        assert!(matches!(
+            validate_installation(&installation, &truncated, 42, 420),
+            Err(Error::InvalidGitHubResponse)
+        ));
 
         let mut excessive = installation;
         excessive["permissions"]["issues"] = Value::String("write".to_owned());
@@ -1252,5 +1332,12 @@ mod tests {
         let installation = installation_url(42, 420).unwrap();
         assert_eq!(installation.host_str(), Some("github.com"));
         assert!(installation.as_str().contains("repository_ids%5B%5D=420"));
+
+        let settings = installation_settings_url(7).unwrap();
+        assert_eq!(
+            settings.as_str(),
+            "https://github.com/settings/installations/7"
+        );
+        assert!(installation_settings_url(0).is_err());
     }
 }
