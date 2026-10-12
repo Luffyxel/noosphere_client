@@ -193,7 +193,7 @@ jobs:
           GH_REPO: ${{ github.repository }}
         shell: bash
         run: |
-          node scripts/generate-latest-json.mjs
+          GITHUB_REF_NAME="$RELEASE_TAG" node scripts/generate-latest-json.mjs
           node scripts/create-release-aliases.mjs
           mapfile -d '' assets < <(find release-assets -type f -print0)
           for asset in "${assets[@]}"; do

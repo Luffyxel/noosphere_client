@@ -25,6 +25,9 @@ export async function generateLatestJson({
 }) {
   if (!repository) fail('GITHUB_REPOSITORY is required');
   if (!tag) fail('GITHUB_REF_NAME is required');
+  if (!/^v?\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/.test(tag)) {
+    fail(`Invalid release tag: ${tag}`);
+  }
 
   const entries = await fs.readdir(releaseDirectory, {
     recursive: true,
@@ -84,7 +87,7 @@ export async function generateLatestJson({
 if (import.meta.filename === process.argv[1]) {
   const { output } = await generateLatestJson({
     repository: process.env.GITHUB_REPOSITORY,
-    tag: process.env.GITHUB_REF_NAME,
+    tag: process.env.RELEASE_TAG || process.env.GITHUB_REF_NAME,
     releaseDirectory: path.resolve('release-assets'),
   });
   console.log(`Generated ${output}`);
