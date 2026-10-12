@@ -587,11 +587,14 @@ pub fn validate_installation(
         || permissions.keys().any(|key| {
             !matches!(
                 key.as_str(),
-                "contents" | "metadata" | "repository_creation"
+                "contents" | "metadata" | "repository_creation" | "starring"
             )
         })
         || permissions
             .get("repository_creation")
+            .is_some_and(|value| value.as_str() != Some("write"))
+        || permissions
+            .get("starring")
             .is_some_and(|value| value.as_str() != Some("write"))
         || permissions.get("contents").and_then(Value::as_str) != Some("write")
         || permissions.get("metadata").and_then(Value::as_str) != Some("read")
@@ -1204,6 +1207,15 @@ mod tests {
             validate_installation(&installation, &repositories, 42, 420).unwrap(),
             7
         );
+
+        let mut current = installation.clone();
+        current["permissions"]["starring"] = Value::String("write".to_owned());
+        assert_eq!(
+            validate_installation(&current, &repositories, 42, 420).unwrap(),
+            7
+        );
+        current["permissions"]["starring"] = Value::String("admin".to_owned());
+        assert!(validate_installation(&current, &repositories, 42, 420).is_err());
 
         let notes =
             serde_json::json!({"id":421,"name":"noosnote_42","private":true,"owner":{"id":42}});

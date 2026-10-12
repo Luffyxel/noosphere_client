@@ -4,6 +4,12 @@ on:
   push:
     tags:
       - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      auth_hotfix:
+        description: Run focused authentication checks instead of the full regression suite
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -59,11 +65,18 @@ jobs:
           echo 'LDAI_RUNTIME_FILE=/usr/local/lib/appimage-runtime' >> "$GITHUB_ENV"
           echo 'APPIMAGETOOL_RUNTIME_FILE=/usr/local/lib/appimage-runtime' >> "$GITHUB_ENV"
       - name: Run tests
+        if: ${{ !inputs.auth_hotfix }}
         run: |
           npm run format:check
           npm run lint
           npm test
           npm run check
+      - name: Check authentication hotfix formatting
+        if: ${{ inputs.auth_hotfix }}
+        run: npm run format:check
+      - name: Test GitHub installation validation
+        if: ${{ inputs.auth_hotfix && runner.os == 'Linux' }}
+        run: node scripts/test-github-installation.mjs
       - name: Build Windows package
         if: runner.os == 'Windows'
         run: npm run package:windows
@@ -77,6 +90,7 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
       - name: Smoke test native remote host
+        if: ${{ !inputs.auth_hotfix }}
         run: npm run smoke:remote
       - name: Smoke test Windows package
         if: runner.os == 'Windows'
