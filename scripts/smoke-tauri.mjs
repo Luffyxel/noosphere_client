@@ -36,6 +36,7 @@ function startInstance(resultPath, holdMilliseconds) {
       env: {
         ...process.env,
         NOOSPHERE_SMOKE_TEST: '1',
+        NOOSPHERE_SMOKE_CLOSE_REQUEST: '1',
         NOOSPHERE_SMOKE_HOLD_MS: String(holdMilliseconds),
         NOOSPHERE_SMOKE_RESULT_PATH: resultPath,
         NOOSPHERE_SMOKE_USER_DATA: smokeUserDataPath,
@@ -77,6 +78,22 @@ async function waitForResult(instance, resultPath) {
       ? `Le smoke test Tauri a dépassé 60 secondes.\n${instance.output()}`
       : `Aucun résultat Tauri produit (code ${instance.child.exitCode}).\n${instance.output()}`,
   );
+}
+
+async function waitForWindowClose(instance) {
+  const deadline = Date.now() + 35_000;
+  while (
+    instance.child.exitCode === null &&
+    instance.child.signalCode === null &&
+    Date.now() < deadline
+  ) {
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  if (instance.child.exitCode !== 0) {
+    throw new Error(
+      `La fermeture native de la fenêtre a échoué (code ${instance.child.exitCode}, signal ${instance.child.signalCode}).\n${instance.output()}`,
+    );
+  }
 }
 
 async function stopInstance(instance) {
@@ -185,6 +202,7 @@ try {
       `Le smoke test Tauri a échoué.\n${JSON.stringify({ firstResult, secondResult })}\n${first.output()}\n${second.output()}`,
     );
   }
+  await Promise.all([waitForWindowClose(first), waitForWindowClose(second)]);
   console.log(
     `NOOSPHERE_TAURI_SMOKE=${JSON.stringify({
       firstProfile: firstResult.instanceProfileSlot,
@@ -198,6 +216,7 @@ try {
         firstResult.mediaPermission && secondResult.mediaPermission,
       deviceCaptureRequired: requireDeviceCapture,
       brandAssets: true,
+      windowClose: true,
       isolated: true,
       startupDiagnostics,
       firstReadyMilliseconds: firstMeasurement.elapsedMilliseconds,

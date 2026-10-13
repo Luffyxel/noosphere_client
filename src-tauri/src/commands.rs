@@ -3771,6 +3771,23 @@ pub async fn system_notify(
 }
 
 #[tauri::command]
+pub fn system_close_window(
+    window: tauri::WebviewWindow<crate::DesktopRuntime>,
+    background: State<'_, crate::background_host::BackgroundHost>,
+) -> CommandResult<()> {
+    let result = if background.enabled() {
+        window.hide()
+    } else {
+        window.destroy()
+    };
+    result.map_err(|error| {
+        crate::startup::write_log(format_args!("[window] phase=close error={error}"));
+        command_error(Error::Local)
+    })?;
+    Ok(())
+}
+
+#[tauri::command]
 pub fn system_smoke_config(state: State<'_, AppState>) -> SmokeConfig {
     let enabled = std::env::var("NOOSPHERE_SMOKE_TEST").as_deref() == Ok("1");
     SmokeConfig {
@@ -3818,7 +3835,14 @@ pub fn system_smoke_complete(
         .min(60_000);
     std::thread::spawn(move || {
         std::thread::sleep(Duration::from_millis(hold));
-        app.exit(0);
+        if std::env::var("NOOSPHERE_SMOKE_CLOSE_REQUEST").as_deref() == Ok("1") {
+            use tauri::Manager as _;
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.close();
+            }
+        } else {
+            app.exit(0);
+        }
     });
     Ok(Published { published: true })
 }

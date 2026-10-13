@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { isTauri } from '@tauri-apps/api/core';
+import { noteCloseHandler } from './window-close';
+import { invoke, isTauri } from '@tauri-apps/api/core';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import type { NoteChange, NoteDocument, NoteSnapshot } from './types';
 import { applyFiles, getPage, pagePath } from './model';
@@ -342,17 +343,23 @@ export function useNoosnote(ownerId: number, visible: boolean) {
     let dispose: (() => void) | undefined;
     let active = true;
     void getCurrentWindow()
-      .onCloseRequested(async (event) => {
-        if (!pending.current.size) return;
-        event.preventDefault();
-        try {
-          await flush();
-          await getCurrentWindow().close();
-        } catch {}
-      })
+      .onCloseRequested(
+        noteCloseHandler(
+          flush,
+          () => invoke('system_close_window'),
+          (error) => {
+            if (active)
+              setError(`Impossible de fermer la fenêtre : ${message(error)}`);
+          },
+        ),
+      )
       .then((remove) => {
         if (active) dispose = remove;
         else remove();
+      })
+      .catch((error) => {
+        if (active)
+          setError(`Fermeture de la fenêtre indisponible : ${message(error)}`);
       });
     return () => {
       active = false;

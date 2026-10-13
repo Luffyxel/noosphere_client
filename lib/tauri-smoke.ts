@@ -1,4 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
+import { getCurrentWindow } from '@tauri-apps/api/window';
+import { noteCloseHandler } from '@/lib/noosnote/window-close';
 
 type SmokeConfig = {
   enabled: boolean;
@@ -227,6 +229,13 @@ function verifyWebGl(diagnostics: string[]): boolean {
 export async function runTauriSmokeTest(): Promise<void> {
   const config = await invoke<SmokeConfig>('system_smoke_config');
   if (!config.enabled || config.instanceProfileSlot === null) return;
+  await getCurrentWindow().onCloseRequested(
+    noteCloseHandler(
+      async () => {},
+      () => invoke('system_close_window'),
+      (error) => console.error('Window close failed:', error),
+    ),
+  );
   let webRtcDataChannel = false;
   let webRtcMedia = false;
   let mediaPermission = false;

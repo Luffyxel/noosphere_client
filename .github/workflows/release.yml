@@ -120,7 +120,7 @@ jobs:
         run: |
           npm run format:check
           npx tsc --noEmit
-          node --experimental-strip-types --test tests/noosnote.test.mjs tests/noosnote-files.test.mjs
+          node --experimental-strip-types --test tests/noosnote.test.mjs tests/noosnote-files.test.mjs tests/noosnote-close.test.mjs
           node scripts/native-toolchain.mjs cargo test --manifest-path src-tauri/Cargo.toml -p noosphere-desktop noosnote
           node scripts/native-toolchain.mjs cargo test --manifest-path src-tauri/Cargo.toml -p noosphere-desktop repository_content
       - name: Install attachment test browser

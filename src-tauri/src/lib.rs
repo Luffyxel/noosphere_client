@@ -618,6 +618,7 @@ pub fn run() {
             commands::noosphere_publish_realtime_signal,
             commands::noosphere_read_realtime_signal,
             commands::system_notify,
+            commands::system_close_window,
             commands::system_smoke_config,
             commands::system_smoke_complete,
         ])
