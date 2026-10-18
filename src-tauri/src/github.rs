@@ -1291,6 +1291,21 @@ mod tests {
             validate_installation(&installation, &dedicated, 42, 420).unwrap(),
             7
         );
+        let shared = json!({"id":422,"name":"noosnote_team_0f4fbbe5-3051-4944-a537-0342c58250ad","private":true,"owner":{"id":42}});
+        let with_shared = json!({"total_count":3,"repositories":[{"id":420},{"id":421,"name":"noosnote_42","private":true,"owner":{"id":42}},shared]});
+        assert_eq!(
+            validate_installation(&installation, &with_shared, 42, 420).unwrap(),
+            7
+        );
+        let mut unrelated = with_shared.clone();
+        unrelated["repositories"][2]["name"] = json!("my-private-work");
+        assert!(validate_installation(&installation, &unrelated, 42, 420).is_err());
+        let mut exposed = with_shared.clone();
+        exposed["repositories"][2]["private"] = json!(false);
+        assert!(validate_installation(&installation, &exposed, 42, 420).is_err());
+        let mut not_owned = with_shared;
+        not_owned["repositories"][2]["owner"]["id"] = json!(43);
+        assert!(validate_installation(&installation, &not_owned, 42, 420).is_err());
         let mut public = dedicated.clone();
         public["repositories"][1]["private"] = serde_json::json!(false);
         assert!(validate_installation(&installation, &public, 42, 420).is_err());

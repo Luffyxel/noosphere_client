@@ -174,6 +174,19 @@ function Cell({
         </button>
       </div>
     );
+  if (!notes.canEdit) {
+    const result = reader.read(database, row, column);
+    const label = reader.label(column, result.value);
+    return (
+      <span className="note-calculated" title={result.error}>
+        {result.error
+          ? 'Erreur'
+          : Array.isArray(label)
+            ? label.join(', ')
+            : String(label ?? '—')}
+      </span>
+    );
+  }
   const value = row.values[column.id];
   if (column.type === 'checkbox')
     return (
@@ -1038,6 +1051,7 @@ export function Database({ databaseId }: { databaseId: string }) {
     if (current) notes.edit([change({ ...current, ...patch })]);
   }
   function addRow(groupId?: string, date?: string) {
+    if (!notes.canEdit) return;
     try {
       const current = getDatabase(
         notes.filesRef.current.files,
@@ -1069,10 +1083,12 @@ export function Database({ databaseId }: { databaseId: string }) {
     }
   }
   function archive(row: DatabaseRow) {
+    if (!notes.canEdit) return;
     const workspace = getWorkspace(notes.filesRef.current.files, workspaceId);
     if (workspace) notes.edit(trashPage(workspace, row.pageId));
   }
   function drop(rowId: string, groupId: string) {
+    if (!notes.canEdit) return;
     const current = getDatabase(
       notes.filesRef.current.files,
       workspaceId,
@@ -1105,7 +1121,7 @@ export function Database({ databaseId }: { databaseId: string }) {
       <PageContextMenu key={row.id} pageId={row.pageId}>
         <div
           className="note-card"
-          draggable={draggable}
+          draggable={draggable && notes.canEdit}
           onDragStart={(event) => {
             event.dataTransfer.setData(
               'application/x-noosnote-row',
@@ -1121,6 +1137,7 @@ export function Database({ databaseId }: { databaseId: string }) {
             </button>
             <button
               aria-label="Mettre l’élément à la corbeille"
+              disabled={!notes.canEdit}
               className="note-card-trash"
               onClick={() => archive(row)}
             >
@@ -1178,7 +1195,10 @@ export function Database({ databaseId }: { databaseId: string }) {
                       column.type === 'title' ? 210 : (column.width ?? 155),
                   }}
                 >
-                  <button onClick={() => setProperty(column)}>
+                  <button
+                    disabled={!notes.canEdit}
+                    onClick={() => setProperty(column)}
+                  >
                     {column.name}
                     <Settings2 size={12} />
                   </button>
@@ -1187,7 +1207,7 @@ export function Database({ databaseId }: { databaseId: string }) {
               <th>
                 <button
                   aria-label="Ajouter une propriété"
-                  disabled={database!.columns.length >= 64}
+                  disabled={!notes.canEdit || database!.columns.length >= 64}
                   onClick={() =>
                     setProperty({ id: id(), name: 'Propriété', type: 'text' })
                   }
@@ -1213,6 +1233,7 @@ export function Database({ databaseId }: { databaseId: string }) {
                   ))}
                   <td>
                     <button
+                      disabled={!notes.canEdit}
                       className="note-row-trash"
                       aria-label={`Mettre ${rowPageTitle(notes.files, database!, row)} à la corbeille`}
                       onClick={() => archive(row)}
@@ -1388,7 +1409,7 @@ export function Database({ databaseId }: { databaseId: string }) {
           })}
           <button
             aria-label="Ajouter une vue"
-            disabled={database.views.length >= 24}
+            disabled={!notes.canEdit || database.views.length >= 24}
             onClick={() => {
               const next = createView('Nouvelle vue');
               setEditingView(next);
@@ -1410,6 +1431,7 @@ export function Database({ databaseId }: { databaseId: string }) {
           />
         </label>
         <button
+          disabled={!notes.canEdit}
           aria-label="Réglages de la vue"
           title="Filtres, tri et propriétés"
           onClick={() => setEditingView(view)}
@@ -1450,7 +1472,11 @@ export function Database({ databaseId }: { databaseId: string }) {
                 <span>{group.rows.length}</span>
               </h4>
               {group.rows.map((row) => card(row, true))}
-              <button className="note-add-row" onClick={() => addRow(group.id)}>
+              <button
+                className="note-add-row"
+                disabled={!notes.canEdit}
+                onClick={() => addRow(group.id)}
+              >
                 <Plus size={14} /> Ajouter
               </button>
             </div>

@@ -254,7 +254,8 @@ export function useNoosnote(
     scope.current += 1;
     const ownScope = scope.current;
     current.current = EMPTY;
-    pending.current.clear();
+    const ownPending = pending.current;
+    ownPending.clear();
     recentPages.current = [];
     queueMicrotask(() => {
       if (ownScope === scope.current) {
@@ -285,7 +286,12 @@ export function useNoosnote(
       });
     return () => {
       alive.current = false;
-      void flush().catch(() => {});
+      const unsent = current.current.dirtyCount > 0 || ownPending.size > 0;
+      void flush()
+        .then(async () => {
+          if (api?.shared && unsent) await api.sync();
+        })
+        .catch(() => {});
       if (timer.current) clearTimeout(timer.current);
       if (maximum.current) clearTimeout(maximum.current);
     };

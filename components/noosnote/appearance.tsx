@@ -14,16 +14,19 @@ export function EmojiPicker({
   onChange,
   label,
   clearable = false,
+  disabled = false,
 }: {
   value: string;
   onChange: (value: string) => void;
   label: string;
   clearable?: boolean;
+  disabled?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   return (
     <Popover.Root open={open} onOpenChange={setOpen}>
       <Popover.Trigger
+        disabled={disabled}
         className="note-emoji-trigger"
         aria-label={label}
         title={label}

@@ -898,7 +898,7 @@ async fn synchronize(state: &AppState, id: &str) -> Result<Snapshot> {
         .await?;
         if published.status != 200 {
             if attempt == 2 {
-                return Err(Error::NoosnoteConflict);
+                return Err(Error::NoosnoteConcurrentUpdate);
             }
             continue;
         }
@@ -908,7 +908,7 @@ async fn synchronize(state: &AppState, id: &str) -> Result<Snapshot> {
         current.index.head = Some(commit_sha);
         return install(state, viewer.id, &team, current, changed).await;
     }
-    Err(Error::NoosnoteConflict)
+    Err(Error::NoosnoteConcurrentUpdate)
 }
 
 #[tauri::command]

@@ -86,7 +86,10 @@ export function PageMenuProvider({ children }: { children: ReactNode }) {
               <ContextMenu.Item
                 key={action.id}
                 className={action.id === 'trash' ? 'note-danger' : undefined}
-                disabled={action.id === 'move' && !!entry?.databaseId}
+                disabled={
+                  (!notes.canEdit && !['open', 'export'].includes(action.id)) ||
+                  (action.id === 'move' && !!entry?.databaseId)
+                }
                 onClick={() => pageAction(action.id, pageId)}
               >
                 <action.icon size={15} /> {action.label}

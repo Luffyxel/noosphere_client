@@ -904,6 +904,7 @@ export function NoosnoteWorkspace({
                 <article className="note-page">
                   <div className="note-page-icon">
                     <EmojiPicker
+                      disabled={!notes.canEdit}
                       label="Icône de la page"
                       clearable
                       value={noteIcon(page)}

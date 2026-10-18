@@ -123,6 +123,7 @@ jobs:
           node --experimental-strip-types --test tests/noosnote.test.mjs tests/noosnote-files.test.mjs tests/noosnote-close.test.mjs tests/noosnote-team.test.mjs
           node scripts/native-toolchain.mjs cargo test --manifest-path src-tauri/Cargo.toml -p noosphere-desktop noosnote
           node scripts/native-toolchain.mjs cargo test --manifest-path src-tauri/Cargo.toml -p noosphere-desktop repository_content
+          node scripts/native-toolchain.mjs cargo test --manifest-path src-tauri/Cargo.toml -p noosphere-desktop github::tests::installation_is_limited_to_dedicated_repositories_and_exact_permissions
       - name: Install attachment test browser
         if: ${{ inputs.notes_feature && runner.os == 'Linux' }}
         run: npx playwright install --with-deps --only-shell chromium

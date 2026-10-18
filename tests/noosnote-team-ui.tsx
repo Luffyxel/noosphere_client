@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import type { GitHubViewer, NoosphereDesktopApi } from '@/lib/desktop-bridge';
 import type {
@@ -128,21 +129,38 @@ window.noosphereDesktop = {
     leave: async () => {},
   },
 } as unknown as NoosphereDesktopApi;
-createRoot(document.getElementById('root')!).render(
-  <main
-    style={{
-      display: 'flex',
-      height: '100vh',
-      background: '#18242f',
-      color: '#d6e1e8',
-      fontFamily: 'Segoe UI, sans-serif',
-    }}
-  >
-    <TeamNoosnote
-      viewer={viewer}
-      team={team}
-      onCreate={() => {}}
-      onUpdated={() => {}}
-    />
-  </main>,
-);
+function Fixture() {
+  const [open, setOpen] = useState(true);
+  return (
+    <>
+      {actor === 3 && (
+        <button
+          aria-label="Quitter l’espace de test"
+          style={{ position: 'fixed', left: 8, bottom: 8, zIndex: 100 }}
+          onClick={() => setOpen(false)}
+        >
+          Quitter
+        </button>
+      )}
+      {open && (
+        <main
+          style={{
+            display: 'flex',
+            height: '100vh',
+            background: '#18242f',
+            color: '#d6e1e8',
+            fontFamily: 'Segoe UI, sans-serif',
+          }}
+        >
+          <TeamNoosnote
+            viewer={viewer}
+            team={team}
+            onCreate={() => {}}
+            onUpdated={() => {}}
+          />
+        </main>
+      )}
+    </>
+  );
+}
+createRoot(document.getElementById('root')!).render(<Fixture />);

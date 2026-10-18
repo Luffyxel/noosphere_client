@@ -166,6 +166,18 @@ try {
         ?.length,
       1,
     );
+  await pages[0].locator('.note-prose').click();
+  await pages[0].keyboard.press('Control+z');
+  await pages[0].waitForFunction(
+    () =>
+      !document.querySelector('.note-prose')?.textContent?.includes('Paris'),
+  );
+  assert.match(await pages[0].locator('.note-prose').innerText(), /Rome/);
+  assert.match(await pages[0].locator('.note-prose').innerText(), /Oslo/);
+  await pages[0].keyboard.press('Control+Shift+z');
+  await pages[0].waitForFunction(() =>
+    document.querySelector('.note-prose')?.textContent?.includes('Paris'),
+  );
   assert.equal(
     await pages[3].locator('.note-prose').getAttribute('contenteditable'),
     'false',
@@ -254,6 +266,20 @@ try {
     path: path.join(output, 'compact.png'),
     fullPage: true,
   });
+  await pages[2].locator('.note-prose').click();
+  await pages[2].keyboard.press('Control+End');
+  await pages[2].keyboard.type(' Dernier ajout avant de partir.');
+  await pages[2]
+    .getByRole('button', { name: 'Quitter l’espace de test' })
+    .click();
+  await pages[2].locator('.note-prose').waitFor({ state: 'detached' });
+  await pages[2].waitForTimeout(900);
+  await pages[0].keyboard.press('Control+s');
+  await pages[0].waitForFunction(() =>
+    document
+      .querySelector('.note-prose')
+      ?.textContent?.includes('Dernier ajout avant de partir.'),
+  );
   assert.deepEqual(errors, []);
   await writeFile(
     path.join(output, 'result.json'),
@@ -269,6 +295,8 @@ try {
         history: true,
         readOnly: true,
         reopen: true,
+        localUndo: true,
+        publishOnLeave: true,
       },
       null,
       2,

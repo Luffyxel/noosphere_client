@@ -353,12 +353,9 @@ function LoginScreen({
                 <BrandLoader className="size-4" />
               </div>
               {setupStatus?.detail && (
-                <p
-                  role="status"
-                  className="mt-3 text-[13px] leading-5 text-[#b9b9bd]"
-                >
+                <output className="block mt-3 text-[13px] leading-5 text-[#b9b9bd]">
                   {setupStatus.detail}
-                </p>
+                </output>
               )}
             </div>
           )}
