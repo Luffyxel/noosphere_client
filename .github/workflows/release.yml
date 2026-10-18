@@ -230,12 +230,14 @@ jobs:
             test "$source_commit" = "$(git rev-parse HEAD)"
             test "$(gh run view "$PACKAGES_RUN" --json jobs --jq '[.jobs[] | select(.name | startswith("package (")) | .conclusion] | length == 2 and all(. == "success")')" = true
           fi
-          gh run download "$PACKAGES_RUN" --pattern 'noosphere-*' --dir release-assets
+          gh run download "$PACKAGES_RUN" --name noosphere-linux --dir release-assets/noosphere-linux
           if [[ -n "$REUSE_WINDOWS_RUN" ]]; then
             [[ "$REUSE_WINDOWS_RUN" =~ ^[1-9][0-9]+$ ]]
             source_commit=$(gh run view "$REUSE_WINDOWS_RUN" --json headSha --jq .headSha)
             test "$source_commit" = "$(git rev-parse HEAD)"
             gh run download "$REUSE_WINDOWS_RUN" --name noosphere-windows --dir release-assets/noosphere-windows
+          else
+            gh run download "$PACKAGES_RUN" --name noosphere-windows --dir release-assets/noosphere-windows
           fi
       - name: Publish GitHub release
         env:
