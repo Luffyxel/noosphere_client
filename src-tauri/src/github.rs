@@ -1236,6 +1236,7 @@ mod tests {
 
     #[test]
     fn installation_is_limited_to_dedicated_repositories_and_exact_permissions() {
+        use serde_json::json;
         let installation = serde_json::json!({
             "id": 7,
             "app_slug": APP_SLUG,
