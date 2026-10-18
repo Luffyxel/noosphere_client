@@ -232,7 +232,7 @@ export function ShareNoosnote({
             </strong>
             <p>
               {stage.stage === 'repository'
-                ? 'GitHub doit créer le dépôt privé proposé. Ajoute un README pour initialiser le dépôt, puis reviens ici.'
+                ? 'Crée le dépôt privé proposé avec un README, puis autorise Noosphere sur ce dépôt. Si le dépôt existe déjà, passe directement à l’autorisation.'
                 : 'Sélectionne le dépôt noosnote_team correspondant dans les réglages de l’application GitHub.'}
             </p>
             <button
@@ -248,8 +248,23 @@ export function ShareNoosnote({
                   .catch((error) => setError(errorMessage(error)))
               }
             >
-              <ExternalLink size={15} /> Ouvrir GitHub
+              <ExternalLink size={15} />{' '}
+              {stage.stage === 'repository'
+                ? '1. Créer le dépôt privé'
+                : 'Autoriser Noosphere'}
             </button>
+            {stage.stage === 'repository' && (
+              <button
+                className="note-secondary"
+                onClick={() =>
+                  void api()
+                    .open(workspaceId, 'setup-installation')
+                    .catch((error) => setError(errorMessage(error)))
+                }
+              >
+                <ExternalLink size={15} /> 2. Autoriser Noosphere
+              </button>
+            )}
           </div>
         )}
         {error && (

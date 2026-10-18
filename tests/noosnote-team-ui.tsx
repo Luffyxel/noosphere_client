@@ -8,8 +8,10 @@ import type {
 } from '@/lib/noosnote/types';
 import type { Team } from '@/lib/noosnote/team-types';
 import { applyFiles } from '@/lib/noosnote/model';
-import { TeamNoosnote } from '@/components/noosnote/team';
+import { useNoosnote } from '@/lib/noosnote/use-noosnote';
+import { TeamNoosnote, ShareNoosnote } from '@/components/noosnote/team';
 import '@/app/globals.css';
+const setupMode = new URLSearchParams(location.search).has('setup');
 const actor = Number(new URLSearchParams(location.search).get('actor') || 1);
 const names = ['Alice', 'Bob', 'Clara', 'Lecteur'];
 const viewer: GitHubViewer = {
@@ -123,9 +125,21 @@ window.noosphereDesktop = {
         message: 'Update shared Noosnote workspace',
       },
     ],
-    open: async () => {},
+    open: async (_id: string, mode: string) => {
+      sessionStorage.setItem(
+        'teamOpenModes',
+        JSON.stringify([
+          ...JSON.parse(sessionStorage.getItem('teamOpenModes') || '[]'),
+          mode,
+        ]),
+      );
+    },
     join: async () => team,
-    prepare: async () => ({ stage: 'ready', team, url: null }),
+    prepare: async () => ({
+      stage: setupMode ? 'repository' : 'ready',
+      team: setupMode ? null : team,
+      url: null,
+    }),
     leave: async () => {},
   },
 } as unknown as NoosphereDesktopApi;
@@ -163,4 +177,12 @@ function Fixture() {
     </>
   );
 }
-createRoot(document.getElementById('root')!).render(<Fixture />);
+function SetupFixture() {
+  const notes = useNoosnote(actor, false, api);
+  return (
+    <ShareNoosnote notes={notes} workspaceId={team.id} onShared={() => {}} />
+  );
+}
+createRoot(document.getElementById('root')!).render(
+  setupMode ? <SetupFixture /> : <Fixture />,
+);

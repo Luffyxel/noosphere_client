@@ -280,6 +280,26 @@ try {
       .querySelector('.note-prose')
       ?.textContent?.includes('Dernier ajout avant de partir.'),
   );
+  const setup = await browser.newPage();
+  await setup.goto(
+    'http://127.0.0.1:5527/tests/noosnote-team-ui.html?actor=1&setup=1',
+  );
+  await setup.getByRole('button', { name: 'Partager', exact: true }).click();
+  await setup
+    .getByRole('button', { name: 'Créer l’espace partagé', exact: true })
+    .click();
+  await setup
+    .getByRole('button', { name: '1. Créer le dépôt privé', exact: true })
+    .click();
+  await setup
+    .getByRole('button', { name: '2. Autoriser Noosphere', exact: true })
+    .click();
+  assert.deepEqual(
+    await setup.evaluate(() =>
+      JSON.parse(sessionStorage.getItem('teamOpenModes')),
+    ),
+    ['setup-repository', 'setup-installation'],
+  );
   assert.deepEqual(errors, []);
   await writeFile(
     path.join(output, 'result.json'),
@@ -297,6 +317,7 @@ try {
         reopen: true,
         localUndo: true,
         publishOnLeave: true,
+        privateRepositorySetup: true,
       },
       null,
       2,

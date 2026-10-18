@@ -1714,7 +1714,7 @@ dependencies = [
 
 [[package]]
 name = "dtor"
-version = "0.3.1"
+version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f1057d6c64987086ff8ed0fd3fbf377a6b7d205cc7715868cd401705f715cbe4"
 dependencies = [
@@ -1862,7 +1862,7 @@ dependencies = [
 
 [[package]]
 name = "fiat-crypto"
-version = "0.3.1"
+version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "64cd1e32ddd350061ae6edb1b082d7c54915b5c672c389143b9a63403a109f24"
 
@@ -3909,7 +3909,7 @@ dependencies = [
 
 [[package]]
 name = "noosphere-desktop"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "aes-gcm-siv",
  "ashpd",
@@ -7372,7 +7372,7 @@ dependencies = [
 
 [[package]]
 name = "urlpattern"
-version = "0.3.1"
+version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "70acd30e3aa1450bc2eece896ce2ad0d178e9c079493819301573dae3c37ba6d"
 dependencies = [
@@ -7586,7 +7586,7 @@ dependencies = [
 
 [[package]]
 name = "wayland-csd-frame"
-version = "0.3.1"
+version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "625c5029dbd43d25e6aa9615e88b829a5cad13b2819c4ae129fdbb7c31ab4c7e"
 dependencies = [
