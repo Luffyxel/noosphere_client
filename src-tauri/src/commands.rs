@@ -551,7 +551,7 @@ fn emit_installation_status(
 ) -> Result<()> {
     let notes = crate::noosnote::repository_name(account_id);
     let instruction = format!(
-        "Sur GitHub, sélectionne « {repository_name} » et, si tu utilises les notes, « {notes} », puis enregistre. La connexion reprendra automatiquement."
+        "Sur GitHub, sélectionne « {repository_name} » et, si tu utilises les notes, « {notes} », conserve aussi tes dépôts partagés « noosnote_team_… », puis enregistre. La connexion reprendra automatiquement."
     );
     let detail = match reason {
         Some(reason) => format!("{reason} {instruction}"),

@@ -1,3 +1,9 @@
+import type {
+  Team,
+  TeamStatus,
+  TeamPreparation,
+  NoteRevision,
+} from '@/lib/noosnote/team-types';
 import { invoke } from '@tauri-apps/api/core';
 import type {
   NoteSnapshot,
@@ -61,6 +67,66 @@ export function installTauriBridge(): void {
       sync: () => invoke<NoteSnapshot>('noosnote_sync'),
       resolve: (id, choice) =>
         invoke<NoteSnapshot>('noosnote_resolve', { id, choice }),
+    },
+    noosnoteTeams: {
+      list: () => invoke<Team[]>('noosnote_teams'),
+      join: (link) => invoke<Team>('noosnote_team_join', { link }),
+      prepare: (workspaceId, create) =>
+        invoke<TeamPreparation>('noosnote_team_prepare', {
+          workspaceId,
+          create,
+        }),
+      status: (teamId) =>
+        invoke<TeamStatus>('noosnote_team_status', { teamId }),
+      open: (teamId, mode) =>
+        invoke<void>('noosnote_team_open', { teamId, mode }),
+      history: (teamId, pageId) =>
+        invoke<NoteRevision[]>('noosnote_team_history', { teamId, pageId }),
+      leave: (teamId) => invoke<void>('noosnote_team_leave', { teamId }),
+      notes: (team) => {
+        const teamId = team.id;
+        return {
+          shared: true,
+          readOnly: !team.canEdit,
+          importFile: (workspaceId, name, content) =>
+            invoke<NoteAttachment>('noosnote_import_file', {
+              workspaceId,
+              name,
+              content,
+            }),
+          readFile: (workspaceId, pageId) =>
+            invoke<string>('noosnote_team_read_file', {
+              teamId,
+              workspaceId,
+              pageId,
+            }),
+          cached: () =>
+            invoke<NoteSnapshot>('noosnote_team_cached', { teamId }),
+          discover: () =>
+            invoke<NoteSnapshot>('noosnote_team_sync', { teamId }),
+          setup: () => invoke<NoteSnapshot>('noosnote_team_sync', { teamId }),
+          openSetup: () =>
+            invoke<void>('noosnote_team_open', {
+              teamId,
+              mode: 'installation',
+            }),
+          page: (workspaceId, pageId) =>
+            invoke<NoteSnapshot>('noosnote_team_page', {
+              teamId,
+              workspaceId,
+              pageId,
+            }),
+          save: (changes) =>
+            invoke<NoteSnapshot>('noosnote_team_save', { teamId, changes }),
+          sync: () => invoke<NoteSnapshot>('noosnote_team_sync', { teamId }),
+          resolve: (conflictId, choice) =>
+            invoke<NoteSnapshot>('noosnote_team_resolve', {
+              teamId,
+              conflictId,
+              choice,
+            }),
+        };
+      },
     },
     remoteAccess: {
       cancelAccess: (principal) =>

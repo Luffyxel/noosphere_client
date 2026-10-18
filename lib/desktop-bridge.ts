@@ -1,3 +1,4 @@
+import type { NoosnoteTeamsApi } from '@/lib/noosnote/team-types';
 import type { RemoteAccessApi } from '@/lib/remote-access';
 import type { NoosnoteApi } from '@/lib/noosnote/types';
 
@@ -85,6 +86,7 @@ export type CallSignal = {
 
 export type NoosphereDesktopApi = {
   noosnote: NoosnoteApi;
+  noosnoteTeams?: NoosnoteTeamsApi;
   remoteAccess: RemoteAccessApi;
   isDesktop: true;
   platform: string;

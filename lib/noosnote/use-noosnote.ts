@@ -1,8 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { noteCloseHandler } from './window-close';
-import { invoke, isTauri } from '@tauri-apps/api/core';
-import { getCurrentWindow } from '@tauri-apps/api/window';
-import type { NoteChange, NoteDocument, NoteSnapshot } from './types';
+import { registerNotebookSave } from './save-registry';
+import type {
+  NoteChange,
+  NoteDocument,
+  NoteSnapshot,
+  NoosnoteApi,
+} from './types';
 import { applyFiles, getPage, pagePath } from './model';
 
 const EMPTY: NoteSnapshot = {
@@ -25,7 +28,18 @@ function message(error: unknown) {
       : 'La synchronisation des notes a échoué.';
 }
 
-export function useNoosnote(ownerId: number, visible: boolean) {
+export function useNoosnote(
+  ownerId: number,
+  visible: boolean,
+  apiOverride?: NoosnoteApi,
+  readOnly = false,
+) {
+  const api =
+    apiOverride ??
+    (typeof window === 'undefined'
+      ? undefined
+      : window.noosphereDesktop?.noosnote);
+  const canEdit = !api?.readOnly && !readOnly;
   const [snapshot, setSnapshot] = useState<NoteSnapshot>(EMPTY);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -91,22 +105,19 @@ export function useNoosnote(ownerId: number, visible: boolean) {
       recentPages.current.push(path);
       if (recentPages.current.length > 24) recentPages.current.shift();
       if (!current.current.files[path]) {
-        const response = await window.noosphereDesktop!.noosnote.page(
-          workspaceId,
-          pageId,
-        );
+        const response = await api!.page(workspaceId, pageId);
         accept(response);
         return getPage(response.files, workspaceId, pageId);
       }
       return getPage(current.current.files, workspaceId, pageId);
     },
-    [accept],
+    [accept, api],
   );
 
   const flush = useCallback(async () => {
     while (savingOperation.current) await savingOperation.current;
     if (!pending.current.size) return;
-    const api = window.noosphereDesktop?.noosnote;
+
     if (!api) throw new Error('Le stockage des notes est indisponible.');
     if (timer.current) clearTimeout(timer.current);
     if (maximum.current) clearTimeout(maximum.current);
@@ -148,11 +159,15 @@ export function useNoosnote(ownerId: number, visible: boolean) {
       if (savingOperation.current === operation) savingOperation.current = null;
       if (alive.current) setSaving(pending.current.size > 0);
     }
-  }, [accept]);
+  }, [accept, api]);
 
   const edit = useCallback(
     (changes: NoteChange[]) => {
       if (!changes.length) return;
+      if (!canEdit) {
+        setError('Cet espace est en lecture seule.');
+        return;
+      }
       revision.current += 1;
       for (const change of changes) {
         const previous = pending.current.get(change.path);
@@ -174,7 +189,7 @@ export function useNoosnote(ownerId: number, visible: boolean) {
       timer.current = setTimeout(() => void flush().catch(() => {}), 400);
       maximum.current ??= setTimeout(() => void flush().catch(() => {}), 1800);
     },
-    [flush],
+    [flush, canEdit],
   );
 
   const synchronize = useCallback(async () => {
@@ -182,7 +197,7 @@ export function useNoosnote(ownerId: number, visible: boolean) {
     const ownScope = scope.current;
     const operation = (async () => {
       await flush();
-      const api = window.noosphereDesktop?.noosnote;
+
       if (!api) return;
       if (alive.current) setSyncing(true);
       const response = await api.sync();
@@ -202,13 +217,13 @@ export function useNoosnote(ownerId: number, visible: boolean) {
         syncingOperation.current = null;
       if (alive.current) setSyncing(false);
     }
-  }, [accept, flush]);
+  }, [accept, flush, api]);
 
   const setup = useCallback(async () => {
     await flush();
     setSyncing(true);
     try {
-      const response = await window.noosphereDesktop!.noosnote.setup();
+      const response = await api!.setup();
       accept(response);
       if (response.setup === 'ready') await synchronize();
       return response.setup;
@@ -218,20 +233,20 @@ export function useNoosnote(ownerId: number, visible: boolean) {
     } finally {
       setSyncing(false);
     }
-  }, [accept, flush, synchronize]);
+  }, [accept, flush, synchronize, api]);
 
   const resolve = useCallback(
     async (id: string, choice: 'local' | 'remote') => {
       await flush();
       try {
-        accept(await window.noosphereDesktop!.noosnote.resolve(id, choice));
+        accept(await api!.resolve(id, choice));
         setError('');
       } catch (error) {
         setError(message(error));
         throw error;
       }
     },
-    [accept, flush],
+    [accept, flush, api],
   );
 
   useEffect(() => {
@@ -248,13 +263,13 @@ export function useNoosnote(ownerId: number, visible: boolean) {
         setError('');
       }
     });
-    void window.noosphereDesktop?.noosnote
-      .cached()
+    void api
+      ?.cached()
       .then(async (response) => {
         if (ownScope !== scope.current) return;
         accept(response);
         if (!response.repository) {
-          const discovered = await window.noosphereDesktop!.noosnote.discover();
+          const discovered = await api!.discover();
           if (ownScope !== scope.current) return;
           accept(discovered);
           if (discovered.repository && discovered.setup === 'ready')
@@ -274,7 +289,7 @@ export function useNoosnote(ownerId: number, visible: boolean) {
       if (timer.current) clearTimeout(timer.current);
       if (maximum.current) clearTimeout(maximum.current);
     };
-  }, [ownerId, accept, flush, synchronize]);
+  }, [ownerId, accept, flush, synchronize, api]);
 
   useEffect(() => {
     let active = true;
@@ -287,7 +302,11 @@ export function useNoosnote(ownerId: number, visible: boolean) {
       ) {
         const wait =
           current.current.dirtyCount > 0
-            ? Math.max(0, 60000 - (Date.now() - lastPublish.current))
+            ? Math.max(
+                0,
+                (api?.shared ? 15000 : 60000) -
+                  (Date.now() - lastPublish.current),
+              )
             : 0;
         if (wait === 0)
           try {
@@ -305,7 +324,9 @@ export function useNoosnote(ownerId: number, visible: boolean) {
             : current.current.dirtyCount > 0
               ? 15000
               : visible
-                ? 30000
+                ? api?.shared
+                  ? 15000
+                  : 30000
                 : 300000,
         );
     }
@@ -314,7 +335,7 @@ export function useNoosnote(ownerId: number, visible: boolean) {
       active = false;
       clearTimeout(next);
     };
-  }, [visible, synchronize]);
+  }, [visible, synchronize, api]);
 
   useEffect(() => {
     const save = (event: KeyboardEvent) => {
@@ -338,37 +359,18 @@ export function useNoosnote(ownerId: number, visible: boolean) {
     };
   }, [visible, synchronize]);
 
+  useEffect(() => registerNotebookSave(flush), [flush]);
   useEffect(() => {
-    if (!isTauri()) return;
-    let dispose: (() => void) | undefined;
-    let active = true;
-    void getCurrentWindow()
-      .onCloseRequested(
-        noteCloseHandler(
-          flush,
-          () => invoke('system_close_window'),
-          (error) => {
-            if (active)
-              setError(`Impossible de fermer la fenêtre : ${message(error)}`);
-          },
-        ),
-      )
-      .then((remove) => {
-        if (active) dispose = remove;
-        else remove();
-      })
-      .catch((error) => {
-        if (active)
-          setError(`Fermeture de la fenêtre indisponible : ${message(error)}`);
-      });
-    return () => {
-      active = false;
-      dispose?.();
-    };
-  }, [flush]);
+    const show = (event: Event) =>
+      setError((event as CustomEvent<string>).detail);
+    window.addEventListener('noosnote-close-error', show);
+    return () => window.removeEventListener('noosnote-close-error', show);
+  }, []);
 
   return {
     ...snapshot,
+    api,
+    canEdit,
     setupStage: snapshot.setup,
     loading,
     saving,

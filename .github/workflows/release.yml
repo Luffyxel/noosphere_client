@@ -120,7 +120,7 @@ jobs:
         run: |
           npm run format:check
           npx tsc --noEmit
-          node --experimental-strip-types --test tests/noosnote.test.mjs tests/noosnote-files.test.mjs tests/noosnote-close.test.mjs
+          node --experimental-strip-types --test tests/noosnote.test.mjs tests/noosnote-files.test.mjs tests/noosnote-close.test.mjs tests/noosnote-team.test.mjs
           node scripts/native-toolchain.mjs cargo test --manifest-path src-tauri/Cargo.toml -p noosphere-desktop noosnote
           node scripts/native-toolchain.mjs cargo test --manifest-path src-tauri/Cargo.toml -p noosphere-desktop repository_content
       - name: Install attachment test browser
@@ -129,6 +129,16 @@ jobs:
       - name: Test attachment interface
         if: ${{ inputs.notes_feature && runner.os == 'Linux' }}
         run: npm run test:noosnote-files
+      - name: Test collaborative notes
+        if: ${{ inputs.notes_feature && runner.os == 'Linux' }}
+        run: npm run test:noosnote-team
+      - name: Store collaboration interface results
+        if: ${{ always() && inputs.notes_feature && runner.os == 'Linux' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: noosnote-team-interface
+          path: remote-test-results/noosnote-team
+          retention-days: 14
       - name: Store attachment interface results
         if: ${{ always() && inputs.notes_feature && runner.os == 'Linux' }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02

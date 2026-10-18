@@ -1,4 +1,11 @@
-import { lazy, Suspense, useEffect, useRef, useState } from 'react';
+import Collaboration from '@tiptap/extension-collaboration';
+import { getSchema } from '@tiptap/core';
+import {
+  collaborativeDocument,
+  applyPageUpdates,
+  documentUpdate,
+} from '@/lib/noosnote/collaboration';
+import { lazy, Suspense, useEffect, useRef, useState, useMemo } from 'react';
 import {
   Extension,
   Node,
@@ -224,28 +231,42 @@ function TextEditor({ page }: { page: NotePage }) {
       alive.current = false;
     };
   }, []);
+  const extensions = useMemo(
+    () => [
+      StarterKit.configure({
+        undoRedo: notes.api?.shared ? false : undefined,
+        heading: { levels: [1, 2, 3] },
+        link: {
+          openOnClick: false,
+          protocols: ['https', 'http', 'mailto', 'tel'],
+        },
+      }),
+      TaskList,
+      TaskItem.configure({ nested: true }),
+      Placeholder.configure({
+        placeholder:
+          'Écris ici, ou utilise + pour ajouter un fichier, une table…',
+      }),
+      StableIds,
+      DatabaseBlock,
+      PageBlock,
+    ],
+    [notes.api?.shared],
+  );
+  const [shared] = useState(() =>
+    notes.api?.shared
+      ? collaborativeDocument(getSchema(extensions), page)
+      : null,
+  );
+  useEffect(() => () => shared?.destroy(), [shared]);
   const editor = useEditor(
     {
       immediatelyRender: false,
-      extensions: [
-        StarterKit.configure({
-          heading: { levels: [1, 2, 3] },
-          link: {
-            openOnClick: false,
-            protocols: ['https', 'http', 'mailto', 'tel'],
-          },
-        }),
-        TaskList,
-        TaskItem.configure({ nested: true }),
-        Placeholder.configure({
-          placeholder:
-            'Écris ici, ou utilise + pour ajouter un fichier, une table…',
-        }),
-        StableIds,
-        DatabaseBlock,
-        PageBlock,
-      ],
-      content: page.content as JSONContent,
+      editable: notes.canEdit,
+      extensions: shared
+        ? [...extensions, Collaboration.configure({ document: shared })]
+        : extensions,
+      content: shared ? undefined : (page.content as JSONContent),
       editorProps: {
         attributes: {
           class: 'note-prose',
@@ -264,21 +285,59 @@ function TextEditor({ page }: { page: NotePage }) {
           return false;
         },
       },
+      onCreate({ editor }) {
+        if (!shared || !latest.current.canEdit) return;
+        const current = getPage(
+          latest.current.filesRef.current.files,
+          workspaceId,
+          page.id,
+        );
+        if (current && !current.collaborationUpdates?.length)
+          latest.current.edit([
+            change({
+              ...current,
+              content: editor.getJSON(),
+              collaborationUpdates: [documentUpdate(shared)],
+            }),
+          ]);
+      },
       onUpdate({ editor }) {
         const current = getPage(
           latest.current.filesRef.current.files,
           workspaceId,
           page.id,
         );
-        if (current)
-          latest.current.edit([
-            change({ ...current, content: editor.getJSON() }),
-          ]);
+        if (!current || !latest.current.canEdit) return;
+        try {
+          const next = {
+            ...current,
+            content: editor.getJSON(),
+            ...(shared
+              ? { collaborationUpdates: [documentUpdate(shared)] }
+              : {}),
+          };
+          if (JSON.stringify(next) !== JSON.stringify(current))
+            latest.current.edit([change(next)]);
+        } catch (error) {
+          report(error);
+        }
       },
     },
     [page.id],
   );
   useEffect(() => {
+    if (!editor || !shared) return;
+    try {
+      applyPageUpdates(shared, page.collaborationUpdates);
+    } catch (error) {
+      report(error);
+    }
+  }, [editor, shared, page.collaborationUpdates, report]);
+  useEffect(() => {
+    editor?.setEditable(notes.canEdit);
+  }, [editor, notes.canEdit]);
+  useEffect(() => {
+    if (shared) return;
     if (
       !editor ||
       JSON.stringify(editor.getJSON()) === JSON.stringify(page.content)
@@ -303,7 +362,7 @@ function TextEditor({ page }: { page: NotePage }) {
       from: Math.min(from, end),
       to: Math.min(to, end),
     });
-  }, [editor, page.content, page.id, workspaceId]);
+  }, [editor, page.content, page.id, workspaceId, shared]);
   useEffect(() => {
     if (!editor) return;
     const map = ({
@@ -417,6 +476,7 @@ function TextEditor({ page }: { page: NotePage }) {
     },
   ];
   async function importFiles(files: File[]) {
+    if (!latest.current.canEdit) return;
     if (!editor || editor.isDestroyed) return;
     const bookmark = editor.state.selection.getBookmark();
     importQueue.current.push(...files.map((file) => ({ file, bookmark })));
@@ -438,7 +498,7 @@ function TextEditor({ page }: { page: NotePage }) {
             : undefined;
           if (!alive.current || editor!.isDestroyed) return;
           const content = bytesBase64(new Uint8Array(await file.arrayBuffer()));
-          const attachment = await window.noosphereDesktop!.noosnote.importFile(
+          const attachment = await notes.api!.importFile(
             workspaceId,
             file.name,
             content,
@@ -512,9 +572,9 @@ function TextEditor({ page }: { page: NotePage }) {
   }
   return (
     <div
-      className={`note-editor${dragging ? ' note-file-drop-active' : ''}`}
+      className={`note-editor${!notes.canEdit ? ' note-editor-readonly' : ''}${dragging ? ' note-file-drop-active' : ''}`}
       onDragOver={(event) => {
-        if (event.dataTransfer.types.includes('Files')) {
+        if (notes.canEdit && event.dataTransfer.types.includes('Files')) {
           event.preventDefault();
           event.dataTransfer.dropEffect = 'copy';
           setDragging(true);

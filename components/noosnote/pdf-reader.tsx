@@ -25,7 +25,7 @@ GlobalWorkerOptions.workerSrc = new URL(
 ).href;
 
 export function PdfReader({ page }: { page: NotePage }) {
-  const { workspaceId } = useNoteContext();
+  const { notes, workspaceId } = useNoteContext();
   const [pdf, setPdf] = useState<PDFDocumentProxy | null>(null);
   const [number, setNumber] = useState(1);
   const [zoom, setZoom] = useState(1);
@@ -43,8 +43,8 @@ export function PdfReader({ page }: { page: NotePage }) {
   useEffect(() => {
     let active = true;
     let destroy: (() => Promise<void>) | undefined;
-    window
-      .noosphereDesktop!.noosnote.readFile(workspaceId, page.id)
+    notes
+      .api!.readFile(workspaceId, page.id)
       .then(async (content) => {
         if (!active) return;
         bytes.current = base64Bytes(content);
@@ -86,7 +86,7 @@ export function PdfReader({ page }: { page: NotePage }) {
       bytes.current = null;
       void destroy?.();
     };
-  }, [workspaceId, page.id]);
+  }, [workspaceId, page.id, notes.api]);
   useEffect(() => {
     if (!holder.current) return;
     const observer = new ResizeObserver(([entry]) =>

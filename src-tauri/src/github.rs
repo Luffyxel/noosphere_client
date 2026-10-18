@@ -636,9 +636,9 @@ pub fn validate_installation(
         .get("total_count")
         .and_then(Value::as_u64)
         .ok_or(Error::InvalidGitHubResponse)?;
-    if count > 2 {
+    if count > 34 {
         return Err(Error::InstallationConfiguration(
-            "garde uniquement les dépôts de messagerie Noosphere et de notes Noosnote.",
+            "garde uniquement les dépôts dédiés à Noosphere et Noosnote.",
         ));
     }
     if entries.len() != count as usize {
@@ -662,13 +662,18 @@ pub fn validate_installation(
             .get("id")
             .and_then(Value::as_u64)
             .is_none_or(|id| id == 0)
-            || entry.get("name").and_then(Value::as_str)
-                != Some(crate::noosnote::repository_name(account_id).as_str())
+            || !entry
+                .get("name")
+                .and_then(Value::as_str)
+                .is_some_and(|name| {
+                    name == crate::noosnote::repository_name(account_id)
+                        || crate::noosnote_team::is_repository_name(name)
+                })
             || entry.get("private").and_then(Value::as_bool) != Some(true)
             || entry.pointer("/owner/id").and_then(Value::as_u64) != Some(account_id)
         {
             return Err(Error::InstallationConfiguration(
-                "garde uniquement le dépôt de messagerie et le dépôt privé Noosnote de ce compte.",
+                "garde uniquement les dépôts dédiés à Noosphere et Noosnote de ce compte.",
             ));
         }
     }

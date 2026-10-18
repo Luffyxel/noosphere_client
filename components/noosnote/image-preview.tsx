@@ -12,7 +12,7 @@ export function ImagePreview({
   name: string;
   onOpen?: () => void;
 }) {
-  const { workspaceId } = useNoteContext();
+  const { notes, workspaceId } = useNoteContext();
   const holder = useRef<HTMLDivElement>(null);
   const [visible, setVisible] = useState(false);
   const [source, setSource] = useState('');
@@ -35,8 +35,8 @@ export function ImagePreview({
     if (!visible) return;
     let active = true;
     let url = '';
-    void window
-      .noosphereDesktop!.noosnote.readFile(workspaceId, pageId)
+    void notes
+      .api!.readFile(workspaceId, pageId)
       .then((content) => {
         if (!active) return;
         const bytes = base64Bytes(content);
@@ -56,7 +56,7 @@ export function ImagePreview({
       active = false;
       if (url) URL.revokeObjectURL(url);
     };
-  }, [visible, workspaceId, pageId, attempt]);
+  }, [visible, workspaceId, pageId, attempt, notes.api]);
   const picture = source && (
     <img
       src={source}

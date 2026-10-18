@@ -32,78 +32,79 @@ type CommandResult<T> = std::result::Result<T, String>;
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Repository {
-    id: u64,
-    name: String,
-    url: String,
-    branch: String,
+    pub(crate) id: u64,
+    pub(crate) name: String,
+    pub(crate) url: String,
+    pub(crate) branch: String,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Conflict {
-    id: String,
-    path: String,
-    local: Option<Arc<Value>>,
-    remote: Option<Arc<Value>>,
+    pub(crate) id: String,
+    pub(crate) path: String,
+    pub(crate) local: Option<Arc<Value>>,
+    pub(crate) remote: Option<Arc<Value>>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct Index {
-    version: u8,
-    owner_id: u64,
-    repository: Option<Repository>,
-    head: Option<String>,
-    blobs: BTreeMap<String, String>,
-    hashes: BTreeMap<String, String>,
-    dirty: BTreeSet<String>,
-    last_synced_at: Option<String>,
+pub(crate) struct Index {
+    pub(crate) version: u8,
+    pub(crate) owner_id: u64,
+    pub(crate) repository: Option<Repository>,
+    pub(crate) head: Option<String>,
+    pub(crate) blobs: BTreeMap<String, String>,
+    pub(crate) hashes: BTreeMap<String, String>,
+    pub(crate) dirty: BTreeSet<String>,
+    pub(crate) last_synced_at: Option<String>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct Document {
-    owner_id: u64,
-    path: String,
-    local: Option<Arc<Value>>,
-    base: Option<Arc<Value>>,
-    base_sha: Option<String>,
-    conflict: Option<Conflict>,
+pub(crate) struct Document {
+    pub(crate) owner_id: u64,
+    pub(crate) path: String,
+    pub(crate) local: Option<Arc<Value>>,
+    pub(crate) base: Option<Arc<Value>>,
+    pub(crate) base_sha: Option<String>,
+    pub(crate) conflict: Option<Conflict>,
 }
 
 #[derive(Clone)]
 pub struct Cache {
-    index: Index,
-    documents: BTreeMap<String, Document>,
-    opened: Vec<String>,
+    pub(crate) scope: Option<String>,
+    pub(crate) index: Index,
+    pub(crate) documents: BTreeMap<String, Document>,
+    pub(crate) opened: Vec<String>,
 }
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Snapshot {
     pub(crate) files: BTreeMap<String, Arc<Value>>,
-    deleted_paths: Vec<String>,
-    incremental: bool,
-    repository: Option<Repository>,
-    dirty_count: usize,
-    dirty_paths: Vec<String>,
-    conflicts: Vec<Conflict>,
-    last_synced_at: Option<String>,
-    setup: &'static str,
+    pub(crate) deleted_paths: Vec<String>,
+    pub(crate) incremental: bool,
+    pub(crate) repository: Option<Repository>,
+    pub(crate) dirty_count: usize,
+    pub(crate) dirty_paths: Vec<String>,
+    pub(crate) conflicts: Vec<Conflict>,
+    pub(crate) last_synced_at: Option<String>,
+    pub(crate) setup: &'static str,
 }
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Change {
-    path: String,
-    value: Option<Value>,
-    base: Option<EditBase>,
+    pub(crate) path: String,
+    pub(crate) value: Option<Value>,
+    pub(crate) base: Option<EditBase>,
 }
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct EditBase {
-    value: Option<Value>,
+pub(crate) struct EditBase {
+    pub(crate) value: Option<Value>,
 }
 
 pub fn repository_name(owner_id: u64) -> String {
@@ -121,7 +122,7 @@ fn document_prefix(owner: u64, path: &str) -> String {
     format!("nn-{}-", &hex::encode(hash.finalize())[..24])
 }
 
-fn now() -> String {
+pub(crate) fn now() -> String {
     OffsetDateTime::now_utc()
         .format(&Rfc3339)
         .unwrap_or_default()
@@ -131,7 +132,7 @@ fn uuid(value: &str) -> bool {
     Uuid::parse_str(value).is_ok_and(|id| id.to_string() == value)
 }
 
-fn file_kind(path: &str) -> Result<(&str, &str, &str)> {
+pub(crate) fn file_kind(path: &str) -> Result<(&str, &str, &str)> {
     let parts: Vec<_> = path.split('/').collect();
     if parts.len() < 3 || parts[0] != "notes" || !uuid(parts[1]) {
         return Err(Error::InvalidData);
@@ -140,13 +141,15 @@ fn file_kind(path: &str) -> Result<(&str, &str, &str)> {
         return Ok(("workspace", parts[1], parts[1]));
     }
     if parts.len() == 4
-        && matches!(parts[2], "pages" | "databases")
+        && matches!(parts[2], "pages" | "databases" | "threads")
         && let Some(id) = parts[3].strip_suffix(".json")
         && uuid(id)
     {
         return Ok((
             if parts[2] == "pages" {
                 "page"
+            } else if parts[2] == "threads" {
+                "thread"
             } else {
                 "database"
             },
@@ -268,7 +271,7 @@ fn validate_content(node: &Value, depth: usize, remaining: &mut usize) -> Result
     Ok(())
 }
 
-fn validate_file(path: &str, value: &Value) -> Result<()> {
+pub(crate) fn validate_file(path: &str, value: &Value) -> Result<()> {
     let (kind, workspace, id) = file_kind(path)?;
     if serde_json::to_vec(value)
         .map_err(|_| Error::InvalidData)?
@@ -294,8 +297,71 @@ fn validate_file(path: &str, value: &Value) -> Result<()> {
     if value.get("emoji").is_some() {
         field(value, "emoji", 128)?;
     }
+    if let Some(updates) = value.get("collaborationUpdates") {
+        let updates = updates
+            .as_array()
+            .filter(|updates| updates.len() <= 64)
+            .ok_or(Error::InvalidData)?;
+        for update in updates {
+            let encoded = update
+                .as_str()
+                .filter(|value| value.len() <= 700_000)
+                .ok_or(Error::InvalidData)?;
+            STANDARD.decode(encoded).map_err(|_| Error::InvalidData)?;
+        }
+    }
     match kind {
+        "thread" => {
+            if field(value, "workspaceId", 36)? != workspace || !uuid(field(value, "pageId", 36)?) {
+                return Err(Error::InvalidData);
+            }
+            if let Some(block) = value.get("blockId") {
+                if !block.as_str().is_some_and(uuid) {
+                    return Err(Error::InvalidData);
+                }
+            }
+            if let Some(quote) = value.get("quote") {
+                if quote.as_str().is_none_or(|text| text.len() > 2048) {
+                    return Err(Error::InvalidData);
+                }
+            }
+            if value.get("resolved").and_then(Value::as_bool).is_none() {
+                return Err(Error::InvalidData);
+            }
+            let comments = array(value, "comments", 500)?;
+            unique_ids(comments)?;
+            for comment in comments {
+                field(comment, "body", 16000)?;
+                field(comment, "createdAt", 64)?;
+                let actor = comment.get("author").ok_or(Error::InvalidData)?;
+                if actor
+                    .get("id")
+                    .and_then(Value::as_u64)
+                    .is_none_or(|id| id == 0)
+                {
+                    return Err(Error::InvalidData);
+                }
+                crate::validation::github_login(field(actor, "login", 39)?)?;
+                field(actor, "name", 512)?;
+                field(actor, "avatarUrl", 2048)?;
+            }
+        }
         "workspace" => {
+            if let Some(profiles) = value.get("profiles") {
+                let profiles = profiles
+                    .as_object()
+                    .filter(|p| p.len() <= 100)
+                    .ok_or(Error::InvalidData)?;
+                for (id, name) in profiles {
+                    if id.parse::<u64>().ok().is_none_or(|id| id == 0)
+                        || name
+                            .as_str()
+                            .is_none_or(|name| name.trim().is_empty() || name.chars().count() > 40)
+                    {
+                        return Err(Error::InvalidData);
+                    }
+                }
+            }
             field(value, "icon", 32)?;
             let color = field(value, "color", 7)?;
             if color.len() != 7
@@ -512,8 +578,9 @@ fn validate_file(path: &str, value: &Value) -> Result<()> {
 }
 
 impl Cache {
-    fn empty(owner_id: u64) -> Self {
+    pub(crate) fn empty(owner_id: u64) -> Self {
         Self {
+            scope: None,
             index: Index {
                 version: 1,
                 owner_id,
@@ -529,7 +596,11 @@ impl Cache {
         }
     }
 
-    fn snapshot(&self, changed: Option<&BTreeSet<String>>, setup: &'static str) -> Snapshot {
+    pub(crate) fn snapshot(
+        &self,
+        changed: Option<&BTreeSet<String>>,
+        setup: &'static str,
+    ) -> Snapshot {
         let mut files = BTreeMap::new();
         let mut deleted_paths = Vec::new();
         for (path, document) in &self.documents {
@@ -561,8 +632,22 @@ impl Cache {
 }
 
 fn load_cache(store: &SecureBlobStore, owner: u64) -> Result<Cache> {
-    let Some(secret) = store.load(&index_account(owner))? else {
-        return Ok(Cache::empty(owner));
+    load_scoped_cache(store, owner, None)
+}
+
+pub(crate) fn load_scoped_cache(
+    store: &SecureBlobStore,
+    owner: u64,
+    scope: Option<String>,
+) -> Result<Cache> {
+    let account = scope
+        .as_ref()
+        .map(|scope| format!("noosnote-{owner}-{scope}-index"))
+        .unwrap_or_else(|| index_account(owner));
+    let Some(secret) = store.load(&account)? else {
+        let mut cache = Cache::empty(owner);
+        cache.scope = scope;
+        return Ok(cache);
     };
     let index: Index = serde_json::from_str(secret.expose_secret())
         .map_err(|_| Error::SecureStorageUnavailable)?;
@@ -578,20 +663,29 @@ fn load_cache(store: &SecureBlobStore, owner: u64) -> Result<Cache> {
         if !key.starts_with(&prefix) || !uuid(&key[prefix.len()..]) {
             return Err(Error::SecureStorageUnavailable);
         }
-        if file_kind(path).is_ok_and(|(kind, _, _)| kind == "page") && !index.dirty.contains(path) {
+        if scope.is_none()
+            && file_kind(path).is_ok_and(|(kind, _, _)| kind == "page")
+            && !index.dirty.contains(path)
+        {
             continue;
         }
         let document = load_document(store, owner, path, key)?;
         documents.insert(path.clone(), document);
     }
     Ok(Cache {
+        scope,
         index,
         documents,
         opened: Vec::new(),
     })
 }
 
-fn load_document(store: &SecureBlobStore, owner: u64, path: &str, key: &str) -> Result<Document> {
+pub(crate) fn load_document(
+    store: &SecureBlobStore,
+    owner: u64,
+    path: &str,
+    key: &str,
+) -> Result<Document> {
     let secret = store.load(key)?.ok_or(Error::SecureStorageUnavailable)?;
     let document: Document = serde_json::from_str(secret.expose_secret())
         .map_err(|_| Error::SecureStorageUnavailable)?;
@@ -606,7 +700,7 @@ fn load_document(store: &SecureBlobStore, owner: u64, path: &str, key: &str) -> 
     Ok(document)
 }
 
-fn touch_page(cache: &mut Cache, path: &str) {
+pub(crate) fn touch_page(cache: &mut Cache, path: &str) {
     cache.opened.retain(|previous| previous != path);
     cache.opened.push(path.to_owned());
     if cache.opened.len() > 24 {
@@ -614,7 +708,7 @@ fn touch_page(cache: &mut Cache, path: &str) {
     }
 }
 
-fn evict_pages(cache: &mut Cache) {
+pub(crate) fn evict_pages(cache: &mut Cache) {
     cache.documents.retain(|path, _| {
         !file_kind(path).is_ok_and(|(kind, _, _)| kind == "page")
             || cache.index.dirty.contains(path)
@@ -648,7 +742,11 @@ fn persist_cache(
             }
         }
         store.save(
-            &index_account(cache.index.owner_id),
+            &cache
+                .scope
+                .as_ref()
+                .map(|scope| format!("noosnote-{}-{scope}-index", cache.index.owner_id))
+                .unwrap_or_else(|| index_account(cache.index.owner_id)),
             SecretString::from(serde_json::to_string(&index).map_err(|_| Error::Local)?),
         )?;
         Ok::<_, Error>(())
@@ -666,7 +764,7 @@ fn persist_cache(
     Ok(())
 }
 
-async fn cached(state: &AppState, owner: u64) -> Result<Cache> {
+pub(crate) async fn cached(state: &AppState, owner: u64) -> Result<Cache> {
     let mut current = state.notes.lock().await;
     if current
         .as_ref()
@@ -681,7 +779,7 @@ async fn cached(state: &AppState, owner: u64) -> Result<Cache> {
     current.clone().ok_or(Error::Local)
 }
 
-async fn install_cache(
+pub(crate) async fn install_cache(
     state: &AppState,
     cache: &mut Cache,
     changed: &BTreeSet<String>,
@@ -741,7 +839,7 @@ fn merge_text(base: &str, local: &str, remote: &str) -> Option<String> {
     Some(merged.into_iter().collect())
 }
 
-fn merge_value(
+pub(crate) fn merge_value(
     base: Option<&Value>,
     local: Option<&Value>,
     remote: Option<&Value>,
@@ -767,7 +865,40 @@ fn merge_value(
             .chain(base.into_iter().flat_map(|value| value.keys()))
             .collect();
         let mut merged = serde_json::Map::new();
+        let collaborative_page = local.get("kind").and_then(Value::as_str) == Some("page")
+            && remote.get("kind").and_then(Value::as_str) == Some("page")
+            && local
+                .get("collaborationUpdates")
+                .and_then(Value::as_array)
+                .is_some_and(|a| !a.is_empty())
+            && remote
+                .get("collaborationUpdates")
+                .and_then(Value::as_array)
+                .is_some_and(|a| !a.is_empty());
         for key in keys {
+            if collaborative_page && key == "content" {
+                merged.insert(key.clone(), local[key].clone());
+                continue;
+            }
+            if collaborative_page && key == "collaborationUpdates" {
+                let mut updates = BTreeSet::new();
+                for update in local[key]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .chain(remote[key].as_array().into_iter().flatten())
+                {
+                    updates.insert(update.as_str().ok_or(())?.to_owned());
+                }
+                if updates.len() > 64 {
+                    return Err(());
+                }
+                merged.insert(
+                    key.clone(),
+                    Value::Array(updates.into_iter().map(Value::String).collect()),
+                );
+                continue;
+            }
             if let Some(value) = merge_value(
                 base.and_then(|base| base.get(key)),
                 local.get(key),
@@ -956,11 +1087,19 @@ pub(crate) fn normalize_repository(value: &Value, viewer: &GitHubViewer) -> Resu
     })
 }
 
-fn segment(value: &str) -> String {
+pub(crate) fn sha_branch(value: &Value) -> Result<String> {
+    let branch = field(value, "default_branch", 200)?;
+    if branch.is_empty() || branch.contains(['\0', '\n', '?', '#']) {
+        return Err(Error::InvalidGitHubResponse);
+    }
+    Ok(branch.to_owned())
+}
+
+pub(crate) fn segment(value: &str) -> String {
     url::form_urlencoded::byte_serialize(value.as_bytes()).collect::<String>()
 }
 
-fn sha(value: &Value, key: &str) -> Result<String> {
+pub(crate) fn sha(value: &Value, key: &str) -> Result<String> {
     let value = field(value, key, 64)?;
     if !matches!(value.len(), 40 | 64) || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
         return Err(Error::InvalidGitHubResponse);
@@ -968,7 +1107,7 @@ fn sha(value: &Value, key: &str) -> Result<String> {
     Ok(value.to_owned())
 }
 
-async fn request(
+pub(crate) async fn request(
     client: &GitHubClient,
     token: &SecretString,
     method: Method,
@@ -1169,7 +1308,7 @@ pub async fn noosnote_open_setup(
         .map_err(|error| error.to_string())
 }
 
-fn apply_changes(cache: &mut Cache, changes: Vec<Change>) -> Result<BTreeSet<String>> {
+pub(crate) fn apply_changes(cache: &mut Cache, changes: Vec<Change>) -> Result<BTreeSet<String>> {
     if changes.is_empty() || changes.len() > 256 {
         return Err(Error::InvalidData);
     }
@@ -1332,7 +1471,7 @@ pub async fn noosnote_resolve(
         .map_err(|error| error.to_string())
 }
 
-fn commit_tree(cache: &Cache) -> Result<Vec<Value>> {
+pub(crate) fn commit_tree(cache: &Cache) -> Result<Vec<Value>> {
     let mut tree = Vec::new();
     for path in &cache.index.dirty {
         let document = cache.documents.get(path).ok_or(Error::Local)?;
@@ -1355,7 +1494,7 @@ fn commit_tree(cache: &Cache) -> Result<Vec<Value>> {
     Ok(tree)
 }
 
-async fn read_documents(
+pub(crate) async fn read_documents(
     state: &AppState,
     token: &SecretString,
     viewer: &GitHubViewer,
@@ -1463,7 +1602,7 @@ async fn read_documents(
     Ok(values)
 }
 
-fn record_publish(latest: &mut Cache, sent: &Cache) -> Result<BTreeSet<String>> {
+pub(crate) fn record_publish(latest: &mut Cache, sent: &Cache) -> Result<BTreeSet<String>> {
     let mut persisted = BTreeSet::new();
     for path in &sent.index.dirty {
         let sent = sent.documents.get(path).ok_or(Error::Local)?;

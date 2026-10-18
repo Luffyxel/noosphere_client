@@ -45,10 +45,7 @@ export function FileCard({ entry }: { entry: PageEntry }) {
   async function download() {
     setDownloading(true);
     try {
-      const content = await window.noosphereDesktop!.noosnote.readFile(
-        workspaceId,
-        entry.id,
-      );
+      const content = await notes.api!.readFile(workspaceId, entry.id);
       saveBlob(
         file.name,
         new Blob([base64Bytes(content).buffer as ArrayBuffer], {
@@ -142,10 +139,7 @@ export function DocumentHeader({ page }: { page: NotePage }) {
         );
         saveBlob(`${page.title || 'Document'}.docx`, blob);
       } else {
-        const content = await window.noosphereDesktop!.noosnote.readFile(
-          workspaceId,
-          page.id,
-        );
+        const content = await notes.api!.readFile(workspaceId, page.id);
         saveBlob(
           page.attachment!.name,
           new Blob([base64Bytes(content).buffer as ArrayBuffer], {

@@ -1,3 +1,4 @@
+import type { NoteThread } from './team-types';
 export type RichNode = {
   type: string;
   attrs?: Record<string, unknown>;
@@ -35,6 +36,7 @@ export type Workspace = {
   emoji?: string;
   color: string;
   pages: PageEntry[];
+  profiles?: Record<string, string>;
 };
 
 export type NotePage = {
@@ -46,6 +48,7 @@ export type NotePage = {
   icon: string;
   emoji?: string;
   content: RichNode;
+  collaborationUpdates?: string[];
   attachment?: NoteAttachment;
   importNotice?: string;
 };
@@ -121,7 +124,7 @@ export type NoteDatabase = {
   views: DatabaseView[];
 };
 
-export type NoteDocument = Workspace | NotePage | NoteDatabase;
+export type NoteDocument = Workspace | NotePage | NoteDatabase | NoteThread;
 export type NoteFiles = Record<string, NoteDocument>;
 export type NoteChange = { path: string; value: NoteDocument | null };
 export type NoteConflict = {
@@ -148,6 +151,8 @@ export type NoteSnapshot = {
   setup: 'repository' | 'installation' | 'ready';
 };
 export type NoosnoteApi = {
+  shared?: boolean;
+  readOnly?: boolean;
   importFile: (
     workspaceId: string,
     name: string,

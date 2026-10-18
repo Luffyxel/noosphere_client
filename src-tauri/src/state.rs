@@ -155,6 +155,10 @@ pub struct AppState {
     pub social: RwLock<LocalSocialState>,
     pub notes: Mutex<Option<crate::noosnote::Cache>>,
     pub notes_sync: Mutex<()>,
+    pub team_notes: Mutex<BTreeMap<String, crate::noosnote::Cache>>,
+    pub teams_sync: Mutex<()>,
+    pub teams_edit: Mutex<()>,
+    pub teams_registry: Mutex<()>,
     pub setup: Mutex<()>,
     pub operations: Mutex<()>,
     pub update_busy: AtomicBool,
@@ -178,6 +182,10 @@ impl AppState {
             social: RwLock::new(LocalSocialState::default()),
             notes: Mutex::new(None),
             notes_sync: Mutex::new(()),
+            team_notes: Mutex::new(BTreeMap::new()),
+            teams_sync: Mutex::new(()),
+            teams_edit: Mutex::new(()),
+            teams_registry: Mutex::new(()),
             setup: Mutex::new(()),
             operations: Mutex::new(()),
             update_busy: AtomicBool::new(false),
@@ -523,6 +531,7 @@ impl AppState {
         let result = prepared.and_then(|serialized| self.blobs.save(&account, serialized));
         if result.is_err() {
             *self.identity.write().await = None;
+            self.team_notes.lock().await.clear();
             *self.social.write().await = LocalSocialState::default();
             if let Ok(Some(previous)) = self.blobs.load(&account)
                 && let Ok(stored) = serde_json::from_str::<StoredAccount>(previous.expose_secret())

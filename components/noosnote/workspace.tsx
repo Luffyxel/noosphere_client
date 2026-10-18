@@ -65,31 +65,35 @@ export function NoosnoteRail({
   notes,
   selected,
   onSelect,
+  hidden = [],
 }: {
+  hidden?: string[];
   notes: NoosnoteController;
   selected: string | null;
   onSelect: (id: string) => void;
 }) {
   return (
     <div className="note-rail-list">
-      {workspaces(notes.files).map((workspace) => (
-        <button
-          key={workspace.id}
-          className="note-rail-icon"
-          title={workspace.title}
-          aria-label={`Noosnote ${workspace.title}`}
-          aria-current={selected === workspace.id ? 'page' : undefined}
-          style={{
-            background:
-              selected === workspace.id ? `${workspace.color}35` : undefined,
-            borderColor:
-              selected === workspace.id ? workspace.color : undefined,
-          }}
-          onClick={() => onSelect(workspace.id)}
-        >
-          <span className="note-system-emoji">{noteIcon(workspace)}</span>
-        </button>
-      ))}
+      {workspaces(notes.files)
+        .filter((workspace) => !hidden.includes(workspace.id))
+        .map((workspace) => (
+          <button
+            key={workspace.id}
+            className="note-rail-icon"
+            title={workspace.title}
+            aria-label={`Noosnote ${workspace.title}`}
+            aria-current={selected === workspace.id ? 'page' : undefined}
+            style={{
+              background:
+                selected === workspace.id ? `${workspace.color}35` : undefined,
+              borderColor:
+                selected === workspace.id ? workspace.color : undefined,
+            }}
+            onClick={() => onSelect(workspace.id)}
+          >
+            <span className="note-system-emoji">{noteIcon(workspace)}</span>
+          </button>
+        ))}
     </div>
   );
 }
@@ -464,11 +468,13 @@ export function NoosnoteWorkspace({
   workspaceId,
   initialPageId,
   onCreate,
+  collaboration,
 }: {
   notes: NoosnoteController;
   workspaceId: string | null;
   initialPageId: string | null;
   onCreate: () => void;
+  collaboration?: (pageId: string | null) => React.ReactNode;
 }) {
   const [selectedPageId, setPageId] = useState<string | null>(initialPageId);
   const [history, setHistory] = useState<string[]>([]);
@@ -561,6 +567,16 @@ export function NoosnoteWorkspace({
             { path: pagePath(workspace.id, id), value: document },
           ]);
       }
+      if (notes.api?.shared) {
+        const { materializePage } =
+          await import('@/lib/noosnote/collaboration');
+        files = Object.fromEntries(
+          Object.entries(files).map(([path, file]) => [
+            path,
+            file.kind === 'page' ? materializePage(file) : file,
+          ]),
+        );
+      }
       const result = duplicatePage(files, workspace.id, target);
       if (result.changes.length > 250)
         throw new Error(
@@ -590,6 +606,7 @@ export function NoosnoteWorkspace({
     }
   }
   function pageAction(action: PageAction, target: string) {
+    if (!notes.canEdit && !['open', 'export'].includes(action)) return;
     setActions(false);
     void (async () => {
       const currentWorkspace = workspaceId
@@ -640,7 +657,7 @@ export function NoosnoteWorkspace({
               <strong>{workspace?.title || 'Noosnote'}</strong>
               <button
                 aria-label="Réglages du Noosnote"
-                disabled={!workspace}
+                disabled={!workspace || !notes.canEdit}
                 onClick={() => setSettings(true)}
               >
                 <Settings2 size={16} />
@@ -774,7 +791,8 @@ export function NoosnoteWorkspace({
                     </span>
                   ))}
               </nav>
-              {page && !trash && (
+              {collaboration?.(pageId)}
+              {page && !trash && notes.canEdit && (
                 <div className="note-page-actions">
                   <button
                     aria-label="Options de la page"
@@ -903,6 +921,7 @@ export function NoosnoteWorkspace({
                     />
                   </div>
                   <input
+                    readOnly={!notes.canEdit}
                     className="note-page-title"
                     aria-label="Titre de la page"
                     placeholder="Sans titre"

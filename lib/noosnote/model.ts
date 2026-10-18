@@ -119,7 +119,9 @@ export function change(value: NoteDocument): NoteChange {
         ? workspacePath(value.id)
         : value.kind === 'page'
           ? pagePath(value.workspaceId, value.id)
-          : databasePath(value.workspaceId, value.id),
+          : value.kind === 'thread'
+            ? `notes/${value.workspaceId}/threads/${value.id}.json`
+            : databasePath(value.workspaceId, value.id),
     value,
   };
 }
@@ -480,7 +482,13 @@ export function duplicatePage(
         : {}),
     });
     changes.push(
-      change({ ...page, id: copiedId, title, content: rewrite(page.content) }),
+      change({
+        ...page,
+        id: copiedId,
+        title,
+        content: rewrite(page.content),
+        collaborationUpdates: undefined,
+      }),
     );
   }
   for (const database of sourceDatabases) {

@@ -273,96 +273,117 @@ pub async fn noosnote_read_file(
     workspace_id: String,
     page_id: String,
 ) -> std::result::Result<String, String> {
-    async fn read(state: &AppState, workspace: &str, page_id: &str) -> Result<String> {
-        let viewer = commands::session_viewer(state).await?;
-        let snapshot = noosnote::load_page(state, workspace, page_id).await?;
-        let page = snapshot
-            .files
-            .get(&format!("notes/{workspace}/pages/{page_id}.json"))
-            .ok_or(Error::NoosnotePageUnavailable)?;
-        let file = validate(page.get("attachment").ok_or(Error::InvalidData)?)?;
-        let mut bytes = Vec::with_capacity(file.size);
-        let mut remote_checked = false;
-        for (index, part) in file.chunks.iter().enumerate() {
-            let key = chunk_key(viewer.id, &file.id, index);
-            let store = state.blobs.clone();
-            let load_key = key.clone();
-            let cached = tokio::task::spawn_blocking(move || store.load(&load_key))
-                .await
-                .map_err(|_| Error::Local)??;
-            let chunk = if let Some(encoded) = cached {
-                STANDARD
-                    .decode(encoded.expose_secret())
-                    .map_err(|_| Error::InvalidData)?
-            } else {
-                let token = state.access_token().await?;
-                let root = format!(
-                    "/repos/{}/{}",
-                    viewer.login,
-                    noosnote::repository_name(viewer.id)
-                );
-                if !remote_checked {
-                    let response = state
-                        .github
-                        .api_json::<Value>(
-                            Method::GET,
-                            &root,
-                            Some(token.expose_secret()),
-                            None,
-                            None,
-                            &[],
-                        )
-                        .await?;
-                    noosnote::normalize_repository(
-                        response.data.as_ref().ok_or(Error::InvalidGitHubResponse)?,
-                        &viewer,
-                    )?;
-                    remote_checked = true;
-                }
+    read_personal_file(&state, &workspace_id, &page_id)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+pub(crate) async fn read_personal_file(
+    state: &AppState,
+    workspace: &str,
+    page_id: &str,
+) -> Result<String> {
+    let viewer = commands::session_viewer(state).await?;
+    let snapshot = noosnote::load_page(state, workspace, page_id).await?;
+    let page = snapshot
+        .files
+        .get(&format!("notes/{workspace}/pages/{page_id}.json"))
+        .ok_or(Error::NoosnotePageUnavailable)?;
+    let root = format!(
+        "/repos/{}/{}",
+        viewer.login,
+        noosnote::repository_name(viewer.id)
+    );
+    let repository = noosnote::cached(state, viewer.id)
+        .await?
+        .index
+        .repository
+        .map(|repository| repository.id)
+        .unwrap_or(0);
+    read_cached_file(state, page, &root, repository).await
+}
+
+pub(crate) async fn read_cached_file(
+    state: &AppState,
+    page: &Value,
+    root: &str,
+    repository_id: u64,
+) -> Result<String> {
+    let viewer = commands::session_viewer(state).await?;
+    let file = validate(page.get("attachment").ok_or(Error::InvalidData)?)?;
+    let mut bytes = Vec::with_capacity(file.size);
+    let mut remote_checked = false;
+    for (index, part) in file.chunks.iter().enumerate() {
+        let key = chunk_key(viewer.id, &file.id, index);
+        let store = state.blobs.clone();
+        let load_key = key.clone();
+        let cached = tokio::task::spawn_blocking(move || store.load(&load_key))
+            .await
+            .map_err(|_| Error::Local)??;
+        let chunk = if let Some(encoded) = cached {
+            STANDARD
+                .decode(encoded.expose_secret())
+                .map_err(|_| Error::InvalidData)?
+        } else {
+            let token = state.access_token().await?;
+            if !remote_checked {
                 let response = state
                     .github
                     .api_json::<Value>(
                         Method::GET,
-                        &format!("{root}/git/blobs/{}", part.sha),
+                        &root,
                         Some(token.expose_secret()),
                         None,
                         None,
                         &[],
                     )
                     .await?;
-                let mut value = response.data.ok_or(Error::InvalidGitHubResponse)?;
-                if value.get("sha").and_then(Value::as_str) != Some(&part.sha) {
-                    return Err(Error::InvalidGitHubResponse);
+                let repository = response.data.as_ref().ok_or(Error::InvalidGitHubResponse)?;
+                if repository["private"] != true || repository["id"].as_u64() != Some(repository_id)
+                {
+                    return Err(Error::NoosnoteRepositoryMismatch);
                 }
-                value["type"] = Value::String("file".into());
-                let chunk =
-                    crate::repository_content::decode_file_bytes(&value, CHUNK_BYTES, false)?;
-                if chunk.len() != part.size || blob_hash(&chunk) != part.sha {
-                    return Err(Error::InvalidGitHubResponse);
-                }
-                let store = state.blobs.clone();
-                let encoded = SecretString::from(STANDARD.encode(&chunk));
-                tokio::task::spawn_blocking(move || store.save(&key, encoded))
-                    .await
-                    .map_err(|_| Error::Local)??;
-                chunk
-            };
-            if chunk.len() != part.size || blob_hash(&chunk) != part.sha {
-                return Err(Error::InvalidData);
+                remote_checked = true;
             }
-            bytes.extend_from_slice(&chunk);
-        }
-        if hex::encode(Sha256::digest(&bytes)) != file.checksum {
+            let response = state
+                .github
+                .api_json::<Value>(
+                    Method::GET,
+                    &format!("{root}/git/blobs/{}", part.sha),
+                    Some(token.expose_secret()),
+                    None,
+                    None,
+                    &[],
+                )
+                .await?;
+            let mut value = response.data.ok_or(Error::InvalidGitHubResponse)?;
+            if value.get("sha").and_then(Value::as_str) != Some(&part.sha) {
+                return Err(Error::InvalidGitHubResponse);
+            }
+            value["type"] = Value::String("file".into());
+            let chunk = crate::repository_content::decode_file_bytes(&value, CHUNK_BYTES, false)?;
+            if chunk.len() != part.size || blob_hash(&chunk) != part.sha {
+                return Err(Error::InvalidGitHubResponse);
+            }
+            let store = state.blobs.clone();
+            let encoded = SecretString::from(STANDARD.encode(&chunk));
+            tokio::task::spawn_blocking(move || store.save(&key, encoded))
+                .await
+                .map_err(|_| Error::Local)??;
+            chunk
+        };
+        if chunk.len() != part.size || blob_hash(&chunk) != part.sha {
             return Err(Error::InvalidData);
         }
-        if commands::session_viewer(state).await?.id != viewer.id {
-            return Err(Error::SessionExpired);
-        }
-        Ok(STANDARD.encode(&bytes))
+        bytes.extend_from_slice(&chunk);
     }
-    read(&state, &workspace_id, &page_id)
-        .await
-        .map_err(|error| error.to_string())
+    if hex::encode(Sha256::digest(&bytes)) != file.checksum {
+        return Err(Error::InvalidData);
+    }
+    if commands::session_viewer(state).await?.id != viewer.id {
+        return Err(Error::SessionExpired);
+    }
+    Ok(STANDARD.encode(&bytes))
 }
 
 #[cfg(test)]

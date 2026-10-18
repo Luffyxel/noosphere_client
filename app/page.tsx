@@ -1,5 +1,13 @@
 'use client';
 
+import {
+  TeamNoosnote,
+  ShareNoosnote,
+  SharedNoosnoteRail,
+  JoinNoosnoteDialog,
+  useNoosnoteTeams,
+} from '@/components/noosnote/team';
+
 import { invoke } from '@tauri-apps/api/core';
 
 import {
@@ -65,6 +73,7 @@ import { RemoteWorkspace } from '@/components/remote-access/workspace';
 import { IncomingRemoteRequest } from '@/components/remote-access/permissions';
 import { RemoteSessionOverlay } from '@/components/remote-access/session-overlay';
 import { useRemoteAccess } from '@/lib/use-remote-access';
+import { flushNotebooks } from '@/lib/noosnote/save-registry';
 import { useNoosnote } from '@/lib/noosnote/use-noosnote';
 import {
   CreateNoosnoteDialog,
@@ -1154,6 +1163,9 @@ function NoosphereApp({
     'messages',
   );
   const notes = useNoosnote(viewer.id, section === 'notes');
+  const teams = useNoosnoteTeams(viewer.id);
+  const [teamBusy, setTeamBusy] = useState(false);
+  const [joinNoteOpen, setJoinNoteOpen] = useState(false);
   const [noteWorkspaceId, setNoteWorkspaceId] = useState<string | null>(null);
   const [noteInitialPageId, setNoteInitialPageId] = useState<string | null>(
     null,
@@ -1610,7 +1622,8 @@ function NoosphereApp({
         sendingMessage ||
         remoteAccess.busy ||
         notes.saving ||
-        notes.syncing,
+        notes.syncing ||
+        teamBusy,
     }).catch(() => {});
     return () => {
       void invoke('system_set_update_busy', { busy: false }).catch(() => {});
@@ -1621,6 +1634,7 @@ function NoosphereApp({
     remoteAccess.busy,
     notes.saving,
     notes.syncing,
+    teamBusy,
   ]);
 
   useEffect(() => {
@@ -1958,6 +1972,16 @@ function NoosphereApp({
   return (
     <main className="relative flex h-dvh min-h-[620px] overflow-hidden bg-[#1c1c1e] font-sans text-[#f5f5f7]">
       <aside className="flex w-[72px] shrink-0 flex-col items-center border-r border-white/[.07] bg-[#151517] py-3">
+        <SharedNoosnoteRail
+          teams={teams.teams}
+          selected={section === 'notes' ? noteWorkspaceId : null}
+          onJoin={() => setJoinNoteOpen(true)}
+          onSelect={(id) => {
+            setNoteWorkspaceId(id);
+            setNoteInitialPageId(null);
+            setSection('notes');
+          }}
+        />
         <button
           type="button"
           aria-label="Messages directs"
@@ -1993,6 +2017,7 @@ function NoosphereApp({
         </button>
         <NoosnoteRail
           notes={notes}
+          hidden={teams.teams.map((team) => team.id)}
           selected={section === 'notes' ? noteWorkspaceId : null}
           onSelect={(id) => {
             setNoteWorkspaceId(id);
@@ -2023,15 +2048,51 @@ function NoosphereApp({
         </button>
       </aside>
 
-      {section === 'notes' && (
-        <NoosnoteWorkspace
-          key={`${noteWorkspaceId}:${noteInitialPageId}`}
-          notes={notes}
-          workspaceId={noteWorkspaceId}
-          initialPageId={noteInitialPageId}
-          onCreate={() => setCreateNoteOpen(true)}
+      {joinNoteOpen && (
+        <JoinNoosnoteDialog
+          onClose={() => setJoinNoteOpen(false)}
+          onJoined={(team) => {
+            teams.remember(team);
+            setNoteWorkspaceId(team.id);
+            setNoteInitialPageId(null);
+            setSection('notes');
+            setJoinNoteOpen(false);
+          }}
         />
       )}
+      {section === 'notes' &&
+        (teams.teams.some((team) => team.id === noteWorkspaceId) ? (
+          <TeamNoosnote
+            key={noteWorkspaceId}
+            viewer={viewer}
+            team={teams.teams.find((team) => team.id === noteWorkspaceId)!}
+            onCreate={() => setCreateNoteOpen(true)}
+            onUpdated={(team) => teams.remember(team)}
+            onBusy={setTeamBusy}
+          />
+        ) : (
+          <NoosnoteWorkspace
+            key={noteWorkspaceId + ':' + noteInitialPageId}
+            notes={notes}
+            workspaceId={noteWorkspaceId}
+            initialPageId={noteInitialPageId}
+            onCreate={() => setCreateNoteOpen(true)}
+            collaboration={
+              noteWorkspaceId
+                ? () => (
+                    <ShareNoosnote
+                      notes={notes}
+                      workspaceId={noteWorkspaceId}
+                      onShared={(team) => {
+                        teams.remember(team);
+                        setNoteWorkspaceId(team.id);
+                      }}
+                    />
+                  )
+                : undefined
+            }
+          />
+        ))}
       <Dialog open={createMenuOpen} onOpenChange={setCreateMenuOpen}>
         <DialogContent className="note-dialog sm:max-w-sm">
           <DialogHeader>
@@ -2176,8 +2237,7 @@ function NoosphereApp({
             className="size-9 rounded-[10px] text-[#8e8e93] hover:bg-white/[.06] hover:text-white"
             aria-label="Se déconnecter"
             onClick={() => {
-              void notes
-                .flush()
+              void flushNotebooks()
                 .then(onSignOut)
                 .catch((error) => setSyncError(readableError(error)));
             }}

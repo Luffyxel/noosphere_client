@@ -7,6 +7,7 @@ mod instance_profile;
 mod models;
 mod noosnote;
 mod noosnote_files;
+mod noosnote_team;
 #[cfg(target_os = "linux")]
 mod notification;
 mod protocol;
@@ -575,6 +576,19 @@ pub fn run() {
             noosnote::noosnote_resolve,
             noosnote::noosnote_page,
             noosnote_files::noosnote_import_file,
+            noosnote_team::noosnote_teams,
+            noosnote_team::noosnote_team_join,
+            noosnote_team::noosnote_team_prepare,
+            noosnote_team::noosnote_team_cached,
+            noosnote_team::noosnote_team_save,
+            noosnote_team::noosnote_team_sync,
+            noosnote_team::noosnote_team_page,
+            noosnote_team::noosnote_team_resolve,
+            noosnote_team::noosnote_team_status,
+            noosnote_team::noosnote_team_open,
+            noosnote_team::noosnote_team_history,
+            noosnote_team::noosnote_team_read_file,
+            noosnote_team::noosnote_team_leave,
             noosnote_files::noosnote_read_file,
             app_update::system_update_target,
             app_update::system_install_appimage_update,
