@@ -1223,7 +1223,20 @@ mod platform {
                 "La session Linux requiert H.264 pour cette version.".into(),
             ));
         }
-        let (mut desktop, source) = DesktopSession::open(permissions).await?;
+        let (mut desktop, source) = tokio::select! {
+            biased;
+            _ = async {
+                while !cancel.load(Ordering::Relaxed) && !session.is_closed() {
+                    tokio::time::sleep(Duration::from_millis(25)).await;
+                }
+            } => {
+                session.close();
+                return Ok(());
+            }
+            result = tokio::time::timeout(Duration::from_secs(120), DesktopSession::open(permissions)) => {
+                result.map_err(|_| Error::Unavailable("L’autorisation de capture a expiré. Préparez l’écran dans les réglages du bureau à distance.".into()))??
+            }
+        };
         let encoder = PortalEncoder::open(source, &settings.video)?;
         let mut controls = HostControls {
             input: InputGuard::new(permissions),
@@ -1331,6 +1344,8 @@ mod platform {
         for event in controls.input.release_all() {
             let _ = desktop.inject(&event).await;
         }
+        drop(encoder);
+        let _ = tokio::time::timeout(Duration::from_millis(500), desktop.close()).await;
         session.close();
         result
     }

@@ -31,7 +31,7 @@ pub async fn prepare_capture() -> Result<bool> {
     })
     .await?;
     drop(source);
-    drop(desktop);
+    let _ = tokio::time::timeout(std::time::Duration::from_millis(500), desktop.close()).await;
     Ok(capture_prepared())
 }
 
@@ -246,6 +246,17 @@ impl DesktopSession {
                 x11_display: None,
             },
         ))
+    }
+
+    pub async fn close(&self) -> Result<()> {
+        match &self.portal {
+            Portal::Remote { session, .. } => session.close().await,
+            Portal::Screencast {
+                _session: session, ..
+            } => session.close().await,
+            Portal::Test | Portal::X11(_) => return Ok(()),
+        }
+        .map_err(|error| portal_error("fermeture du partage", error))
     }
 
     pub async fn inject(&mut self, event: &Event) -> Result<()> {
