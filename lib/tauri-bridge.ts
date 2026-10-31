@@ -166,6 +166,7 @@ export function installTauriBridge(): void {
           unattended,
         }),
       status: () => invoke<RemoteStatus>('remote_status'),
+      prepareCapture: () => invoke<boolean>('remote_prepare_capture'),
       saveSettings: (settings) =>
         invoke<RemoteStatus>('remote_save_settings', { settings }),
       startLocalTest: (settings) =>

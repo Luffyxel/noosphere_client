@@ -27,6 +27,17 @@ unsafe extern "system" fn window_proc(
     if !state.is_null()
         && unsafe { GetMessageExtraInfo().0 as usize } != crate::input::windows::INPUT_MARKER
     {
+        if message == WM_KILLFOCUS {
+            let mut held = unsafe { &*state }
+                .held
+                .lock()
+                .unwrap_or_else(|error| error.into_inner());
+            let mut events = unsafe { &*state }
+                .events
+                .lock()
+                .unwrap_or_else(|error| error.into_inner());
+            events.extend(held.release_all());
+        }
         let event = match message {
             WM_KEYDOWN | WM_SYSKEYDOWN if wparam.0 < 256 && wparam.0 != 27 => {
                 Some(crate::input::Event::Key {
@@ -68,13 +79,30 @@ unsafe extern "system" fn window_proc(
             _ => None,
         };
         if let Some(event) = event {
+            unsafe { &*state }
+                .held
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .record(&event);
             let mut events = unsafe { &*state }
                 .events
                 .lock()
                 .unwrap_or_else(|error| error.into_inner());
-            if events.len() < 256 {
-                events.push(event);
+            if matches!(event, crate::input::Event::Pointer { .. })
+                && events
+                    .last()
+                    .is_some_and(|last| matches!(last, crate::input::Event::Pointer { .. }))
+            {
+                events.pop();
             }
+            if events.len() >= 512 {
+                let index = events
+                    .iter()
+                    .position(|event| matches!(event, crate::input::Event::Pointer { .. }))
+                    .unwrap_or(0);
+                events.remove(index);
+            }
+            events.push(event);
         }
     }
     // SAFETY: parameters are provided by the Windows dispatcher; state lives in the worker.
@@ -83,6 +111,7 @@ unsafe extern "system" fn window_proc(
 
 #[derive(Default)]
 struct WindowState {
+    held: Mutex<crate::input::InputState>,
     events: Mutex<Vec<crate::input::Event>>,
 }
 

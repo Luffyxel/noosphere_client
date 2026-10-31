@@ -45,6 +45,8 @@ export function RemoteAccessSettings({
   const [settings, setSettings] = useState<RemoteSettings | null>(null);
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
+  const [preparingCapture, setPreparingCapture] = useState(false);
+  const [captureNotice, setCaptureNotice] = useState('');
   const [saved, setSaved] = useState(false);
   const [editing, setEditing] = useState<RemoteUser | null>(null);
   const data = remote.directory;
@@ -95,6 +97,26 @@ export function RemoteAccessSettings({
       setError(String(failure));
     } finally {
       setSaving(false);
+    }
+  }
+  async function prepareCapture() {
+    const api = window.noosphereDesktop?.remoteAccess;
+    if (!api || preparingCapture) return;
+    setPreparingCapture(true);
+    setError('');
+    setCaptureNotice('');
+    try {
+      const prepared = await api.prepareCapture();
+      setStatus(await api.status());
+      setCaptureNotice(
+        prepared
+          ? 'Écran mémorisé. Les prochaines connexions pourront démarrer sans nouvelle sélection.'
+          : 'Le système n’a pas mémorisé ce partage. Relancez l’autorisation et cochez « Autoriser le jeton de restauration ».',
+      );
+    } catch (failure) {
+      setError(String(failure));
+    } finally {
+      setPreparingCapture(false);
     }
   }
   const tabs = [
@@ -203,6 +225,35 @@ export function RemoteAccessSettings({
                   />
                 </SettingRow>
               )}
+              {status?.capturePermissionRequired && (
+                <SettingRow
+                  title="Autorisation de l’écran"
+                  detail={
+                    status.capturePrepared
+                      ? 'Écran mémorisé pour les prochaines connexions.'
+                      : 'Choisissez votre écran une fois ici et autorisez sa mémorisation dans la fenêtre système.'
+                  }
+                >
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="text-[var(--noosphere-accent)]"
+                    disabled={
+                      preparingCapture ||
+                      remote.busy ||
+                      (status.session.state !== 'idle' &&
+                        status.session.state !== 'failed')
+                    }
+                    onClick={() => void prepareCapture()}
+                  >
+                    {preparingCapture
+                      ? 'Autorisation…'
+                      : status.capturePrepared
+                        ? 'Vérifier'
+                        : 'Autoriser l’écran'}
+                  </Button>
+                </SettingRow>
+              )}
               <SettingRow title="Utilisateurs autorisés">
                 <Button
                   variant="ghost"
@@ -215,6 +266,14 @@ export function RemoteAccessSettings({
                 </Button>
               </SettingRow>
             </SettingsGroup>
+            {captureNotice && (
+              <p
+                role="status"
+                className="px-1 text-[12px] leading-relaxed text-[#a1a1a6]"
+              >
+                {captureNotice}
+              </p>
+            )}
             {settings && (
               <SettingsGroup title="Identification">
                 <SettingRow title="Nom de l’ordinateur">

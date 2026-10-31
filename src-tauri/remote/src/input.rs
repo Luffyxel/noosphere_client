@@ -16,6 +16,96 @@ pub enum Event {
     Clipboard(String),
 }
 
+#[derive(Clone, Default, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct InputState {
+    pub keys: Vec<u16>,
+    pub buttons: u8,
+}
+
+impl InputState {
+    pub fn record(&mut self, event: &Event) {
+        match *event {
+            Event::Key { code, pressed } => match (self.keys.binary_search(&code), pressed) {
+                (Err(index), true) => self.keys.insert(index, code),
+                (Ok(index), false) => {
+                    self.keys.remove(index);
+                }
+                _ => {}
+            },
+            Event::Button { button, pressed } if button < 5 => {
+                if pressed {
+                    self.buttons |= 1 << button;
+                } else {
+                    self.buttons &= !(1 << button);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    pub fn release_all(&mut self) -> Vec<Event> {
+        let mut events: Vec<_> = std::mem::take(&mut self.keys)
+            .into_iter()
+            .map(|code| Event::Key {
+                code,
+                pressed: false,
+            })
+            .collect();
+        for button in 0..5 {
+            if self.buttons & (1 << button) != 0 {
+                events.push(Event::Button {
+                    button,
+                    pressed: false,
+                });
+            }
+        }
+        self.buttons = 0;
+        events
+    }
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(untagged)]
+pub enum InputMessage {
+    Event(Event),
+    State(InputState),
+}
+
+#[derive(Default)]
+pub struct GuestInput {
+    held: InputState,
+    last_snapshot_us: Option<u64>,
+}
+
+impl GuestInput {
+    pub fn messages(
+        &mut self,
+        events: Vec<Event>,
+        now_us: u64,
+        snapshots: bool,
+    ) -> Vec<InputMessage> {
+        let changed = events
+            .iter()
+            .any(|event| matches!(event, Event::Key { .. } | Event::Button { .. }));
+        let mut messages = Vec::with_capacity(events.len() + 1);
+        for event in events {
+            self.held.record(&event);
+            messages.push(InputMessage::Event(event));
+        }
+        if snapshots
+            && (changed
+                || self
+                    .last_snapshot_us
+                    .is_none_or(|last| now_us.saturating_sub(last) >= 80_000))
+        {
+            messages.push(InputMessage::State(self.held.clone()));
+            self.last_snapshot_us = Some(now_us);
+        }
+        messages
+    }
+}
+
 pub struct InputGuard {
     permissions: Permissions,
     replay: ReplayWindow,
@@ -172,6 +262,19 @@ impl<S: InputSink> InputController<S> {
             last_received_us: None,
         }
     }
+    pub fn message(&mut self, sequence: u64, message: InputMessage, now_us: u64) -> Result<()> {
+        let result = match message {
+            InputMessage::Event(event) => self.event(sequence, event, now_us),
+            InputMessage::State(state) => {
+                self.snapshot(sequence, &state.keys, state.buttons, now_us)
+            }
+        };
+        match result {
+            Err(Error::InvalidPacket) => Ok(()),
+            result => result,
+        }
+    }
+
     pub fn event(&mut self, sequence: u64, event: Event, now_us: u64) -> Result<()> {
         let event = self.guard.accept(sequence, event)?;
         self.sink.inject(&event)?;
@@ -389,5 +492,141 @@ mod tests {
                 )
                 .is_err()
         );
+    }
+    #[test]
+    fn periodic_snapshots_keep_held_keys_and_repair_a_lost_release() {
+        use std::{cell::RefCell, rc::Rc};
+        struct Sink(Rc<RefCell<Vec<Event>>>);
+        impl InputSink for Sink {
+            fn inject(&mut self, event: &Event) -> Result<()> {
+                self.0.borrow_mut().push(event.clone());
+                Ok(())
+            }
+        }
+        let observed = Rc::new(RefCell::new(Vec::new()));
+        let mut host = InputController::new(
+            Permissions {
+                keyboard: true,
+                mouse: true,
+                ..Permissions::default()
+            },
+            Sink(observed.clone()),
+        );
+        let mut guest = GuestInput::default();
+        let mut sequence = 0;
+        for (tick, events) in (0..12).map(|tick| {
+            (
+                tick,
+                if tick == 0 {
+                    vec![
+                        Event::Key {
+                            code: 65,
+                            pressed: true,
+                        },
+                        Event::Button {
+                            button: 0,
+                            pressed: true,
+                        },
+                    ]
+                } else {
+                    vec![]
+                },
+            )
+        }) {
+            for message in guest.messages(events, tick * 80_000, true) {
+                host.message(sequence, message, tick * 80_000).unwrap();
+                sequence += 1;
+            }
+            host.tick(tick * 80_000).unwrap();
+        }
+        assert_eq!(observed.borrow().len(), 2);
+        let _lost = guest.messages(
+            vec![
+                Event::Key {
+                    code: 65,
+                    pressed: false,
+                },
+                Event::Button {
+                    button: 0,
+                    pressed: false,
+                },
+            ],
+            960_000,
+            true,
+        );
+        for message in guest.messages(vec![], 1_040_000, true) {
+            host.message(sequence, message, 1_040_000).unwrap();
+            sequence += 1;
+        }
+        assert_eq!(
+            &observed.borrow()[2..],
+            &[
+                Event::Key {
+                    code: 65,
+                    pressed: false
+                },
+                Event::Button {
+                    button: 0,
+                    pressed: false
+                }
+            ]
+        );
+        host.message(
+            sequence - 1,
+            InputMessage::Event(Event::Key {
+                code: 65,
+                pressed: true,
+            }),
+            1_040_001,
+        )
+        .unwrap();
+        assert_eq!(observed.borrow().len(), 4);
+    }
+
+    #[test]
+    fn snapshots_require_negotiation_and_events_keep_the_legacy_wire_format() {
+        let mut guest = GuestInput::default();
+        let event = Event::Key {
+            code: 65,
+            pressed: true,
+        };
+        let messages = guest.messages(vec![event.clone()], 0, false);
+        assert_eq!(messages.len(), 1);
+        assert_eq!(
+            serde_json::to_vec(&messages[0]).unwrap(),
+            serde_json::to_vec(&event).unwrap()
+        );
+        assert!(guest.messages(vec![], 80_000, false).is_empty());
+        assert!(matches!(
+            guest.messages(vec![], 160_000, true).as_slice(),
+            [InputMessage::State(_)]
+        ));
+    }
+
+    #[test]
+    fn losing_viewer_focus_releases_all_tracked_keys_and_buttons() {
+        let mut held = InputState::default();
+        held.record(&Event::Key {
+            code: 65,
+            pressed: true,
+        });
+        held.record(&Event::Button {
+            button: 1,
+            pressed: true,
+        });
+        assert_eq!(
+            held.release_all(),
+            vec![
+                Event::Key {
+                    code: 65,
+                    pressed: false
+                },
+                Event::Button {
+                    button: 1,
+                    pressed: false
+                }
+            ]
+        );
+        assert_eq!(held, InputState::default());
     }
 }

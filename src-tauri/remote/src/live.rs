@@ -695,7 +695,7 @@ mod platform {
             windows::{HardwareEncoder, Runtime, media_error},
         },
         fec,
-        input::{Event, InputController, windows::NativeInput},
+        input::{Event, GuestInput, InputController, InputMessage, windows::NativeInput},
         transport::{
             assembler::Assembler,
             packet::{Kind, Packet, packetize},
@@ -852,9 +852,9 @@ mod platform {
             for _ in 0..32 {
                 match tokio::time::timeout(Duration::from_millis(1), session.receive(clock)).await {
                     Ok(Ok(Some(packet))) if packet.kind == Kind::Input => {
-                        let event: Event = serde_json::from_slice(&packet.payload)
+                        let message: InputMessage = serde_json::from_slice(&packet.payload)
                             .map_err(|_| Error::InvalidPacket)?;
-                        input.event(packet.sequence, event, clock())?;
+                        input.message(packet.sequence, message, clock())?;
                     }
                     Ok(Ok(Some(packet))) if packet.kind == Kind::Feedback => {
                         let feedback: NetworkFeedback = serde_json::from_slice(&packet.payload)
@@ -934,6 +934,7 @@ mod platform {
         let mut assembler = Assembler::default();
         let mut gate = DecodeGate::default();
         let mut outgoing_sequence = 1_u64 << 63;
+        let mut guest_input = GuestInput::default();
         let mut presented = 0_u64;
         let mut first_media_sequence = None;
         let mut highest_media_sequence = 0_u64;
@@ -980,13 +981,18 @@ mod platform {
                     }
                 }
             }
-            for event in viewer
+            let events = viewer
                 .take_input()
                 .into_iter()
                 .filter(|event| event_allowed(event, permissions))
-            {
+                .collect();
+            for message in guest_input.messages(
+                events,
+                clock(),
+                session.supports_input_state() && (permissions.keyboard || permissions.mouse),
+            ) {
                 let payload =
-                    Bytes::from(serde_json::to_vec(&event).map_err(|_| Error::InvalidPacket)?);
+                    Bytes::from(serde_json::to_vec(&message).map_err(|_| Error::InvalidPacket)?);
                 let packet = Packet {
                     kind: Kind::Input,
                     keyframe: false,
@@ -1004,7 +1010,14 @@ mod platform {
             }
             let time = clock();
             let interval_us = time.saturating_sub(feedback_at);
-            if interval_us >= 250_000 && received_total > reported_received {
+            if interval_us
+                >= if gate.needs_keyframe() {
+                    50_000
+                } else {
+                    250_000
+                }
+                && received_total > reported_received
+            {
                 let expected_total = first_media_sequence
                     .map(|first| highest_media_sequence.saturating_sub(first) + 1)
                     .unwrap_or(0);
@@ -1054,7 +1067,7 @@ mod platform {
         congestion::{Feedback, LowLatency, RateController as _},
         encoder::{Codec, DecodeGate},
         fec,
-        input::{Event, InputGuard, linux::DesktopSession},
+        input::{Event, GuestInput, InputGuard, InputMessage, linux::DesktopSession},
         transport::{
             assembler::Assembler,
             packet::{Kind, Packet, packetize},
@@ -1062,7 +1075,7 @@ mod platform {
         viewer::linux::Viewer,
     };
     use bytes::Bytes;
-    use std::time::{Duration, Instant};
+    use std::time::Duration;
 
     #[derive(Serialize, Deserialize)]
     #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -1108,6 +1121,95 @@ mod platform {
         };
     }
 
+    struct HostControls {
+        input: InputGuard,
+        last_input: Option<u64>,
+        controller: LowLatency,
+        fec_group: Option<usize>,
+        force_idr: bool,
+    }
+
+    impl HostControls {
+        async fn receive(
+            &mut self,
+            packet: Option<Packet>,
+            rtt: Duration,
+            desktop: &mut DesktopSession,
+            encoder: &PortalEncoder,
+        ) -> Result<()> {
+            let Some(packet) = packet else {
+                return Ok(());
+            };
+            match packet.kind {
+                Kind::Input => {
+                    let message: InputMessage = serde_json::from_slice(&packet.payload)
+                        .map_err(|_| Error::InvalidPacket)?;
+                    let events = match message {
+                        InputMessage::Event(event) => self
+                            .input
+                            .accept(packet.sequence, event)
+                            .map(|event| vec![event]),
+                        InputMessage::State(state) => {
+                            self.input
+                                .reconcile(packet.sequence, &state.keys, state.buttons)
+                        }
+                    };
+                    let events = match events {
+                        Ok(events) => events,
+                        Err(Error::InvalidPacket) => return Ok(()),
+                        Err(error) => return Err(error),
+                    };
+                    for event in events {
+                        desktop.inject(&event).await?;
+                    }
+                    self.last_input = Some(clock());
+                }
+                Kind::Feedback => {
+                    let feedback: NetworkFeedback = serde_json::from_slice(&packet.payload)
+                        .map_err(|_| Error::InvalidPacket)?;
+                    feedback.validate()?;
+                    let previous = self.controller.bitrate();
+                    let bitrate = self.controller.update(&Feedback {
+                        rtt_us: (rtt.as_micros() as u64).max(1),
+                        delivered_bytes: feedback.delivered_bytes,
+                        interval_us: feedback.interval_us,
+                        sent_packets: feedback
+                            .received_packets
+                            .saturating_add(feedback.lost_packets),
+                        lost_packets: feedback.lost_packets,
+                        app_limited: feedback.delivered_bytes.saturating_mul(8_000_000)
+                            / feedback.interval_us
+                            < previous * 9 / 10,
+                    })?;
+                    if bitrate != previous {
+                        encoder.set_bitrate(bitrate)?;
+                    }
+                    let estimate = self.controller.estimate();
+                    self.fec_group = fec::group_size(
+                        estimate.loss,
+                        estimate.rtt_us > estimate.min_rtt_us.saturating_add(8_000),
+                    );
+                    self.force_idr |= feedback.request_keyframe;
+                }
+                _ => {}
+            }
+            Ok(())
+        }
+
+        async fn tick(&mut self, desktop: &mut DesktopSession) -> Result<()> {
+            if self
+                .last_input
+                .is_some_and(|last| clock().saturating_sub(last) >= 250_000)
+            {
+                self.last_input = None;
+                for event in self.input.release_all() {
+                    desktop.inject(&event).await?;
+                }
+            }
+            Ok(())
+        }
+    }
+
     pub async fn host(
         settings: Settings,
         mut session: AuthenticatedTransport,
@@ -1123,26 +1225,44 @@ mod platform {
         }
         let (mut desktop, source) = DesktopSession::open(permissions).await?;
         let encoder = PortalEncoder::open(source, &settings.video)?;
-        let mut input = InputGuard::new(permissions);
-        let mut last_input = None;
+        let mut controls = HostControls {
+            input: InputGuard::new(permissions),
+            last_input: None,
+            controller: LowLatency::new(500_000, settings.video.bitrate, settings.video.bitrate)?,
+            fec_group: None,
+            force_idr: true,
+        };
         let mut sequence = 0_u64;
         let mut frame_id = 0_u64;
-        let mut force_idr = true;
-        let mut controller =
-            LowLatency::new(500_000, settings.video.bitrate, settings.video.bitrate)?;
-        let mut fec_group = None;
-        let frame_time = Duration::from_micros(1_000_000 / u64::from(settings.video.fps));
-        let mut next_frame = Instant::now();
+        let mut poll = tokio::time::interval(Duration::from_millis(2));
+        poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        let mut maintenance = tokio::time::interval(Duration::from_millis(25));
+        maintenance.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        let result = async {
         while !cancel.load(Ordering::Relaxed) {
-            tokio::time::sleep_until(next_frame.into()).await;
-            next_frame = (next_frame + frame_time).max(Instant::now());
-            if force_idr || frame_id.is_multiple_of(u64::from(settings.video.fps)) {
-                encoder.force_keyframe();
-                force_idr = false;
+            tokio::select! {
+                packet = session.receive(clock) => {
+                    controls.receive(packet?, session.rtt(), &mut desktop, &encoder).await?;
+                    continue;
+                }
+                _ = maintenance.tick() => {
+                    controls.tick(&mut desktop).await?;
+                    continue;
+                }
+                _ = poll.tick() => {}
             }
-            if let Some(encoded) = encoder.acquire(16)? {
-                let captured = clock();
-                let mtu = if fec_group.is_some() {
+            if controls.force_idr {
+                encoder.force_keyframe();
+                controls.force_idr = false;
+            }
+            if let Some(encoded) = encoder.acquire(0)? {
+                let captured = clock().saturating_sub(encoded.age_us);
+                if encoded.age_us >= 120_000 {
+                    controls.force_idr = true;
+                    frame_id += 1;
+                    continue;
+                }
+                let mtu = if controls.fec_group.is_some() {
                     session.max_datagram_size()?.min(1144)
                 } else {
                     session.max_datagram_size()?
@@ -1157,7 +1277,7 @@ mod platform {
                     mtu,
                 )?;
                 let video_packets = packets.len();
-                if let Some(group) = fec_group {
+                if let Some(group) = controls.fec_group {
                     for start in (0..video_packets).step_by(group) {
                         let end = (start + group).min(video_packets);
                         let payload = fec::parity(
@@ -1182,71 +1302,37 @@ mod platform {
                 }
                 sequence += packets.len() as u64;
                 for packet in packets {
-                    if !session.send_before_deadline(packet, clock).await? {
-                        if session.is_closed() {
-                            return Ok(());
+                    let sending = session.send_before_deadline(packet, clock);
+                    tokio::pin!(sending);
+                    let sent = loop {
+                        tokio::select! {
+                            result = &mut sending => break result?,
+                            packet = session.receive(clock) => {
+                                controls.receive(packet?, session.rtt(), &mut desktop, &encoder).await?;
+                            }
+                            _ = maintenance.tick() => {
+                                if cancel.load(Ordering::Relaxed) { return Ok(()); }
+                                controls.tick(&mut desktop).await?;
+                            }
                         }
+                    };
+                    if !sent {
+                        if session.is_closed() { return Ok(()); }
+                        controls.force_idr = true;
                         break;
                     }
                 }
                 frame_id += 1;
-                if frame_id.is_multiple_of(30) {
-                    progress(&state, &peer, frame_id, &session);
-                }
-            }
-            for _ in 0..32 {
-                match tokio::time::timeout(Duration::from_millis(1), session.receive(clock)).await {
-                    Ok(Ok(Some(packet))) if packet.kind == Kind::Input => {
-                        let event: Event = serde_json::from_slice(&packet.payload)
-                            .map_err(|_| Error::InvalidPacket)?;
-                        let event = input.accept(packet.sequence, event)?;
-                        desktop.inject(&event).await?;
-                        last_input = Some(clock());
-                    }
-                    Ok(Ok(Some(packet))) if packet.kind == Kind::Feedback => {
-                        let feedback: NetworkFeedback = serde_json::from_slice(&packet.payload)
-                            .map_err(|_| Error::InvalidPacket)?;
-                        feedback.validate()?;
-                        let previous = controller.bitrate();
-                        let bitrate = controller.update(&Feedback {
-                            rtt_us: (session.rtt().as_micros() as u64).max(1),
-                            delivered_bytes: feedback.delivered_bytes,
-                            interval_us: feedback.interval_us,
-                            sent_packets: feedback
-                                .received_packets
-                                .saturating_add(feedback.lost_packets),
-                            lost_packets: feedback.lost_packets,
-                            app_limited: feedback.delivered_bytes.saturating_mul(8_000_000)
-                                / feedback.interval_us
-                                < previous * 9 / 10,
-                        })?;
-                        if bitrate != previous {
-                            encoder.set_bitrate(bitrate)?;
-                        }
-                        let estimate = controller.estimate();
-                        fec_group = fec::group_size(
-                            estimate.loss,
-                            estimate.rtt_us > estimate.min_rtt_us.saturating_add(8_000),
-                        );
-                        force_idr |= feedback.request_keyframe;
-                    }
-                    Ok(Ok(_)) => {}
-                    Ok(Err(error)) => return Err(error),
-                    Err(_) => break,
-                }
-            }
-            if last_input.is_some_and(|last| clock().saturating_sub(last) >= 250_000) {
-                last_input = None;
-                for event in input.release_all() {
-                    desktop.inject(&event).await?;
-                }
+                if frame_id.is_multiple_of(30) { progress(&state, &peer, frame_id, &session); }
             }
         }
-        for event in input.release_all() {
+        Ok(())
+        }.await;
+        for event in controls.input.release_all() {
             let _ = desktop.inject(&event).await;
         }
         session.close();
-        Ok(())
+        result
     }
 
     fn event_allowed(event: &Event, permissions: Permissions) -> bool {
@@ -1275,6 +1361,7 @@ mod platform {
         let mut assembler = Assembler::default();
         let mut gate = DecodeGate::default();
         let mut outgoing_sequence = 1_u64 << 63;
+        let mut guest_input = GuestInput::default();
         let mut presented = 0_u64;
         let mut first_media_sequence = None;
         let mut highest_media_sequence = 0_u64;
@@ -1316,13 +1403,18 @@ mod platform {
                     }
                 }
             }
-            for event in viewer
+            let events = viewer
                 .take_input()
                 .into_iter()
                 .filter(|event| event_allowed(event, permissions))
-            {
+                .collect();
+            for message in guest_input.messages(
+                events,
+                clock(),
+                session.supports_input_state() && (permissions.keyboard || permissions.mouse),
+            ) {
                 let payload =
-                    Bytes::from(serde_json::to_vec(&event).map_err(|_| Error::InvalidPacket)?);
+                    Bytes::from(serde_json::to_vec(&message).map_err(|_| Error::InvalidPacket)?);
                 let packet = Packet {
                     kind: Kind::Input,
                     keyframe: false,
@@ -1340,7 +1432,14 @@ mod platform {
             }
             let time = clock();
             let interval_us = time.saturating_sub(feedback_at);
-            if interval_us >= 250_000 && received_total > reported_received {
+            if interval_us
+                >= if gate.needs_keyframe() {
+                    50_000
+                } else {
+                    250_000
+                }
+                && received_total > reported_received
+            {
                 let expected_total = first_media_sequence
                     .map(|first| highest_media_sequence.saturating_sub(first) + 1)
                     .unwrap_or(0);

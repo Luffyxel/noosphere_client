@@ -126,6 +126,10 @@ pub struct Status {
     pub pid: u32,
     pub host_enabled: bool,
     pub streaming_ready: bool,
+    #[serde(default)]
+    pub capture_permission_required: bool,
+    #[serde(default)]
+    pub capture_prepared: bool,
     pub settings: Settings,
     pub displays: Vec<Display>,
     pub unavailable: Vec<String>,
@@ -178,6 +182,18 @@ pub fn status(settings: Settings) -> Status {
         pid: std::process::id(),
         host_enabled: false,
         streaming_ready,
+        capture_permission_required: cfg!(target_os = "linux")
+            && std::env::var_os("WAYLAND_DISPLAY").is_some(),
+        capture_prepared: {
+            #[cfg(target_os = "linux")]
+            {
+                crate::input::linux::capture_prepared()
+            }
+            #[cfg(not(target_os = "linux"))]
+            {
+                false
+            }
+        },
         settings,
         displays,
         unavailable,

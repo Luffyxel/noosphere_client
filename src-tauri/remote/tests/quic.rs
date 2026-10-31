@@ -116,6 +116,7 @@ async fn two_endpoints_authenticate_and_exchange_media_datagrams() {
         );
         let a = a.unwrap();
         let mut b = b.unwrap();
+        assert!(b.supports_input_state());
         let packet = packetize(
             Bytes::from_static(b"encoded-frame"),
             0,
@@ -285,4 +286,90 @@ async fn host_can_open_the_quic_path_when_guest_cannot_reach_it() {
     })
     .await
     .unwrap();
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LegacyProof {
+    signature: Vec<u8>,
+    sent_us: u64,
+}
+
+async fn legacy_authenticate(
+    connection: quinn::Connection,
+    binding: &SessionBinding,
+    host_role: bool,
+    identity: &Identity,
+) -> quinn::Connection {
+    use noosphere_remote::daemon::{read_message, write_message};
+    let (mut send, mut receive) = if host_role {
+        connection.accept_bi().await
+    } else {
+        connection.open_bi().await
+    }
+    .unwrap();
+    let exporter = transport::exporter(&connection).unwrap();
+    let sent_us = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_micros() as u64;
+    let mut transcript = binding.transcript(&exporter, host_role).unwrap();
+    transcript.extend_from_slice(&sent_us.to_be_bytes());
+    write_message(
+        &mut send,
+        &LegacyProof {
+            signature: identity.sign(&transcript).unwrap(),
+            sent_us,
+        },
+    )
+    .await
+    .unwrap();
+    send.finish().unwrap();
+    let proof: LegacyProof = read_message(&mut receive).await.unwrap();
+    let mut transcript = binding.transcript(&exporter, !host_role).unwrap();
+    transcript.extend_from_slice(&proof.sent_us.to_be_bytes());
+    identity
+        .verify(
+            if host_role {
+                &binding.guest
+            } else {
+                &binding.host
+            },
+            &transcript,
+            &proof.signature,
+        )
+        .unwrap();
+    connection
+}
+
+#[tokio::test]
+async fn input_capabilities_remain_compatible_with_a_legacy_host() {
+    let (_server, _client, a, b, binding, host, guest) = endpoints().await;
+    let permissions = Permissions {
+        screen: true,
+        ..Permissions::default()
+    };
+    let (legacy, current) = tokio::join!(
+        legacy_authenticate(a, &binding, true, &host),
+        AuthenticatedTransport::establish(b, &binding, false, &guest, permissions)
+    );
+    let current = current.unwrap();
+    assert!(!current.supports_input_state());
+    legacy.close(0u32.into(), b"done");
+    current.close();
+}
+
+#[tokio::test]
+async fn a_legacy_guest_can_ignore_the_optional_input_capabilities() {
+    let (_server, _client, a, b, binding, host, guest) = endpoints().await;
+    let permissions = Permissions {
+        screen: true,
+        ..Permissions::default()
+    };
+    let (current, legacy) = tokio::join!(
+        AuthenticatedTransport::establish(a, &binding, true, &host, permissions),
+        legacy_authenticate(b, &binding, false, &guest)
+    );
+    current.unwrap().close();
+    legacy.close(0u32.into(), b"done");
 }

@@ -156,6 +156,7 @@ pub fn probe() -> Probe {
 pub struct EncodedFrame {
     pub bytes: Bytes,
     pub keyframe: bool,
+    pub age_us: u64,
 }
 
 pub struct PortalEncoder {
@@ -225,7 +226,7 @@ impl PortalEncoder {
             "NV12"
         };
         let description = format!(
-            "{source_description} ! queue leaky=downstream max-size-buffers=1 max-size-bytes=0 max-size-time=0 ! videoconvert n-threads=4 ! videoscale ! videorate skip-to-first=true ! video/x-raw,format={raw_format},width={},height={},framerate={}/1 ! {encoder_description} ! h264parse config-interval=-1 ! video/x-h264,stream-format=byte-stream,alignment=au ! appsink name=noosphere_sink sync=false max-buffers=1 drop=true enable-last-sample=false",
+            "{source_description} ! queue leaky=downstream max-size-buffers=1 max-size-bytes=0 max-size-time=0 ! videoconvert n-threads=4 ! videoscale ! videorate skip-to-first=true ! video/x-raw,format={raw_format},width={},height={},framerate={}/1 ! {encoder_description} ! h264parse config-interval=-1 ! video/x-h264,stream-format=byte-stream,alignment=au ! appsink name=noosphere_sink sync=false max-buffers=1 drop=false enable-last-sample=false",
             settings.width, settings.height, settings.fps
         );
         let pipeline = gst::parse::launch(&description)
@@ -285,12 +286,22 @@ impl PortalEncoder {
             .buffer()
             .ok_or_else(|| gst_error("lecture de l’image encodée", "tampon absent"))?;
         let keyframe = !buffer.flags().contains(gst::BufferFlags::DELTA_UNIT);
+        let captured = sample
+            .segment()
+            .and_then(|segment| segment.downcast_ref::<gst::ClockTime>())
+            .and_then(|segment| segment.to_running_time(buffer.pts()));
         let map = buffer
             .map_readable()
             .map_err(|error| gst_error("lecture du tampon encodé", error))?;
         Ok(Some(EncodedFrame {
             bytes: Bytes::copy_from_slice(map.as_slice()),
             keyframe,
+            age_us: self
+                .pipeline
+                .current_running_time()
+                .zip(captured)
+                .map(|(now, captured)| now.saturating_sub(captured).useconds())
+                .unwrap_or(0),
         }))
     }
 
@@ -329,5 +340,31 @@ impl Drop for PortalEncoder {
     fn drop(&mut self) {
         let _ = self.pipeline.send_event(gst::event::Eos::new());
         let _ = self.pipeline.set_state(gst::State::Null);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn encoder_backpressure_preserves_reference_frames_and_capture_age() {
+        let settings = VideoSettings {
+            width: 640,
+            height: 360,
+            fps: 30,
+            bitrate: 2_000_000,
+            codec: Codec::H264,
+        };
+        let encoder = PortalEncoder::open(Source::test(), &settings).unwrap();
+        let first = encoder.acquire(5_000).unwrap().unwrap();
+        assert!(first.keyframe);
+        std::thread::sleep(std::time::Duration::from_millis(250));
+        let next = encoder.acquire(1_000).unwrap().unwrap();
+        assert!(
+            next.age_us >= 100_000,
+            "encoded reference was replaced by a newer frame: {} us",
+            next.age_us
+        );
     }
 }

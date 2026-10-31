@@ -597,6 +597,7 @@ pub fn run() {
             app_update::system_cancel_update,
             app_update::system_relaunch_after_update,
             remote_access::remote_status,
+            remote_access::remote_prepare_capture,
             remote_access::remote_save_settings,
             remote_access::remote_start_local_test,
             remote_access::remote_stop_local_test,

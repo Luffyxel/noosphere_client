@@ -287,3 +287,15 @@ No comparison with Parsec has been measured.
 - [Quinn API](https://docs.rs/quinn/0.11.11/quinn/)
 - [Desktop Duplication API](https://learn.microsoft.com/en-us/windows/win32/direct3ddxgi/desktop-dup-api)
 - [XDG RemoteDesktop portal](https://flatpak.github.io/xdg-desktop-portal/docs/doc-org.freedesktop.portal.RemoteDesktop.html)
+
+## Connexions vers un hôte Wayland
+
+Dans les réglages du bureau à distance de l’hôte, « Autoriser l’écran » prépare le partage avant une connexion distante. Choisir un moniteur et autoriser sa mémorisation dans le dialogue système. Sur Hyprland, cocher « Autoriser le jeton de restauration ». L’accès sans confirmation reste limité aux utilisateurs et machines autorisés dans Noosphere.
+
+Les autorisations de capture sont conservées uniquement sur l’hôte, dans `$XDG_STATE_HOME/noosphere/remote` ou `~/.local/state/noosphere/remote`, avec des permissions `0700` pour le dossier et `0600` pour les fichiers. Chaque jeton est consommé une fois puis remplacé par celui du portail. Une autorisation révoquée, un moniteur retiré ou un portail ne proposant pas la persistance peut nécessiter un nouveau choix local. La première autorisation système reste nécessaire.
+
+La capture Linux laisse GStreamer régler la cadence vidéo. Le moteur traite les commandes clavier et souris pendant la pression réseau, conserve les références H.264 après encodage et mesure l’âge des images depuis leur horodatage de capture. Une image dépassant son délai est abandonnée et une nouvelle image clé est demandée.
+
+Les nouveaux clients et hôtes négocient les états périodiques du clavier et des boutons après authentification. Ces états maintiennent les touches appuyées et réparent un relâchement perdu. Les versions précédentes conservent leur format d’événements et peuvent ignorer l’extension de négociation. Le client Windows libère les touches et boutons lorsque sa fenêtre perd le focus.
+
+Ces corrections ne constituent pas une mesure de latence matérielle. La comparaison avec un autre logiciel nécessite un essai sur les mêmes machines, le même réseau et les mêmes réglages vidéo.

@@ -24,11 +24,18 @@ struct Proof {
     sent_us: u64,
 }
 
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct Capabilities {
+    input_state: bool,
+}
+
 pub struct AuthenticatedTransport {
     connection: quinn::Connection,
     replay: ReplayWindow,
     permissions: Permissions,
     peer_clock_offset_us: i64,
+    input_state_supported: bool,
 }
 
 fn wall_clock_us() -> Result<u64> {
@@ -94,7 +101,9 @@ impl AuthenticatedTransport {
             let signature =
                 authenticator.sign(&proof_transcript(binding, &exporter, host_role, sent_us)?)?;
             write_message(&mut send, &Proof { signature, sent_us }).await?;
-            send.finish().map_err(|_| Error::Authentication)?;
+            if !host_role {
+                send.finish().map_err(|_| Error::Authentication)?;
+            }
             let proof: Proof = read_message(&mut receive).await?;
             if proof.signature.len() != 64 {
                 return Err(Error::Authentication);
@@ -113,12 +122,25 @@ impl AuthenticatedTransport {
             let transit_us = connection.rtt().as_micros() as i128 / 2;
             let offset = i128::from(proof.sent_us) + transit_us - i128::from(received_us);
             let offset = i64::try_from(offset).map_err(|_| Error::Authentication)?;
-            Ok(offset)
+            let input_state_supported = if host_role {
+                // Older guests finish after the proof and ignore this optional extension.
+                let _ = write_message(&mut send, &Capabilities { input_state: true }).await;
+                let _ = send.finish();
+                true
+            } else {
+                tokio::time::timeout(
+                    Duration::from_millis(250),
+                    read_message::<Capabilities, _>(&mut receive),
+                )
+                .await
+                .is_ok_and(|result| result.is_ok_and(|capabilities| capabilities.input_state))
+            };
+            Ok((offset, input_state_supported))
         })
         .await
         .unwrap_or(Err(Error::Authentication));
-        let peer_clock_offset_us = match result {
-            Ok(offset) => offset,
+        let (peer_clock_offset_us, input_state_supported) = match result {
+            Ok(negotiated) => negotiated,
             Err(error) => {
                 connection.close(1u32.into(), b"authentication failed");
                 return Err(error);
@@ -129,7 +151,12 @@ impl AuthenticatedTransport {
             replay: ReplayWindow::default(),
             permissions,
             peer_clock_offset_us,
+            input_state_supported,
         })
+    }
+
+    pub fn supports_input_state(&self) -> bool {
+        self.input_state_supported
     }
 
     pub fn set_permissions(&mut self, permissions: Permissions) {
@@ -156,40 +183,43 @@ impl AuthenticatedTransport {
     }
 
     /// Backpressure remains bounded by the media deadline; this never retransmits a datagram.
-    pub async fn send_before_deadline(
+    pub fn send_before_deadline<C: Fn() -> u64>(
         &self,
         packet: Packet,
-        clock: impl Fn() -> u64,
-    ) -> Result<bool> {
-        self.authorize(packet.kind)?;
-        if packet.expired(clock()) {
-            return Ok(false);
-        }
-        let remaining = packet
-            .captured_us
-            .saturating_add(packet.lifetime_us as u64)
-            .saturating_sub(clock());
-        let bytes = packet.encode()?;
-        if self
-            .connection
-            .max_datagram_size()
-            .is_none_or(|mtu| bytes.len() > mtu)
-        {
-            // A PMTU reduction can race frame packetization. Retire the frame;
-            // the next one will use the current path limit.
-            return Ok(false);
-        }
-        match tokio::time::timeout(
-            Duration::from_micros(remaining),
-            self.connection.send_datagram_wait(bytes),
-        )
-        .await
-        {
-            Ok(Ok(())) => Ok(true),
-            Ok(Err(quinn::SendDatagramError::TooLarge)) => Ok(false),
-            Ok(Err(quinn::SendDatagramError::ConnectionLost(_))) => Ok(false),
-            Ok(Err(error)) => Err(Error::Unavailable(format!("QUIC datagram send: {error}"))),
-            Err(_) => Ok(false),
+        clock: C,
+    ) -> impl std::future::Future<Output = Result<bool>> + use<C> {
+        let authorized = self.authorize(packet.kind);
+        let connection = self.connection.clone();
+        async move {
+            authorized?;
+            if packet.expired(clock()) {
+                return Ok(false);
+            }
+            let remaining = packet
+                .captured_us
+                .saturating_add(packet.lifetime_us as u64)
+                .saturating_sub(clock());
+            let bytes = packet.encode()?;
+            if connection
+                .max_datagram_size()
+                .is_none_or(|mtu| bytes.len() > mtu)
+            {
+                // A PMTU reduction can race frame packetization. Retire the frame;
+                // the next one will use the current path limit.
+                return Ok(false);
+            }
+            match tokio::time::timeout(
+                Duration::from_micros(remaining),
+                connection.send_datagram_wait(bytes),
+            )
+            .await
+            {
+                Ok(Ok(())) => Ok(true),
+                Ok(Err(quinn::SendDatagramError::TooLarge)) => Ok(false),
+                Ok(Err(quinn::SendDatagramError::ConnectionLost(_))) => Ok(false),
+                Ok(Err(error)) => Err(Error::Unavailable(format!("QUIC datagram send: {error}"))),
+                Err(_) => Ok(false),
+            }
         }
     }
 

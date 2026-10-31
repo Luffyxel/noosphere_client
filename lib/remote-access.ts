@@ -28,6 +28,8 @@ export type RemoteStatus = {
   pid: number;
   hostEnabled: boolean;
   streamingReady: boolean;
+  capturePermissionRequired?: boolean;
+  capturePrepared?: boolean;
   settings: RemoteSettings;
   displays: { id: number; name: string; width: number; height: number }[];
   unavailable: string[];
@@ -64,6 +66,7 @@ export type RemoteAccessApi = {
     unattended: boolean,
   ) => Promise<RemoteDirectory>;
   status: () => Promise<RemoteStatus>;
+  prepareCapture: () => Promise<boolean>;
   saveSettings: (settings: RemoteSettings) => Promise<RemoteStatus>;
   startLocalTest: (settings: RemoteSettings) => Promise<void>;
   stopLocalTest: () => Promise<void>;

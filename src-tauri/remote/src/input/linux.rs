@@ -13,6 +13,28 @@ use std::{
     time::Instant,
 };
 
+mod restore;
+use restore::TokenStore;
+
+pub fn capture_prepared() -> bool {
+    [None, Some(3)]
+        .into_iter()
+        .any(|devices| TokenStore::new(devices).is_some_and(|store| store.available()))
+}
+
+pub async fn prepare_capture() -> Result<bool> {
+    let (desktop, source) = DesktopSession::open(Permissions {
+        screen: true,
+        keyboard: true,
+        mouse: true,
+        ..Permissions::default()
+    })
+    .await?;
+    drop(source);
+    drop(desktop);
+    Ok(capture_prepared())
+}
+
 enum Portal {
     Test,
     X11(Box<X11Input>),
@@ -97,12 +119,19 @@ impl DesktopSession {
                 .create_session(Default::default())
                 .await
                 .map_err(|error| portal_error("création de la session distante", error))?;
+            let restore = (remote.version() >= 2)
+                .then(|| TokenStore::new(Some(devices.bits())))
+                .flatten();
+            let token = restore.as_ref().and_then(TokenStore::take);
             remote
                 .select_devices(
                     &session,
                     SelectDevicesOptions::default()
                         .set_devices(devices)
-                        .set_persist_mode(PersistMode::ExplicitlyRevoked),
+                        .set_restore_token(token.as_ref().map(|value| value.as_str()))
+                        .set_persist_mode(
+                            (remote.version() >= 2).then_some(PersistMode::ExplicitlyRevoked),
+                        ),
                 )
                 .await
                 .map_err(|error| portal_error("autorisation du clavier et de la souris", error))?;
@@ -112,8 +141,7 @@ impl DesktopSession {
                     SelectSourcesOptions::default()
                         .set_cursor_mode(CursorMode::Embedded)
                         .set_sources(enumflags2::BitFlags::from(SourceType::Monitor))
-                        .set_multiple(false)
-                        .set_persist_mode(PersistMode::ExplicitlyRevoked),
+                        .set_multiple(false),
                 )
                 .await
                 .map_err(|error| portal_error("sélection de l’écran", error))?;
@@ -123,6 +151,9 @@ impl DesktopSession {
                 .map_err(|error| portal_error("ouverture de l’autorisation système", error))?
                 .response()
                 .map_err(|error| portal_error("autorisation système refusée", error))?;
+            if let Some(restore) = restore {
+                restore.remember(response.restore_token());
+            }
             let stream = response
                 .streams()
                 .first()
@@ -156,6 +187,10 @@ impl DesktopSession {
             .create_session(Default::default())
             .await
             .map_err(|error| portal_error("création de la capture", error))?;
+        let restore = (screencast.version() >= 4)
+            .then(|| TokenStore::new(None))
+            .flatten();
+        let token = restore.as_ref().and_then(TokenStore::take);
         screencast
             .select_sources(
                 &session,
@@ -163,7 +198,10 @@ impl DesktopSession {
                     .set_cursor_mode(CursorMode::Embedded)
                     .set_sources(enumflags2::BitFlags::from(SourceType::Monitor))
                     .set_multiple(false)
-                    .set_persist_mode(PersistMode::ExplicitlyRevoked),
+                    .set_restore_token(token.as_ref().map(|value| value.as_str()))
+                    .set_persist_mode(
+                        (screencast.version() >= 4).then_some(PersistMode::ExplicitlyRevoked),
+                    ),
             )
             .await
             .map_err(|error| portal_error("sélection de l’écran", error))?;
@@ -173,6 +211,13 @@ impl DesktopSession {
             .map_err(|error| portal_error("ouverture de l’autorisation système", error))?
             .response()
             .map_err(|error| portal_error("autorisation système refusée", error))?;
+        if let Some(restore) = restore {
+            let persistent = !matches!(
+                response.persist_mode(),
+                Some(PersistMode::DoNot | PersistMode::Application)
+            );
+            restore.remember(response.restore_token().filter(|_| persistent));
+        }
         let stream = response
             .streams()
             .first()
@@ -429,7 +474,9 @@ fn windows_vk_to_evdev(code: u16) -> Option<u32> {
         0x6D => 74,
         0x6E => 83,
         0x6F => 98,
-        0x70..=0x7B => (59 + code - 0x70) as u32,
+        0x70..=0x79 => (59 + code - 0x70) as u32,
+        0x7A => 87,
+        0x7B => 88,
         0x90 => 69,
         0x91 => 70,
         0xBA => 39,

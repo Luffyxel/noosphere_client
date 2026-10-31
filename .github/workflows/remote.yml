@@ -1,0 +1,57 @@
+name: remote
+
+on:
+  pull_request:
+    paths:
+      - 'src-tauri/remote/**'
+      - 'scripts/test-linux-remote.sh'
+      - '.github/workflows/remote.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'src-tauri/remote/**'
+      - 'scripts/test-linux-remote.sh'
+      - '.github/workflows/remote.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  native:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, windows-2025]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - name: Install Linux prerequisites
+        if: runner.os == 'Linux'
+        run: bash scripts/install-linux-build-deps.sh
+      - name: Install Windows Protocol Buffers compiler
+        if: runner.os == 'Windows'
+        run: choco install protoc --version=35.1.0 --no-progress -y
+      - name: Configure Rust
+        shell: bash
+        run: >-
+          rustup toolchain install 1.98.0 --profile minimal
+          --component clippy --component rustfmt &&
+          rustup default 1.98.0
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@401aff9a7a08acb9d27b64936a90db81024cff97
+        with:
+          workspaces: src-tauri -> target
+          key: remote
+      - name: Check formatting
+        run: cargo fmt --manifest-path src-tauri/Cargo.toml -p noosphere-remote -- --check
+      - name: Test Linux capture and remote transport
+        if: runner.os == 'Linux'
+        run: bash scripts/test-linux-remote.sh
+      - name: Test Windows remote transport
+        if: runner.os == 'Windows'
+        run: cargo test --manifest-path src-tauri/Cargo.toml -p noosphere-remote --all-targets
+      - name: Lint Windows remote transport
+        if: runner.os == 'Windows'
+        run: cargo clippy --manifest-path src-tauri/Cargo.toml -p noosphere-remote --all-targets -- -D warnings

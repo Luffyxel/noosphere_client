@@ -831,6 +831,10 @@ pub async fn remote_status(
     background: State<'_, crate::background_host::BackgroundHost>,
 ) -> Result<Status, String> {
     let mut status = remote.status(&state).await?;
+    #[cfg(target_os = "linux")]
+    {
+        status.capture_prepared = noosphere_remote::input::linux::capture_prepared();
+    }
     background.set_enabled(status.settings.start_with_system);
     let machine_id = machine_id(&state)?;
     if let Some(identity) = state.identity.read().await.as_ref() {
@@ -907,6 +911,50 @@ pub async fn remote_save_settings(
             .ok()
     });
     Ok(status)
+}
+
+#[tauri::command]
+pub async fn remote_prepare_capture(
+    state: State<'_, AppState>,
+    remote: State<'_, RemoteAccess>,
+) -> Result<bool, String> {
+    repository_id(&state).await?;
+    let status = remote.status(&state).await?;
+    if !matches!(
+        status.session,
+        noosphere_remote::live::State::Idle | noosphere_remote::live::State::Failed { .. }
+    ) || matches!(
+        status.diagnostic,
+        noosphere_remote::diagnostic::State::Running
+    ) {
+        return Err(
+            "Fermez la session distante ou le test local avant d’autoriser l’écran.".into(),
+        );
+    }
+    #[cfg(target_os = "linux")]
+    {
+        tokio::task::spawn_blocking(|| {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .map_err(|error| error.to_string())?;
+            runtime.block_on(async {
+                tokio::time::timeout(
+                    Duration::from_secs(120),
+                    noosphere_remote::input::linux::prepare_capture(),
+                )
+                .await
+                .map_err(|_| "L’autorisation de l’écran a expiré.".to_owned())?
+                .map_err(|error| error.to_string())
+            })
+        })
+        .await
+        .map_err(|_| "L’autorisation de capture a été interrompue.".to_owned())?
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        Ok(true)
+    }
 }
 
 #[tauri::command]
