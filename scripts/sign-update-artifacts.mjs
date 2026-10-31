@@ -24,7 +24,7 @@ for (const entry of await readdir(bundleRoot, {
 if (artifacts.length !== expectedNames.size) {
   const found =
     artifacts
-      .map(path.basename)
+      .map((artifact) => path.basename(artifact))
       .sort((left, right) => left.localeCompare(right))
       .join(', ') || 'none';
   throw new Error(

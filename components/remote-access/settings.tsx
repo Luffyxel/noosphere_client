@@ -267,12 +267,9 @@ export function RemoteAccessSettings({
               </SettingRow>
             </SettingsGroup>
             {captureNotice && (
-              <p
-                role="status"
-                className="px-1 text-[12px] leading-relaxed text-[#a1a1a6]"
-              >
+              <output className="block px-1 text-[12px] leading-relaxed text-[#a1a1a6]">
                 {captureNotice}
-              </p>
+              </output>
             )}
             {settings && (
               <SettingsGroup title="Identification">

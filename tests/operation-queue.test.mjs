@@ -3,7 +3,7 @@ import test from 'node:test';
 
 import { createOperationQueue } from '../lib/operation-queue.ts';
 
-test('attend la fin de l’actualisation avant de lancer une action', async () => {
+void test('attend la fin de l’actualisation avant de lancer une action', async () => {
   const queue = createOperationQueue();
   const events = [];
   let finishRefresh;
@@ -27,7 +27,7 @@ test('attend la fin de l’actualisation avant de lancer une action', async () =
   assert.deepEqual(events, ['refresh-start', 'refresh-end', 'action']);
 });
 
-test('une erreur ne bloque pas les opérations suivantes', async () => {
+void test('une erreur ne bloque pas les opérations suivantes', async () => {
   const queue = createOperationQueue();
   const failed = queue.enqueue(async () => {
     throw new Error('sync failed');

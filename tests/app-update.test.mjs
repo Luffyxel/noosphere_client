@@ -9,13 +9,13 @@ import { checkReleaseVersion } from '../scripts/check-release-version.mjs';
 import { createReleaseAliases } from '../scripts/create-release-aliases.mjs';
 import { generateLatestJson } from '../scripts/generate-latest-json.mjs';
 
-test('computes bounded updater progress', () => {
+void test('computes bounded updater progress', () => {
   assert.equal(updatePercentage(25, 100), 25);
   assert.equal(updatePercentage(125, 100), 100);
   assert.equal(updatePercentage(1, undefined), null);
 });
 
-test('creates a signed manifest for every supported desktop package', async () => {
+void test('creates a signed manifest for every supported desktop package', async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'noosphere-update-'));
   const releaseDirectory = path.join(directory, 'release-assets');
   const windowsDirectory = path.join(releaseDirectory, 'noosphere-windows');
@@ -63,7 +63,7 @@ test('creates a signed manifest for every supported desktop package', async () =
   }
 });
 
-test('keeps every application version synchronized', async () => {
+void test('keeps every application version synchronized', async () => {
   assert.match(await checkReleaseVersion(), /^\d+\.\d+\.\d+/);
   await assert.rejects(
     checkReleaseVersion('v999.999.999'),
@@ -71,7 +71,7 @@ test('keeps every application version synchronized', async () => {
   );
 });
 
-test('creates stable aliases for the latest release links', async () => {
+void test('creates stable aliases for the latest release links', async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'noosphere-aliases-'));
   const windowsDirectory = path.join(directory, 'noosphere-windows');
   const linuxDirectory = path.join(directory, 'noosphere-linux');

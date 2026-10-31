@@ -212,11 +212,7 @@ impl DesktopSession {
             .response()
             .map_err(|error| portal_error("autorisation système refusée", error))?;
         if let Some(restore) = restore {
-            let persistent = !matches!(
-                response.persist_mode(),
-                Some(PersistMode::DoNot | PersistMode::Application)
-            );
-            restore.remember(response.restore_token().filter(|_| persistent));
+            restore.remember(response.restore_token());
         }
         let stream = response
             .streams()
