@@ -49,6 +49,22 @@ jobs:
       - name: Test Linux capture and remote transport
         if: runner.os == 'Linux'
         run: bash scripts/test-linux-remote.sh
+      - name: Test live Linux streaming between two processes
+        if: runner.os == 'Linux'
+        env:
+          NOOSPHERE_REMOTE_TEST_SOURCE: '1'
+          NOOSPHERE_REMOTE_TEST_SINK: '1'
+        run: >-
+          cargo run --manifest-path src-tauri/Cargo.toml -p noosphere-remote
+          --bin noosphere-remote-lab -- --gpu
+          --output remote-test-results/linux-live
+      - name: Store live Linux session reports
+        if: always() && runner.os == 'Linux'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: linux-live-remote
+          path: remote-test-results/linux-live/**
+          if-no-files-found: ignore
       - name: Test Windows remote transport
         if: runner.os == 'Windows'
         run: cargo test --manifest-path src-tauri/Cargo.toml -p noosphere-remote --all-targets

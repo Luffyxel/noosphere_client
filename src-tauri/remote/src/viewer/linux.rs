@@ -44,7 +44,7 @@ impl Viewer {
             "autovideosink name=noosphere_video_sink sync=false"
         };
         let description = format!(
-            "appsrc name=noosphere_source is-live=true format=time do-timestamp=false block=false max-buffers=4 ! h264parse ! queue leaky=downstream max-size-buffers=2 max-size-bytes=0 max-size-time=0 ! decodebin ! videoconvert ! {sink}"
+            "appsrc name=noosphere_source is-live=true format=time do-timestamp=false block=false max-buffers=4 ! h264parse ! decodebin ! queue leaky=downstream max-size-buffers=1 max-size-bytes=0 max-size-time=0 ! videoconvert ! {sink}"
         );
         let pipeline = gst::parse::launch(&description)
             .map_err(|error| viewer_error("création du viewer", error))?
