@@ -331,7 +331,7 @@ pub(crate) async fn read_cached_file(
                     .github
                     .api_json::<Value>(
                         Method::GET,
-                        &root,
+                        root,
                         Some(token.expose_secret()),
                         None,
                         None,

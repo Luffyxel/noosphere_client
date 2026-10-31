@@ -315,15 +315,15 @@ pub(crate) fn validate_file(path: &str, value: &Value) -> Result<()> {
             if field(value, "workspaceId", 36)? != workspace || !uuid(field(value, "pageId", 36)?) {
                 return Err(Error::InvalidData);
             }
-            if let Some(block) = value.get("blockId") {
-                if !block.as_str().is_some_and(uuid) {
-                    return Err(Error::InvalidData);
-                }
+            if let Some(block) = value.get("blockId")
+                && !block.as_str().is_some_and(uuid)
+            {
+                return Err(Error::InvalidData);
             }
-            if let Some(quote) = value.get("quote") {
-                if quote.as_str().is_none_or(|text| text.len() > 2048) {
-                    return Err(Error::InvalidData);
-                }
+            if let Some(quote) = value.get("quote")
+                && quote.as_str().is_none_or(|text| text.len() > 2048)
+            {
+                return Err(Error::InvalidData);
             }
             if value.get("resolved").and_then(Value::as_bool).is_none() {
                 return Err(Error::InvalidData);

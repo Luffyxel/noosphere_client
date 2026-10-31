@@ -215,7 +215,7 @@ fn repository_access(mut team: Team, repository: &Value, viewer_id: u64) -> Resu
     {
         return Err(Error::NoosnoteRepositoryMismatch);
     }
-    team.branch = noosnote::sha_branch(&repository)?;
+    team.branch = noosnote::sha_branch(repository)?;
     team.can_edit = repository
         .pointer("/permissions/push")
         .and_then(Value::as_bool)
@@ -328,10 +328,10 @@ pub async fn noosnote_teams(state: State<'_, AppState>) -> CommandResult<Vec<Tea
                 can_edit: false,
                 can_manage: false,
             };
-            if let Ok(team) = repository_access(team, entry, viewer.id) {
-                if marker(state, &token, &team).await.is_ok() {
-                    let _ = remember(state, viewer.id, team).await;
-                }
+            if let Ok(team) = repository_access(team, entry, viewer.id)
+                && marker(state, &token, &team).await.is_ok()
+            {
+                let _ = remember(state, viewer.id, team).await;
             }
         }
         links(state, viewer.id).await

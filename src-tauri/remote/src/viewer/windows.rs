@@ -13,6 +13,34 @@ use windows::{
     core::{Interface, PCWSTR, Result, w},
 };
 
+fn key_code(code: usize, flags: isize) -> u16 {
+    let extended = flags & (1 << 24) != 0;
+    match code {
+        0x10 => {
+            if (flags >> 16) & 0xff == 0x36 {
+                0xA1
+            } else {
+                0xA0
+            }
+        }
+        0x11 => {
+            if extended {
+                0xA3
+            } else {
+                0xA2
+            }
+        }
+        0x12 => {
+            if extended {
+                0xA5
+            } else {
+                0xA4
+            }
+        }
+        code => code as u16,
+    }
+}
+
 unsafe extern "system" fn window_proc(
     hwnd: HWND,
     message: u32,
@@ -41,12 +69,12 @@ unsafe extern "system" fn window_proc(
         let event = match message {
             WM_KEYDOWN | WM_SYSKEYDOWN if wparam.0 < 256 && wparam.0 != 27 => {
                 Some(crate::input::Event::Key {
-                    code: wparam.0 as u16,
+                    code: key_code(wparam.0, lparam.0),
                     pressed: true,
                 })
             }
             WM_KEYUP | WM_SYSKEYUP if wparam.0 < 256 => Some(crate::input::Event::Key {
-                code: wparam.0 as u16,
+                code: key_code(wparam.0, lparam.0),
                 pressed: false,
             }),
             WM_LBUTTONDOWN | WM_LBUTTONUP => Some(crate::input::Event::Button {
@@ -265,5 +293,21 @@ impl Drop for Viewer {
                 let _ = DestroyWindow(self.hwnd);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::key_code;
+
+    #[test]
+    fn modifier_events_preserve_the_left_and_right_keys() {
+        assert_eq!(key_code(0x10, 0x2a << 16), 0xA0);
+        assert_eq!(key_code(0x10, 0x36 << 16), 0xA1);
+        assert_eq!(key_code(0x11, 0), 0xA2);
+        assert_eq!(key_code(0x11, 1 << 24), 0xA3);
+        assert_eq!(key_code(0x12, 0), 0xA4);
+        assert_eq!(key_code(0x12, 1 << 24), 0xA5);
+        assert_eq!(key_code(0x41, 0), 0x41);
     }
 }

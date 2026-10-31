@@ -299,3 +299,5 @@ La capture Linux laisse GStreamer régler la cadence vidéo. Le moteur traite le
 Les nouveaux clients et hôtes négocient les états périodiques du clavier et des boutons après authentification. Ces états maintiennent les touches appuyées et réparent un relâchement perdu. Les versions précédentes conservent leur format d’événements et peuvent ignorer l’extension de négociation. Le client Windows libère les touches et boutons lorsque sa fenêtre perd le focus.
 
 Ces corrections ne constituent pas une mesure de latence matérielle. La comparaison avec un autre logiciel nécessite un essai sur les mêmes machines, le même réseau et les mêmes réglages vidéo.
+
+Sur Hyprland et les compositeurs utilisant le clavier virtuel Wayland, le moteur transmet les modificateurs calculés par XKB après chaque changement de touche. Les côtés gauche et droit de Ctrl, Shift et Alt restent distincts depuis le client Windows. Une répétition de touche ne réappuie pas le modificateur, et une touche sans correspondance Linux ne ferme pas la connexion.

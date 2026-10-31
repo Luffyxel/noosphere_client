@@ -249,6 +249,9 @@ impl DesktopSession {
     }
 
     pub async fn inject(&mut self, event: &Event) -> Result<()> {
+        if matches!(event, Event::Key { code, .. } if windows_vk_to_evdev(*code).is_none()) {
+            return Ok(());
+        }
         match &mut self.portal {
             Portal::Test => Ok(()),
             Portal::X11(input) => input.inject(event),
@@ -444,6 +447,7 @@ fn windows_vk_to_evdev(code: u16) -> Option<u32> {
         0xA3 => 97,
         0x12 | 0xA4 => 56,
         0xA5 => 100,
+        0x13 => 119,
         0x14 => 58,
         0x1B => 1,
         0x20 => 57,
@@ -455,6 +459,7 @@ fn windows_vk_to_evdev(code: u16) -> Option<u32> {
         0x26 => 103,
         0x27 => 106,
         0x28 => 108,
+        0x2C => 99,
         0x2D => 110,
         0x2E => 111,
         0x30..=0x39 => [11, 2, 3, 4, 5, 6, 7, 8, 9, 10][(code - 0x30) as usize],
@@ -464,6 +469,7 @@ fn windows_vk_to_evdev(code: u16) -> Option<u32> {
         ][(code - 0x41) as usize],
         0x5B => 125,
         0x5C => 126,
+        0x5D => 127,
         0x60..=0x69 => [82, 79, 80, 81, 75, 76, 77, 71, 72, 73][(code - 0x60) as usize],
         0x6A => 55,
         0x6B => 78,
@@ -473,6 +479,7 @@ fn windows_vk_to_evdev(code: u16) -> Option<u32> {
         0x70..=0x79 => (59 + code - 0x70) as u32,
         0x7A => 87,
         0x7B => 88,
+        0x7C..=0x87 => (183 + code - 0x7C) as u32,
         0x90 => 69,
         0x91 => 70,
         0xBA => 39,
@@ -486,6 +493,7 @@ fn windows_vk_to_evdev(code: u16) -> Option<u32> {
         0xDC => 43,
         0xDD => 27,
         0xDE => 40,
+        0xE2 => 86,
         _ => return None,
     };
     Some(mapped)
@@ -524,11 +532,58 @@ delegate_noop!(WaylandState: ignore ZwpVirtualKeyboardV1);
 delegate_noop!(WaylandState: ignore ZwlrVirtualPointerManagerV1);
 delegate_noop!(WaylandState: ignore ZwlrVirtualPointerV1);
 
+struct KeyboardState {
+    state: xkbcommon::xkb::State,
+    held: std::collections::BTreeSet<u32>,
+}
+
+impl KeyboardState {
+    fn new(keymap: &xkbcommon::xkb::Keymap) -> Self {
+        Self {
+            state: xkbcommon::xkb::State::new(keymap),
+            held: Default::default(),
+        }
+    }
+
+    fn update(&mut self, code: u16, pressed: bool) -> Option<u32> {
+        let key = windows_vk_to_evdev(code)?;
+        let changed = if pressed {
+            self.held.insert(key)
+        } else {
+            self.held.remove(&key)
+        };
+        if !changed {
+            return None;
+        }
+        use xkbcommon::xkb::{KeyDirection, Keycode};
+        let _ = self.state.update_key(
+            Keycode::new(key + 8),
+            if pressed {
+                KeyDirection::Down
+            } else {
+                KeyDirection::Up
+            },
+        );
+        Some(key)
+    }
+
+    fn modifiers(&self) -> (u32, u32, u32, u32) {
+        use xkbcommon::xkb;
+        (
+            self.state.serialize_mods(xkb::STATE_MODS_DEPRESSED),
+            self.state.serialize_mods(xkb::STATE_MODS_LATCHED),
+            self.state.serialize_mods(xkb::STATE_MODS_LOCKED),
+            self.state.serialize_layout(xkb::STATE_LAYOUT_EFFECTIVE),
+        )
+    }
+}
+
 struct WlrInput {
     connection: Connection,
     queue: EventQueue<WaylandState>,
     state: WaylandState,
     keyboard: ZwpVirtualKeyboardV1,
+    keyboard_state: KeyboardState,
     pointer: ZwlrVirtualPointerV1,
     _keymap: std::fs::File,
     started: Instant,
@@ -619,7 +674,9 @@ impl WlrInput {
             xkbcommon::xkb::KEYMAP_COMPILE_NO_FLAGS,
         )
         .ok_or_else(|| portal_error("clavier distant", "impossible de créer la keymap"))?;
-        let keymap_text = keymap.get_as_string(xkbcommon::xkb::KEYMAP_FORMAT_TEXT_V1);
+        let keyboard_state = KeyboardState::new(&keymap);
+        let mut keymap_text = keymap.get_as_string(xkbcommon::xkb::KEYMAP_FORMAT_TEXT_V1);
+        keymap_text.push('\0');
         let mut keymap_file =
             tempfile::tempfile().map_err(|error| portal_error("fichier de keymap", error))?;
         keymap_file
@@ -640,6 +697,7 @@ impl WlrInput {
             queue,
             state,
             keyboard,
+            keyboard_state,
             pointer,
             _keymap: keymap_file,
             started: Instant::now(),
@@ -649,11 +707,14 @@ impl WlrInput {
     fn inject(&mut self, event: &Event) -> Result<()> {
         let time = self.started.elapsed().as_millis() as u32;
         match *event {
-            Event::Key { code, pressed } => self.keyboard.key(
-                time,
-                windows_vk_to_evdev(code).ok_or(Error::InvalidPacket)?,
-                u32::from(pressed),
-            ),
+            Event::Key { code, pressed } => {
+                let Some(key) = self.keyboard_state.update(code, pressed) else {
+                    return Ok(());
+                };
+                self.keyboard.key(time, key, u32::from(pressed));
+                let (depressed, latched, locked, group) = self.keyboard_state.modifiers();
+                self.keyboard.modifiers(depressed, latched, locked, group);
+            }
             Event::Pointer { x, y } => self.pointer.motion_absolute(
                 time,
                 u32::from(x),
@@ -692,6 +753,9 @@ mod tests {
         assert_eq!(windows_vk_to_evdev(0x41), Some(30));
         assert_eq!(windows_vk_to_evdev(0x0D), Some(28));
         assert_eq!(windows_vk_to_evdev(0x70), Some(59));
+        assert_eq!(windows_vk_to_evdev(0x7A), Some(87));
+        assert_eq!(windows_vk_to_evdev(0x7B), Some(88));
+        assert_eq!(windows_vk_to_evdev(0x87), Some(194));
         assert_eq!(linux_button(0).unwrap(), 272);
         assert_eq!(x11_button(0).unwrap(), 1);
         assert_eq!(x11_button(1).unwrap(), 3);
@@ -723,5 +787,43 @@ mod tests {
             })
             .is_none()
         );
+    }
+    #[test]
+    fn virtual_keyboard_modifiers_track_both_sides_and_ignore_repeated_presses() {
+        use xkbcommon::xkb;
+        let context = xkb::Context::new(xkb::CONTEXT_NO_FLAGS);
+        let keymap = xkb::Keymap::new_from_names(
+            &context,
+            "",
+            "",
+            "us",
+            "",
+            Some(String::new()),
+            xkb::KEYMAP_COMPILE_NO_FLAGS,
+        )
+        .unwrap();
+        let mut keyboard = KeyboardState::new(&keymap);
+        assert_eq!(keyboard.modifiers().0, 0);
+        assert_eq!(keyboard.update(0xA0, true), Some(42));
+        assert_ne!(keyboard.modifiers().0, 0);
+        assert_eq!(keyboard.update(0xA0, true), None);
+        assert_eq!(keyboard.update(0xA1, true), Some(54));
+        let _ = keyboard.update(0xA0, false);
+        assert_ne!(keyboard.modifiers().0, 0);
+        let _ = keyboard.update(0xA1, false);
+        assert_eq!(keyboard.modifiers().0, 0);
+        for code in [0xA2, 0xA3, 0x5B, 0x5C] {
+            let _ = keyboard.update(code, true);
+            assert_ne!(keyboard.modifiers().0, 0);
+            let _ = keyboard.update(code, false);
+            assert_eq!(keyboard.modifiers().0, 0);
+        }
+        let _ = keyboard.update(0x14, true);
+        let _ = keyboard.update(0x14, false);
+        assert_ne!(keyboard.modifiers().2, 0);
+        let _ = keyboard.update(0x14, true);
+        let _ = keyboard.update(0x14, false);
+        assert_eq!(keyboard.modifiers().2, 0);
+        assert_eq!(keyboard.update(0xFF, true), None);
     }
 }
