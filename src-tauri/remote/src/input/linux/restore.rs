@@ -119,9 +119,14 @@ impl TokenStore {
     }
 
     pub fn remember(&self, token: Option<&str>) {
-        if let Some(token) = token
-            && let Err(error) = self.write(token)
-        {
+        let result = match token {
+            Some(token) => self.write(token),
+            None => match fs::remove_file(&self.path) {
+                Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+                result => result,
+            },
+        };
+        if let Err(error) = result {
             eprintln!("[remote] enregistrement de l’autorisation de capture : {error}");
         }
     }
@@ -131,6 +136,18 @@ impl TokenStore {
 mod tests {
     use super::*;
     use std::os::unix::fs::symlink;
+
+    #[test]
+    fn choosing_an_unpersisted_screen_discards_the_previous_selection() {
+        let directory = tempfile::tempdir().unwrap();
+        let store = TokenStore::in_directory(&directory.path().join("capture"), None);
+        store.remember(Some("previous-screen"));
+        assert!(store.available());
+        store.remember(None);
+        assert!(!store.available());
+        assert!(store.take().is_none());
+        store.remember(None);
+    }
 
     #[test]
     fn capture_tokens_are_private_single_use_and_rotated() {

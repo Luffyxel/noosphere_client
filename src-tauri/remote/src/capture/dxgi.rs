@@ -96,6 +96,7 @@ pub fn displays() -> Result<Vec<Display>> {
 pub struct DesktopDuplication {
     duplication: IDXGIOutputDuplication,
     pub device: ID3D11Device,
+    pub desktop_rect: windows::Win32::Foundation::RECT,
 }
 
 pub struct GpuFrame {
@@ -126,17 +127,22 @@ impl DesktopDuplication {
         let _dpi = DpiContext::enter().map_err(error)?;
         let (device, adapter) = device()?;
         // SAFETY: device and output refer to the same adapter and remain alive during duplication.
-        let duplication = unsafe {
+        let (duplication, desktop_rect) = unsafe {
             let output: IDXGIOutput1 = adapter
                 .EnumOutputs(display)
                 .map_err(error)?
                 .cast()
                 .map_err(error)?;
-            output.DuplicateOutput(&device).map_err(error)?
+            let desc = output.GetDesc().map_err(error)?;
+            (
+                output.DuplicateOutput(&device).map_err(error)?,
+                desc.DesktopCoordinates,
+            )
         };
         Ok(Self {
             duplication,
             device,
+            desktop_rect,
         })
     }
 }

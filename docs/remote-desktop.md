@@ -301,3 +301,11 @@ Les nouveaux clients et hôtes négocient les états périodiques du clavier et 
 Ces corrections ne constituent pas une mesure de latence matérielle. La comparaison avec un autre logiciel nécessite un essai sur les mêmes machines, le même réseau et les mêmes réglages vidéo.
 
 Sur Hyprland et les compositeurs utilisant le clavier virtuel Wayland, le moteur transmet les modificateurs calculés par XKB après chaque changement de touche. Les côtés gauche et droit de Ctrl, Shift et Alt restent distincts depuis le client Windows. Une répétition de touche ne réappuie pas le modificateur, et une touche sans correspondance Linux ne ferme pas la connexion.
+
+### Plusieurs moniteurs
+
+Une session partage un moniteur. La souris reste dans les coordonnées de cet écran, même si un autre moniteur se trouve à gauche ou au-dessus, ou utilise une autre résolution ou une autre échelle.
+
+Sur Wayland, « Changer d’écran » dans les réglages ouvre une nouvelle sélection système. Le choix précédent reste mémorisé si la sélection est annulée. Autoriser la mémorisation du nouveau moniteur pour le reprendre aux connexions suivantes. Il faut terminer la session distante avant de changer l’écran partagé.
+
+Hyprland associe le pointeur virtuel au moniteur indiqué par le portail, plutôt qu’à la surface de tous les écrans. Si le portail ne permet pas d’identifier un moniteur parmi plusieurs écrans identiques, Noosphere demande de réautoriser le partage au lieu d’envoyer les clics sur un autre écran. Débrancher le moniteur partagé interrompt l’injection de nouveaux clics.

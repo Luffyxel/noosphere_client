@@ -249,7 +249,7 @@ export function RemoteAccessSettings({
                     {preparingCapture
                       ? 'Autorisation…'
                       : status.capturePrepared
-                        ? 'Vérifier'
+                        ? 'Changer d’écran'
                         : 'Autoriser l’écran'}
                   </Button>
                 </SettingRow>
@@ -336,27 +336,55 @@ export function RemoteAccessSettings({
         {tab === 'media' && settings && (
           <>
             <SettingsGroup title="Affichage">
-              <SettingRow title="Écran partagé">
-                <select
-                  aria-label="Écran partagé"
-                  className={cn(fieldClass, 'max-w-[240px]')}
-                  value={settings.display}
-                  onChange={(e) =>
-                    update({ ...settings, display: Number(e.target.value) })
-                  }
-                >
-                  {status?.displays.length ? (
-                    status.displays.map((d) => (
-                      <option key={d.id} value={d.id}>
-                        Écran {d.id + 1} · {d.width} × {d.height}
+              <SettingRow
+                title="Écran partagé"
+                detail={
+                  status?.capturePermissionRequired
+                    ? 'Choisissez le moniteur dans la fenêtre système. Ce choix sera repris aux prochaines connexions.'
+                    : undefined
+                }
+              >
+                {status?.capturePermissionRequired ? (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="text-[var(--noosphere-accent)]"
+                    disabled={
+                      preparingCapture ||
+                      remote.busy ||
+                      (status.session.state !== 'idle' &&
+                        status.session.state !== 'failed')
+                    }
+                    onClick={() => void prepareCapture()}
+                  >
+                    {preparingCapture
+                      ? 'Autorisation…'
+                      : status.capturePrepared
+                        ? 'Changer d’écran'
+                        : 'Choisir un écran'}
+                  </Button>
+                ) : (
+                  <select
+                    aria-label="Écran partagé"
+                    className={cn(fieldClass, 'max-w-[240px]')}
+                    value={settings.display}
+                    onChange={(e) =>
+                      update({ ...settings, display: Number(e.target.value) })
+                    }
+                  >
+                    {status?.displays.length ? (
+                      status.displays.map((d) => (
+                        <option key={d.id} value={d.id}>
+                          Écran {d.id + 1} · {d.width} × {d.height}
+                        </option>
+                      ))
+                    ) : (
+                      <option value={settings.display}>
+                        Aucun écran détecté
                       </option>
-                    ))
-                  ) : (
-                    <option value={settings.display}>
-                      Aucun écran détecté
-                    </option>
-                  )}
-                </select>
+                    )}
+                  </select>
+                )}
               </SettingRow>
               <SettingRow title="Résolution">
                 <select

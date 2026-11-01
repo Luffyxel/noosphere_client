@@ -13,6 +13,7 @@ use std::{
     time::Instant,
 };
 
+mod output;
 mod restore;
 use restore::TokenStore;
 
@@ -23,12 +24,15 @@ pub fn capture_prepared() -> bool {
 }
 
 pub async fn prepare_capture() -> Result<bool> {
-    let (desktop, source) = DesktopSession::open(Permissions {
-        screen: true,
-        keyboard: true,
-        mouse: true,
-        ..Permissions::default()
-    })
+    let (desktop, source) = DesktopSession::open_with_restore(
+        Permissions {
+            screen: true,
+            keyboard: true,
+            mouse: true,
+            ..Permissions::default()
+        },
+        false,
+    )
     .await?;
     drop(source);
     let _ = tokio::time::timeout(std::time::Duration::from_millis(500), desktop.close()).await;
@@ -79,6 +83,13 @@ fn portal_supports_requested_devices(
 
 impl DesktopSession {
     pub async fn open(permissions: Permissions) -> Result<(Self, Source)> {
+        Self::open_with_restore(permissions, true).await
+    }
+
+    async fn open_with_restore(
+        permissions: Permissions,
+        restore_previous: bool,
+    ) -> Result<(Self, Source)> {
         if std::env::var_os("NOOSPHERE_REMOTE_TEST_SOURCE").is_some() {
             return Ok((
                 Self {
@@ -122,7 +133,9 @@ impl DesktopSession {
             let restore = (remote.version() >= 2)
                 .then(|| TokenStore::new(Some(devices.bits())))
                 .flatten();
-            let token = restore.as_ref().and_then(TokenStore::take);
+            let token = restore_previous
+                .then(|| restore.as_ref().and_then(TokenStore::take))
+                .flatten();
             remote
                 .select_devices(
                     &session,
@@ -190,7 +203,9 @@ impl DesktopSession {
         let restore = (screencast.version() >= 4)
             .then(|| TokenStore::new(None))
             .flatten();
-        let token = restore.as_ref().and_then(TokenStore::take);
+        let token = restore_previous
+            .then(|| restore.as_ref().and_then(TokenStore::take))
+            .flatten();
         screencast
             .select_sources(
                 &session,
@@ -225,7 +240,7 @@ impl DesktopSession {
             .await
             .map_err(|error| portal_error("connexion PipeWire", error))?;
         let wlr = if requested_devices(permissions).is_some() {
-            Some(WlrInput::open()?)
+            Some(WlrInput::open(permissions.mouse.then_some(stream))?)
         } else {
             None
         };
@@ -417,8 +432,8 @@ async fn inject_portal(
             .notify_pointer_motion_absolute(
                 session,
                 node_id,
-                f64::from(x) * f64::from(width) / f64::from(u16::MAX),
-                f64::from(y) * f64::from(height) / f64::from(u16::MAX),
+                f64::from(x) * f64::from(width.saturating_sub(1)) / f64::from(u16::MAX),
+                f64::from(y) * f64::from(height.saturating_sub(1)) / f64::from(u16::MAX),
                 Default::default(),
             )
             .await
@@ -510,12 +525,20 @@ fn windows_vk_to_evdev(code: u16) -> Option<u32> {
     Some(mapped)
 }
 
-struct WaylandState;
+#[derive(Default)]
+struct WaylandState {
+    outputs: Vec<(u32, WlOutput, output::OutputGeometry)>,
+}
 
 use wayland_client::{
     Connection, Dispatch, EventQueue, Proxy, QueueHandle, delegate_noop,
     globals::{GlobalListContents, registry_queue_init},
-    protocol::{wl_pointer, wl_registry::WlRegistry, wl_seat::WlSeat},
+    protocol::{
+        wl_output::{self, WlOutput},
+        wl_pointer,
+        wl_registry::WlRegistry,
+        wl_seat::WlSeat,
+    },
 };
 use wayland_protocols_misc::zwp_virtual_keyboard_v1::client::{
     zwp_virtual_keyboard_manager_v1::ZwpVirtualKeyboardManagerV1,
@@ -528,13 +551,62 @@ use wayland_protocols_wlr::virtual_pointer::v1::client::{
 
 impl Dispatch<WlRegistry, GlobalListContents> for WaylandState {
     fn event(
-        _: &mut Self,
+        state: &mut Self,
         _: &WlRegistry,
-        _: <WlRegistry as Proxy>::Event,
+        event: <WlRegistry as Proxy>::Event,
         _: &GlobalListContents,
         _: &Connection,
         _: &QueueHandle<Self>,
     ) {
+        if let wayland_client::protocol::wl_registry::Event::GlobalRemove { name } = event {
+            state.outputs.retain(|(global, _, _)| *global != name);
+        }
+    }
+}
+
+impl Dispatch<WlOutput, ()> for WaylandState {
+    fn event(
+        state: &mut Self,
+        proxy: &WlOutput,
+        event: wl_output::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        let Some((_, _, geometry)) = state
+            .outputs
+            .iter_mut()
+            .find(|(_, output, _)| output == proxy)
+        else {
+            return;
+        };
+        match event {
+            wl_output::Event::Name { name } => geometry.name = Some(name),
+            wl_output::Event::Scale { factor } => geometry.scale = factor.max(1),
+            wl_output::Event::Geometry { transform, .. } => {
+                geometry.rotated = transform.into_result().is_ok_and(|transform| {
+                    matches!(
+                        transform,
+                        wl_output::Transform::_90
+                            | wl_output::Transform::_270
+                            | wl_output::Transform::Flipped90
+                            | wl_output::Transform::Flipped270
+                    )
+                });
+            }
+            wl_output::Event::Mode {
+                flags,
+                width,
+                height,
+                ..
+            } if flags
+                .into_result()
+                .is_ok_and(|flags| flags.contains(wl_output::Mode::Current)) =>
+            {
+                geometry.mode = Some((width, height));
+            }
+            _ => {}
+        }
     }
 }
 delegate_noop!(WaylandState: ignore WlSeat);
@@ -596,12 +668,13 @@ struct WlrInput {
     keyboard: ZwpVirtualKeyboardV1,
     keyboard_state: KeyboardState,
     pointer: ZwlrVirtualPointerV1,
+    selected_output: Option<u32>,
     _keymap: std::fs::File,
     started: Instant,
 }
 
 pub fn probe_wlr_input() -> Result<()> {
-    let _ = WlrInput::open()?;
+    let _ = WlrInput::open(None)?;
     Ok(())
 }
 
@@ -609,7 +682,7 @@ pub fn probe_wlr_input() -> Result<()> {
 /// Coordinates use the same normalized range as remote input packets.
 #[doc(hidden)]
 pub fn probe_wlr_click(x: u16, y: u16) -> Result<()> {
-    let mut input = WlrInput::open()?;
+    let mut input = WlrInput::open(None)?;
     input.inject(&Event::Pointer { x, y })?;
     for click in 0..2 {
         input.inject(&Event::Button {
@@ -631,7 +704,7 @@ pub fn probe_wlr_click(x: u16, y: u16) -> Result<()> {
 /// Activates the selected widget with the compositor-native virtual keyboard.
 #[doc(hidden)]
 pub fn probe_wlr_activate() -> Result<()> {
-    let mut input = WlrInput::open()?;
+    let mut input = WlrInput::open(None)?;
     for code in [0x09, 0x0D] {
         input.inject(&Event::Key {
             code,
@@ -648,7 +721,7 @@ pub fn probe_wlr_activate() -> Result<()> {
 }
 
 impl WlrInput {
-    fn open() -> Result<Self> {
+    fn open(stream: Option<&ashpd::desktop::screencast::Stream>) -> Result<Self> {
         let connection = Connection::connect_to_env()
             .map_err(|error| portal_error("connexion au compositeur Wayland", error))?;
         let (globals, mut queue) = registry_queue_init::<WaylandState>(&connection)
@@ -671,8 +744,47 @@ impl WlrInput {
                     "ce compositeur ne fournit ni RemoteDesktop portal ni wlr-virtual-pointer",
                 )
             })?;
+        let mut state = WaylandState::default();
+        for global in globals.contents().clone_list() {
+            if global.interface == "wl_output" {
+                let output = globals.registry().bind::<WlOutput, _, _>(
+                    global.name,
+                    global.version.min(4),
+                    &handle,
+                    (),
+                );
+                state
+                    .outputs
+                    .push((global.name, output, output::OutputGeometry::default()));
+            }
+        }
+        queue
+            .roundtrip(&mut state)
+            .map_err(|error| portal_error("identification des écrans", error))?;
+        let selected = if let Some(stream) = stream {
+            let geometry: Vec<_> = state
+                .outputs
+                .iter()
+                .map(|(_, _, geometry)| geometry.clone())
+                .collect();
+            let index = output::select_output(&geometry, stream.mapping_id(), stream.size())
+                .ok_or_else(|| portal_error("souris distante", "impossible d’identifier l’écran partagé ; réautorisez cet écran dans les réglages"))?;
+            Some((state.outputs[index].0, state.outputs[index].1.clone()))
+        } else {
+            None
+        };
         let keyboard = keyboard_manager.create_virtual_keyboard(&seat, &handle, ());
-        let pointer = pointer_manager.create_virtual_pointer(Some(&seat), &handle, ());
+        let pointer = match &selected {
+            Some((_, output)) if pointer_manager.version() >= 2 => pointer_manager
+                .create_virtual_pointer_with_output(Some(&seat), Some(output), &handle, ()),
+            Some(_) if state.outputs.len() > 1 => {
+                return Err(portal_error(
+                    "souris distante",
+                    "ce compositeur ne permet pas de cibler un écran ; mettez-le à jour",
+                ));
+            }
+            _ => pointer_manager.create_virtual_pointer(Some(&seat), &handle, ()),
+        };
 
         let context = xkbcommon::xkb::Context::new(xkbcommon::xkb::CONTEXT_NO_FLAGS);
         let keymap = xkbcommon::xkb::Keymap::new_from_names(
@@ -699,7 +811,6 @@ impl WlrInput {
         connection
             .flush()
             .map_err(|error| portal_error("initialisation des entrées Wayland", error))?;
-        let mut state = WaylandState;
         queue
             .roundtrip(&mut state)
             .map_err(|error| portal_error("initialisation des entrées Wayland", error))?;
@@ -710,12 +821,39 @@ impl WlrInput {
             keyboard,
             keyboard_state,
             pointer,
+            selected_output: selected.map(|(global, _)| global),
             _keymap: keymap_file,
             started: Instant::now(),
         })
     }
 
     fn inject(&mut self, event: &Event) -> Result<()> {
+        if let Some(reader) = self.connection.prepare_read() {
+            match reader.read() {
+                Ok(_) => {}
+                Err(wayland_client::backend::WaylandError::Io(error))
+                    if error.kind() == std::io::ErrorKind::WouldBlock => {}
+                Err(error) => return Err(portal_error("réception des écrans Wayland", error)),
+            }
+        }
+        self.queue
+            .dispatch_pending(&mut self.state)
+            .map_err(|error| portal_error("mise à jour des écrans Wayland", error))?;
+        if matches!(
+            event,
+            Event::Pointer { .. } | Event::Button { pressed: true, .. }
+        ) && self.selected_output.is_some_and(|selected| {
+            !self
+                .state
+                .outputs
+                .iter()
+                .any(|(global, _, _)| *global == selected)
+        }) {
+            return Err(portal_error(
+                "souris distante",
+                "l’écran partagé a été déconnecté",
+            ));
+        }
         let time = self.started.elapsed().as_millis() as u32;
         match *event {
             Event::Key { code, pressed } => {
@@ -728,8 +866,8 @@ impl WlrInput {
             }
             Event::Pointer { x, y } => self.pointer.motion_absolute(
                 time,
-                u32::from(x),
-                u32::from(y),
+                u32::from(x.min(u16::MAX - 1)),
+                u32::from(y.min(u16::MAX - 1)),
                 u32::from(u16::MAX),
                 u32::from(u16::MAX),
             ),

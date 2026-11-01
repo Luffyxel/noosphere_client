@@ -8,9 +8,68 @@ use windows::Win32::{
 
 pub const INPUT_MARKER: usize = 0x4e535249;
 
-/// Windows desktop injection. Construct behind a granted InputController; the
-/// pointer coordinates address the normalized virtual desktop, not a WebView.
-pub struct NativeInput;
+/// Windows desktop injection. Construct behind a granted InputController.
+/// Live sessions map pointer coordinates onto the captured output.
+pub struct NativeInput {
+    display: Option<RECT>,
+}
+
+impl NativeInput {
+    pub fn for_display(display: RECT) -> Self {
+        Self {
+            display: Some(display),
+        }
+    }
+
+    fn desktop() -> Self {
+        Self { display: None }
+    }
+
+    fn pointer(&self, x: u16, y: u16) -> Result<(i32, i32)> {
+        let Some(display) = self.display else {
+            return Ok((i32::from(x), i32::from(y)));
+        };
+        let _dpi = crate::capture::dxgi::DpiContext::enter()
+            .map_err(crate::encoder::windows::media_error)?;
+        let desktop = unsafe {
+            let left = GetSystemMetrics(SM_XVIRTUALSCREEN);
+            let top = GetSystemMetrics(SM_YVIRTUALSCREEN);
+            RECT {
+                left,
+                top,
+                right: left + GetSystemMetrics(SM_CXVIRTUALSCREEN),
+                bottom: top + GetSystemMetrics(SM_CYVIRTUALSCREEN),
+            }
+        };
+        map_pointer(display, desktop, x, y)
+    }
+}
+
+fn map_pointer(display: RECT, desktop: RECT, x: u16, y: u16) -> Result<(i32, i32)> {
+    if display.right <= display.left
+        || display.bottom <= display.top
+        || desktop.right <= desktop.left
+        || desktop.bottom <= desktop.top
+        || display.left < desktop.left
+        || display.top < desktop.top
+        || display.right > desktop.right
+        || display.bottom > desktop.bottom
+    {
+        return Err(Error::Unavailable(
+            "L’écran partagé n’est plus disponible. Reconnectez la session.".into(),
+        ));
+    }
+    let axis = |value: u16, start: i32, end: i32, origin: i32, limit: i32| {
+        let pixel = i64::from(start)
+            + i64::from(value) * (i64::from(end) - i64::from(start) - 1) / i64::from(u16::MAX);
+        (((pixel - i64::from(origin)) * 65536 + 32768) / (i64::from(limit) - i64::from(origin)))
+            .clamp(0, 65535) as i32
+    };
+    Ok((
+        axis(x, display.left, display.right, desktop.left, desktop.right),
+        axis(y, display.top, display.bottom, desktop.top, desktop.bottom),
+    ))
+}
 impl super::InputSink for NativeInput {
     fn inject(&mut self, event: &Event) -> Result<()> {
         let input = match event {
@@ -29,18 +88,23 @@ impl super::InputSink for NativeInput {
                     },
                 },
             },
-            Event::Pointer { x, y } => INPUT {
-                r#type: INPUT_MOUSE,
-                Anonymous: INPUT_0 {
-                    mi: MOUSEINPUT {
-                        dx: (*x).into(),
-                        dy: (*y).into(),
-                        dwFlags: MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK,
-                        dwExtraInfo: INPUT_MARKER,
-                        ..Default::default()
+            Event::Pointer { x, y } => {
+                let (dx, dy) = self.pointer(*x, *y)?;
+                INPUT {
+                    r#type: INPUT_MOUSE,
+                    Anonymous: INPUT_0 {
+                        mi: MOUSEINPUT {
+                            dx,
+                            dy,
+                            dwFlags: MOUSEEVENTF_MOVE
+                                | MOUSEEVENTF_ABSOLUTE
+                                | MOUSEEVENTF_VIRTUALDESK,
+                            dwExtraInfo: INPUT_MARKER,
+                            ..Default::default()
+                        },
                     },
-                },
-            },
+                }
+            }
             Event::Button { button, pressed } if *button < 5 => {
                 let (down, up, data) = match button {
                     0 => (MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP, 0),
@@ -128,7 +192,7 @@ impl super::InputSink for TestInput {
                 {
                     return Err(Error::PermissionDenied);
                 }
-                NativeInput.inject(event)?;
+                NativeInput::desktop().inject(event)?;
                 self.button_held = true;
                 Ok(())
             },
@@ -136,7 +200,7 @@ impl super::InputSink for TestInput {
                 button: 0,
                 pressed: false,
             } if self.button_held => {
-                NativeInput.inject(event)?;
+                NativeInput::desktop().inject(event)?;
                 self.button_held = false;
                 Ok(())
             }
@@ -157,7 +221,7 @@ impl super::InputSink for TestInput {
                 pressed: false,
             } if self.held => {
                 // Release our own key even after focus changes or a key-up datagram is lost.
-                NativeInput.inject(event)?;
+                NativeInput::desktop().inject(event)?;
                 self.held = false;
                 Ok(())
             }
@@ -175,13 +239,13 @@ impl Drop for TestInput {
     fn drop(&mut self) {
         use super::InputSink as _;
         if self.held {
-            let _ = NativeInput.inject(&Event::Key {
+            let _ = NativeInput::desktop().inject(&Event::Key {
                 code: 135,
                 pressed: false,
             });
         }
         if self.button_held {
-            let _ = NativeInput.inject(&Event::Button {
+            let _ = NativeInput::desktop().inject(&Event::Button {
                 button: 0,
                 pressed: false,
             });
@@ -229,4 +293,65 @@ pub fn inject_test(target: HWND, event: &Event) -> Result<()> {
         return Err(Error::Unavailable("Windows input injection failed".into()));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn rect(left: i32, top: i32, right: i32, bottom: i32) -> RECT {
+        RECT {
+            left,
+            top,
+            right,
+            bottom,
+        }
+    }
+
+    fn pixel(value: i32, origin: i32, extent: i32) -> i32 {
+        origin + (i64::from(value) * i64::from(extent) / 65536) as i32
+    }
+
+    #[test]
+    fn pointer_stays_on_the_captured_monitor_with_a_negative_desktop_origin() {
+        let desktop = rect(-1920, 0, 2560, 1440);
+        let display = rect(0, 0, 2560, 1440);
+        for (x, y) in [(0, 0), (32768, 32768), (65535, 65535)] {
+            let (dx, dy) = map_pointer(display, desktop, x, y).unwrap();
+            let actual_x = pixel(dx, desktop.left, desktop.right - desktop.left);
+            let actual_y = pixel(dy, desktop.top, desktop.bottom - desktop.top);
+            let expected_x = i64::from(x) * 2559 / 65535;
+            let expected_y = i64::from(y) * 1439 / 65535;
+            assert_eq!(i64::from(actual_x), expected_x);
+            assert_eq!(i64::from(actual_y), expected_y);
+        }
+    }
+
+    #[test]
+    fn pointer_handles_portrait_monitors_above_and_left_of_the_primary() {
+        let desktop = rect(-1080, -1920, 3840, 2160);
+        let display = rect(-1080, -1920, 0, 0);
+        let (x, y) = map_pointer(display, desktop, 0, 0).unwrap();
+        assert_eq!(pixel(x, desktop.left, 4920), display.left);
+        assert_eq!(pixel(y, desktop.top, 4080), display.top);
+        let (x, y) = map_pointer(display, desktop, 65535, 65535).unwrap();
+        assert_eq!(pixel(x, desktop.left, 4920), -1);
+        assert_eq!(pixel(y, desktop.top, 4080), -1);
+    }
+
+    #[test]
+    fn full_desktop_endpoints_keep_their_normalized_range() {
+        let desktop = rect(0, 0, 3840, 2160);
+        let (x, y) = map_pointer(desktop, desktop, 0, 0).unwrap();
+        assert_eq!((pixel(x, 0, 3840), pixel(y, 0, 2160)), (0, 0));
+        let (x, y) = map_pointer(desktop, desktop, 65535, 65535).unwrap();
+        assert_eq!((pixel(x, 0, 3840), pixel(y, 0, 2160)), (3839, 2159));
+    }
+
+    #[test]
+    fn removed_or_invalid_outputs_do_not_inject_elsewhere() {
+        let desktop = rect(0, 0, 1920, 1080);
+        assert!(map_pointer(rect(-1920, 0, 0, 1080), desktop, 0, 0).is_err());
+        assert!(map_pointer(rect(0, 0, 0, 1080), desktop, 0, 0).is_err());
+    }
 }

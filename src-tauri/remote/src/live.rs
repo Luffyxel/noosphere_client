@@ -776,7 +776,8 @@ mod platform {
             (display.width, display.height),
             &settings.video,
         )?;
-        let mut input = InputController::new(permissions, NativeInput);
+        let mut input =
+            InputController::new(permissions, NativeInput::for_display(capture.desktop_rect));
         let mut sequence = 0_u64;
         let mut frame_id = 0_u64;
         let mut force_idr = true;
