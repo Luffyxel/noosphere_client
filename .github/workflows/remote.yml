@@ -68,6 +68,5 @@ jobs:
       - name: Test Windows remote transport
         if: runner.os == 'Windows'
         run: cargo test --manifest-path src-tauri/Cargo.toml -p noosphere-remote --all-targets
-      - name: Lint Windows remote transport
-        if: runner.os == 'Windows'
+      - name: Lint remote transport
         run: cargo clippy --manifest-path src-tauri/Cargo.toml -p noosphere-remote --all-targets -- -D warnings

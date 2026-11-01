@@ -50,7 +50,7 @@ enum Portal {
     Screencast {
         _proxy: Screencast,
         _session: Session<Screencast>,
-        wlr: Option<WlrInput>,
+        wlr: Option<Box<WlrInput>>,
     },
 }
 
@@ -240,7 +240,9 @@ impl DesktopSession {
             .await
             .map_err(|error| portal_error("connexion PipeWire", error))?;
         let wlr = if requested_devices(permissions).is_some() {
-            Some(WlrInput::open(permissions.mouse.then_some(stream))?)
+            Some(Box::new(WlrInput::open(
+                permissions.mouse.then_some(stream),
+            )?))
         } else {
             None
         };
