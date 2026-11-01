@@ -893,13 +893,17 @@ impl WlrInput {
                 let (depressed, latched, locked, group) = self.keyboard_state.modifiers();
                 self.keyboard.modifiers(depressed, latched, locked, group);
             }
-            Event::Pointer { x, y } => self.pointer.motion_absolute(
-                time,
-                u32::from(x.min(u16::MAX - 1)),
-                u32::from(y.min(u16::MAX - 1)),
-                u32::from(u16::MAX),
-                u32::from(u16::MAX),
-            ),
+            Event::Pointer { x, y } => {
+                self.pointer.motion_absolute(
+                    time,
+                    u32::from(x.min(u16::MAX - 1)),
+                    u32::from(y.min(u16::MAX - 1)),
+                    u32::from(u16::MAX),
+                    u32::from(u16::MAX),
+                );
+                // Hyprland 0.55.4 omits the client pointer frame after absolute motion.
+                self.pointer.motion(time, 0.0, 0.0);
+            }
             Event::Button { button, pressed } => self.pointer.button(
                 time,
                 linux_button(button)?,
