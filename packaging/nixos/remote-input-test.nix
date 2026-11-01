@@ -26,7 +26,7 @@ pkgs.testers.runNixOSTest {
         gst_all_1.gst-plugins-base
       ];
     };
-    environment.systemPackages = with pkgs; [ jq ];
+    environment.systemPackages = with pkgs; [ jq wev ];
     environment.etc."noosphere-input.conf".text = ''
       monitor = Noosphere-1,1920x1080@60,0x0,1
       monitor = Noosphere-2,1920x1080@60,1920x0,1
@@ -81,12 +81,35 @@ pkgs.testers.runNixOSTest {
         assert abs(position["x"] - 960) <= 2, position
         assert abs(position["y"] - 540) <= 2, position
         machine.wait_until_succeeds("test -f /tmp/noosphere-clicked", timeout=10)
+        user("rm /tmp/noosphere-clicked")
+        print(user("${probe} --linux-pointer-click 32768 32768 Noosphere-2"))
+        position = json.loads(user("hyprctl cursorpos -j"))
+        assert abs(position["x"] - 2880) <= 2, position
+        assert abs(position["y"] - 540) <= 2, position
+        machine.wait_until_succeeds("test -f /tmp/noosphere-clicked", timeout=10)
+        user('hyprctl keyword unbind ",mouse:272"')
+        user("hyprctl dispatch focusmonitor Noosphere-2")
+        user("stdbuf -oL wev > /tmp/noosphere-wev.log 2>&1 &")
+        machine.wait_until_succeeds("grep -q xdg_toplevel /tmp/noosphere-wev.log", timeout=10)
+        user("hyprctl dispatch fullscreen 0")
+        user("hyprctl dispatch movecursor 1921 1")
+        print(user("${probe} --linux-pointer-click 32768 32768 Noosphere-2"))
+        machine.wait_until_succeeds("grep -q button /tmp/noosphere-wev.log", timeout=10)
+        events = machine.succeed("cat /tmp/noosphere-wev.log")
+        import re
+        assert "motion" in events, events
+        assert re.search(r"button:\s*272", events), events
+        assert re.search(r"state:\s*1", events), events
+        assert re.search(r"state:\s*0", events), events
         print(user("${probe} --linux-activate"))
         machine.wait_until_succeeds("test -f /tmp/noosphere-keyboard", timeout=10)
         machine.succeed("printf success > /tmp/input-result")
     finally:
         machine.execute("cat /tmp/noosphere-hyprland.log")
         machine.copy_from_vm("/tmp/noosphere-hyprland.log")
+        if machine.execute("test -f /tmp/noosphere-wev.log")[0] == 0:
+            print(machine.succeed("cat /tmp/noosphere-wev.log"))
+            machine.copy_from_vm("/tmp/noosphere-wev.log")
         machine.execute("cp /run/user/1000/hypr/*/hyprland.log /tmp/compositor.log || true")
         if machine.execute("test -f /tmp/compositor.log")[0] == 0:
             machine.copy_from_vm("/tmp/compositor.log")

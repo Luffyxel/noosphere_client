@@ -684,7 +684,15 @@ pub fn probe_wlr_input() -> Result<()> {
 /// Coordinates use the same normalized range as remote input packets.
 #[doc(hidden)]
 pub fn probe_wlr_click(x: u16, y: u16) -> Result<()> {
-    let mut input = WlrInput::open(None)?;
+    wlr_click(WlrInput::open(None)?, x, y)
+}
+
+#[doc(hidden)]
+pub fn probe_wlr_click_on_output(output: &str, x: u16, y: u16) -> Result<()> {
+    wlr_click(WlrInput::open_target(Some((Some(output), None)))?, x, y)
+}
+
+fn wlr_click(mut input: WlrInput, x: u16, y: u16) -> Result<()> {
     input.inject(&Event::Pointer { x, y })?;
     for click in 0..2 {
         input.inject(&Event::Button {
@@ -724,6 +732,10 @@ pub fn probe_wlr_activate() -> Result<()> {
 
 impl WlrInput {
     fn open(stream: Option<&ashpd::desktop::screencast::Stream>) -> Result<Self> {
+        Self::open_target(stream.map(|stream| (stream.mapping_id(), stream.size())))
+    }
+
+    fn open_target(target: Option<(Option<&str>, Option<(i32, i32)>)>) -> Result<Self> {
         let connection = Connection::connect_to_env()
             .map_err(|error| portal_error("connexion au compositeur Wayland", error))?;
         let (globals, mut queue) = registry_queue_init::<WaylandState>(&connection)
@@ -763,13 +775,13 @@ impl WlrInput {
         queue
             .roundtrip(&mut state)
             .map_err(|error| portal_error("identification des écrans", error))?;
-        let selected = if let Some(stream) = stream {
+        let selected = if let Some((mapping_id, size)) = target {
             let geometry: Vec<_> = state
                 .outputs
                 .iter()
                 .map(|(_, _, geometry)| geometry.clone())
                 .collect();
-            let index = output::select_output(&geometry, stream.mapping_id(), stream.size())
+            let index = output::select_output(&geometry, mapping_id, size)
                 .ok_or_else(|| portal_error("souris distante", "impossible d’identifier l’écran partagé ; réautorisez cet écran dans les réglages"))?;
             Some((state.outputs[index].0, state.outputs[index].1.clone()))
         } else {
