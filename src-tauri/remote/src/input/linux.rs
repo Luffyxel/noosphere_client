@@ -689,7 +689,14 @@ pub fn probe_wlr_click(x: u16, y: u16) -> Result<()> {
 
 #[doc(hidden)]
 pub fn probe_wlr_click_on_output(output: &str, x: u16, y: u16) -> Result<()> {
-    wlr_click(WlrInput::open_target(Some((Some(output), None)))?, x, y)
+    wlr_click(
+        WlrInput::open_target(Some(OutputTarget {
+            mapping_id: Some(output),
+            size: None,
+        }))?,
+        x,
+        y,
+    )
 }
 
 fn wlr_click(mut input: WlrInput, x: u16, y: u16) -> Result<()> {
@@ -730,12 +737,20 @@ pub fn probe_wlr_activate() -> Result<()> {
     Ok(())
 }
 
+struct OutputTarget<'a> {
+    mapping_id: Option<&'a str>,
+    size: Option<(i32, i32)>,
+}
+
 impl WlrInput {
     fn open(stream: Option<&ashpd::desktop::screencast::Stream>) -> Result<Self> {
-        Self::open_target(stream.map(|stream| (stream.mapping_id(), stream.size())))
+        Self::open_target(stream.map(|stream| OutputTarget {
+            mapping_id: stream.mapping_id(),
+            size: stream.size(),
+        }))
     }
 
-    fn open_target(target: Option<(Option<&str>, Option<(i32, i32)>)>) -> Result<Self> {
+    fn open_target(target: Option<OutputTarget<'_>>) -> Result<Self> {
         let connection = Connection::connect_to_env()
             .map_err(|error| portal_error("connexion au compositeur Wayland", error))?;
         let (globals, mut queue) = registry_queue_init::<WaylandState>(&connection)
@@ -775,13 +790,13 @@ impl WlrInput {
         queue
             .roundtrip(&mut state)
             .map_err(|error| portal_error("identification des écrans", error))?;
-        let selected = if let Some((mapping_id, size)) = target {
+        let selected = if let Some(target) = target {
             let geometry: Vec<_> = state
                 .outputs
                 .iter()
                 .map(|(_, _, geometry)| geometry.clone())
                 .collect();
-            let index = output::select_output(&geometry, mapping_id, size)
+            let index = output::select_output(&geometry, target.mapping_id, target.size)
                 .ok_or_else(|| portal_error("souris distante", "impossible d’identifier l’écran partagé ; réautorisez cet écran dans les réglages"))?;
             Some((state.outputs[index].0, state.outputs[index].1.clone()))
         } else {

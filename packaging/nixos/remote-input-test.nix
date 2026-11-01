@@ -97,7 +97,10 @@ pkgs.testers.runNixOSTest {
         machine.wait_until_succeeds("grep -q button /tmp/noosphere-wev.log", timeout=10)
         events = machine.succeed("cat /tmp/noosphere-wev.log")
         import re
-        assert "motion" in events, events
+        pointer_events = [line for line in events.splitlines() if "wl_pointer]" in line]
+        motion = next(i for i, line in enumerate(pointer_events) if re.search(r"motion:.*x, y:\s*960\.", line))
+        button = next(i for i in range(motion + 1, len(pointer_events)) if "button:" in pointer_events[i])
+        assert any(line.endswith("frame") for line in pointer_events[motion + 1:button]), events
         assert re.search(r"button:\s*272", events), events
         assert re.search(r"state:\s*1", events), events
         assert re.search(r"state:\s*0", events), events
