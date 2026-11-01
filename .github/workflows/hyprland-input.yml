@@ -1,0 +1,48 @@
+name: hyprland-input
+
+on:
+  push:
+    paths:
+      - '.github/workflows/hyprland-input.yml'
+      - 'packaging/nixos/remote-input-test.nix'
+      - 'src-tauri/remote/src/input/linux.rs'
+      - 'src-tauri/remote/src/input/linux/**'
+      - 'src-tauri/remote/src/bin/benchmark.rs'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  input:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 40
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - name: Install Linux prerequisites
+        run: bash scripts/install-linux-build-deps.sh
+      - name: Configure Rust
+        run: rustup toolchain install 1.98.0 --profile minimal && rustup default 1.98.0
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@401aff9a7a08acb9d27b64936a90db81024cff97
+        with:
+          workspaces: src-tauri -> target
+          key: remote
+      - name: Build native input probe
+        run: cargo build --manifest-path src-tauri/Cargo.toml -p noosphere-remote --bin noosphere-remote-bench
+      - name: Install Nix
+        uses: cachix/install-nix-action@75c75c31ebece974e48ebc36b4ad125bd97bd97b
+        with:
+          nix_path: nixpkgs=https://github.com/NixOS/nixpkgs/archive/fa1373130d5a21c040a47c5dbe1913d59ed91808.tar.gz
+      - name: Enable nested virtualization
+        run: test ! -c /dev/kvm || sudo chmod 666 /dev/kvm
+      - name: Test native input on NixOS and Hyprland
+        run: nix-build packaging/nixos/remote-input-test.nix -o remote-input-result
+      - name: Store compositor input reports
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: hyprland-input
+          path: remote-input-result/**
+          if-no-files-found: ignore

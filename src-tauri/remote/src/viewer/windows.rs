@@ -298,7 +298,92 @@ impl Drop for Viewer {
 
 #[cfg(test)]
 mod tests {
-    use super::key_code;
+    use super::*;
+
+    struct TestWindow(HWND);
+
+    impl Drop for TestWindow {
+        fn drop(&mut self) {
+            let _ = unsafe { DestroyWindow(self.0) };
+        }
+    }
+
+    #[test]
+    fn native_mouse_messages_reach_the_remote_input_queue() {
+        unsafe {
+            let instance = GetModuleHandleW(None).unwrap();
+            let class = w!("NoosphereMouseInputTest");
+            assert_ne!(
+                RegisterClassW(&WNDCLASSW {
+                    lpfnWndProc: Some(window_proc),
+                    hInstance: instance.into(),
+                    lpszClassName: class,
+                    ..Default::default()
+                }),
+                0
+            );
+            let mut state = Box::<WindowState>::default();
+            let hwnd = CreateWindowExW(
+                WINDOW_EX_STYLE::default(),
+                class,
+                w!("Noosphere input test"),
+                WS_OVERLAPPEDWINDOW,
+                0,
+                0,
+                400,
+                300,
+                None,
+                None,
+                Some(instance.into()),
+                Some((&mut *state as *mut WindowState).cast()),
+            )
+            .unwrap();
+            let _window = TestWindow(hwnd);
+            let mut rect = RECT::default();
+            GetClientRect(hwnd, &mut rect).unwrap();
+            let point = LPARAM((((rect.bottom / 2) << 16) | (rect.right / 2)) as isize);
+            SendMessageW(hwnd, WM_MOUSEMOVE, Some(WPARAM(0)), Some(point));
+            SendMessageW(hwnd, WM_LBUTTONDOWN, Some(WPARAM(0)), Some(point));
+            SendMessageW(hwnd, WM_LBUTTONUP, Some(WPARAM(0)), Some(point));
+            let events = std::mem::take(&mut *state.events.lock().unwrap());
+            assert_eq!(events.len(), 3, "{events:?}");
+            let crate::input::Event::Pointer { x, y } = events[0] else {
+                panic!("missing pointer event")
+            };
+            assert!((i32::from(x) - 32768).abs() < 256, "{x}");
+            assert!((i32::from(y) - 32768).abs() < 256, "{y}");
+            assert_eq!(
+                events[1],
+                crate::input::Event::Button {
+                    button: 0,
+                    pressed: true
+                }
+            );
+            assert_eq!(
+                events[2],
+                crate::input::Event::Button {
+                    button: 0,
+                    pressed: false
+                }
+            );
+            SendMessageW(hwnd, WM_RBUTTONDOWN, Some(WPARAM(0)), Some(point));
+            SendMessageW(hwnd, WM_KILLFOCUS, Some(WPARAM(0)), Some(LPARAM(0)));
+            let events = std::mem::take(&mut *state.events.lock().unwrap());
+            assert_eq!(
+                events,
+                vec![
+                    crate::input::Event::Button {
+                        button: 1,
+                        pressed: true
+                    },
+                    crate::input::Event::Button {
+                        button: 1,
+                        pressed: false
+                    },
+                ]
+            );
+        }
+    }
 
     #[test]
     fn modifier_events_preserve_the_left_and_right_keys() {

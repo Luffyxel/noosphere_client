@@ -186,12 +186,17 @@ fn main() {
         let mut values = std::env::args().skip(2);
         let x = values.next().and_then(|value| value.parse().ok());
         let y = values.next().and_then(|value| value.parse().ok());
+        let output = values.next();
         let coordinates = x.zip(y).filter(|_| values.next().is_none());
         let Some((x, y)) = coordinates else {
-            eprintln!("usage: --linux-pointer-click <x:0..65535> <y:0..65535>");
+            eprintln!("usage: --linux-pointer-click <x:0..65535> <y:0..65535> [output]");
             std::process::exit(2);
         };
-        if let Err(error) = noosphere_remote::input::linux::probe_wlr_click(x, y) {
+        let result = match output.as_deref() {
+            Some(output) => noosphere_remote::input::linux::probe_wlr_click_on_output(output, x, y),
+            None => noosphere_remote::input::linux::probe_wlr_click(x, y),
+        };
+        if let Err(error) = result {
             eprintln!("{error}");
             std::process::exit(1);
         }

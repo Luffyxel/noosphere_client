@@ -373,3 +373,89 @@ async fn a_legacy_guest_can_ignore_the_optional_input_capabilities() {
     current.unwrap().close();
     legacy.close(0u32.into(), b"done");
 }
+
+#[tokio::test]
+async fn guest_input_arrives_with_the_production_deadline() {
+    use noosphere_remote::{
+        input::{Event, InputMessage},
+        transport::packet::{Kind, Packet},
+    };
+    let clock = || {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_micros() as u64
+    };
+    tokio::time::timeout(Duration::from_secs(10), async {
+        let (_server, _client, a, b, binding, host, guest) = endpoints().await;
+        let permissions = Permissions {
+            screen: true,
+            keyboard: true,
+            mouse: true,
+            ..Permissions::default()
+        };
+        let (a, b) = tokio::join!(
+            AuthenticatedTransport::establish(a, &binding, true, &host, permissions),
+            AuthenticatedTransport::establish(b, &binding, false, &guest, permissions)
+        );
+        let mut host = a.unwrap();
+        let guest = b.unwrap();
+        let events = [
+            Event::Pointer { x: 32768, y: 16384 },
+            Event::Button {
+                button: 0,
+                pressed: true,
+            },
+            Event::Button {
+                button: 0,
+                pressed: false,
+            },
+            Event::Key {
+                code: 65,
+                pressed: true,
+            },
+            Event::Key {
+                code: 65,
+                pressed: false,
+            },
+        ];
+        for (index, event) in events.into_iter().enumerate() {
+            let payload =
+                Bytes::from(serde_json::to_vec(&InputMessage::Event(event.clone())).unwrap());
+            let sequence = (1 << 63) + index as u64;
+            let packet = Packet {
+                kind: Kind::Input,
+                keyframe: false,
+                shard: 0,
+                shards: 1,
+                frame: sequence,
+                sequence,
+                captured_us: clock(),
+                lifetime_us: 80_000,
+                frame_len: payload.len() as u32,
+                payload,
+            };
+            assert!(
+                guest
+                    .send_before_deadline(packet.clone(), clock)
+                    .await
+                    .unwrap()
+            );
+            let received = host.receive(clock).await.unwrap();
+            assert!(
+                received.is_some(),
+                "input expired: rtt={:?}, age_us={}",
+                host.rtt(),
+                host.peer_clock(clock()).saturating_sub(packet.captured_us)
+            );
+            let received = received.unwrap();
+            assert_eq!(received, packet);
+            match serde_json::from_slice::<InputMessage>(&received.payload).unwrap() {
+                InputMessage::Event(actual) => assert_eq!(actual, event),
+                InputMessage::State(_) => panic!("expected an input event"),
+            }
+        }
+    })
+    .await
+    .unwrap();
+}
