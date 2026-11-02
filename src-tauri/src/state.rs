@@ -651,6 +651,10 @@ impl AppState {
         self.etags.lock().await.get(resource).cloned()
     }
 
+    pub async fn forget_etag(&self, resource: &str) {
+        self.etags.lock().await.remove(resource);
+    }
+
     pub async fn remember_etag(&self, resource: String, etag: Option<String>) {
         let Some(etag) = etag else {
             return;

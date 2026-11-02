@@ -336,12 +336,13 @@ impl Worker {
 
     pub fn connect_guest(&mut self, offer: HostOffer) -> Result<()> {
         self.reap()?;
-        let pending = self.guest.take().ok_or(Error::Authentication)?;
+        let pending = self.guest.as_ref().ok_or(Error::Authentication)?;
         offer.validate(&pending.hello, now())?;
         let identity = crate::identity::SignalIdentity::from_private_key(
             pending.credentials.github_user_id,
             &pending.credentials.private_key,
         )?;
+        let pending = self.guest.take().expect("validated pending guest");
         let state = self.state.clone();
         let cancel = self.cancel.clone();
         cancel.store(false, Ordering::Relaxed);
@@ -1575,6 +1576,45 @@ mod tests {
         offer.permissions.keyboard = false;
         offer.guest.machine_id[0] ^= 1;
         assert!(offer.validate(&hello, time).is_err());
+    }
+
+    #[test]
+    fn an_unrelated_offer_does_not_consume_the_pending_guest() {
+        let pair = KeyPair::generate(&mut OsRng.unwrap_err());
+        let credentials = Credentials {
+            github_user_id: 42,
+            private_key: pair.private_key.serialize().to_vec(),
+            machine_id: [2; 16],
+        };
+        let mut worker = Worker::default();
+        let hello = worker
+            .prepare_guest(
+                credentials,
+                principal(42, 1),
+                Permissions {
+                    screen: true,
+                    ..Permissions::default()
+                },
+            )
+            .unwrap();
+        let offer = HostOffer {
+            version: 2,
+            session_id: [0; 32],
+            guest: hello.guest.clone(),
+            host: hello.host.clone(),
+            host_certificate_der: vec![2; 256],
+            addresses: vec!["127.0.0.1:42000".into()],
+            permissions: hello.permissions,
+            settings: Settings::default(),
+            created_at: hello.created_at,
+            expires_at: hello.expires_at,
+        };
+        assert!(worker.connect_guest(offer).is_err());
+        assert_eq!(
+            worker.guest.as_ref().unwrap().hello.session_id,
+            hello.session_id
+        );
+        assert!(matches!(worker.state(), State::Preparing));
     }
 
     #[test]

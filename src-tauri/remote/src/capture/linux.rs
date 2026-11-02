@@ -348,6 +348,28 @@ mod tests {
     use super::*;
 
     #[test]
+    fn a_live_encoder_can_close_while_its_output_queue_is_full() {
+        let (done, finished) = std::sync::mpsc::sync_channel(1);
+        std::thread::spawn(move || {
+            let settings = VideoSettings {
+                width: 640,
+                height: 360,
+                fps: 60,
+                bitrate: 2_000_000,
+                codec: Codec::H264,
+            };
+            let encoder = PortalEncoder::open(Source::test(), &settings).unwrap();
+            encoder.acquire(5_000).unwrap().unwrap();
+            std::thread::sleep(std::time::Duration::from_millis(250));
+            drop(encoder);
+            let _ = done.send(());
+        });
+        finished
+            .recv_timeout(std::time::Duration::from_secs(8))
+            .expect("live encoder shutdown blocked on queued frames");
+    }
+
+    #[test]
     fn encoder_backpressure_preserves_reference_frames_and_capture_age() {
         let settings = VideoSettings {
             width: 640,

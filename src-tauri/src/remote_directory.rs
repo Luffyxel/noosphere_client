@@ -819,6 +819,13 @@ pub async fn remote_sync_directory(
     apply_user_policies(&mut data, &owner)?;
     for index in 0..data.machines.len() {
         let peer = data.machines[index].clone();
+        let mailbox_endpoint = format!(
+            "/repos/{}/{}/contents/remote/mail/{}/{}.json",
+            peer.login,
+            peer.repository,
+            machine_key(peer.principal.machine_id),
+            machine_key(owner.machine_id)
+        );
         let received = async {
             let path = format!(
                 "remote/mail/{}/{}.json",
@@ -862,7 +869,6 @@ pub async fn remote_sync_directory(
             machine.name = mailbox.name;
             machine.platform = mailbox.platform;
             machine.last_seen = mailbox.created_at;
-            machine.received_sequence = mailbox.sequence;
             machine.host_enabled = mailbox.host_enabled;
             machine.permissions = mailbox.permissions;
             machine.unattended = mailbox.unattended;
@@ -995,16 +1001,14 @@ pub async fn remote_sync_directory(
                     data.last_publish = 0;
                 }
             }
-            if let Some(offer) = mailbox.session_offer {
-                if data.handled_sessions.contains(&offer.session_id) {
-                    return Ok(());
-                }
-                let hello = data
+            if let Some(offer) = mailbox.session_offer
+                && !data.handled_sessions.contains(&offer.session_id)
+                && let Some(hello) = data
                     .session_hellos
                     .iter()
                     .find(|hello| hello.session_id == offer.session_id)
                     .cloned()
-                    .ok_or("Offre de session inattendue.")?;
+            {
                 offer.validate(&hello, now()).map_err(error)?;
                 if offer.host != peer.principal || offer.guest != owner {
                     return Err("Offre destinée à une autre machine.".into());
@@ -1021,10 +1025,12 @@ pub async fn remote_sync_directory(
                 );
                 data.last_publish = 0;
             }
+            data.machines[index].received_sequence = mailbox.sequence;
             Ok(())
         }
         .await;
         if let Err(failure) = received {
+            state.forget_etag(&mailbox_endpoint).await;
             failures.push(format!("{} : {failure}", peer.name));
         }
     }
