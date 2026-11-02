@@ -57,6 +57,7 @@ fn the_same_host_and_guest_can_disconnect_and_reconnect_repeatedly() {
         ..Permissions::default()
     };
     let mut settings = Settings::default();
+    settings.capture_output = Some("eDP-1".into());
     settings.video.width = 640;
     settings.video.height = 360;
     settings.video.bitrate = 2_000_000;
@@ -86,6 +87,7 @@ fn the_same_host_and_guest_can_disconnect_and_reconnect_repeatedly() {
                 permissions,
             )
             .unwrap();
+        assert!(offer.settings.capture_output.is_none());
         guest.connect_guest(offer).unwrap();
         wait_for(
             &guest,

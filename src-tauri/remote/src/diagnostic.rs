@@ -538,6 +538,57 @@ pub fn linux_live_capture_probe_json() -> Result<String> {
 }
 
 #[cfg(target_os = "linux")]
+#[doc(hidden)]
+pub fn linux_native_capture_cycles_json(display: u32, output: Option<&str>) -> Result<String> {
+    use crate::{
+        capture::linux::PortalEncoder, input::linux::DesktopSession, permissions::Permissions,
+        viewer::linux::Viewer,
+    };
+    use std::time::Duration;
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()?;
+    runtime.block_on(async {
+        let mut reports = Vec::new();
+        for _ in 0..3 {
+            let started = std::time::Instant::now();
+            let (desktop, mut source) = DesktopSession::open_display(Permissions {
+                screen: true, keyboard: true, mouse: true, ..Permissions::default()
+            }, display, output).await?;
+            let native = source.native.as_mut().ok_or_else(|| Error::Unavailable("La capture native Wayland est absente.".into()))?;
+            let selected = native.display().clone();
+            let image = native.next(&AtomicBool::new(false))?.ok_or(Error::InvalidPacket)?;
+            let pixel = image.pixels[..3].to_vec();
+            let dimensions = (image.width, image.height);
+            drop(image);
+            let mut settings = Settings::default();
+            settings.video.width = 640; settings.video.height = 360;
+            settings.video.fps = 30; settings.video.bitrate = 2_000_000;
+            let encoder = PortalEncoder::open(source, &settings.video)?;
+            let mut viewer = Viewer::open_headless(&settings.video)?;
+            let mut encoded = 0_u64;
+            while viewer.decoded_frames() < 3 && started.elapsed() < Duration::from_secs(10) {
+                if let Some(frame) = encoder.acquire(100)? {
+                    encoded += 1;
+                    viewer.present(frame.bytes)?;
+                }
+                viewer.pump()?;
+            }
+            let decoded = viewer.decoded_frames();
+            if decoded < 3 { return Err(Error::Unavailable(format!("La capture native a produit {encoded} images, {decoded} décodées."))); }
+            drop(viewer);
+            drop(encoder);
+            desktop.close().await?;
+            reports.push(serde_json::json!({"output": selected.name, "width": dimensions.0, "height": dimensions.1,
+                "firstPixelBgr": pixel, "encoded": encoded, "decoded": decoded, "durationMs": started.elapsed().as_millis()}));
+        }
+        serde_json::to_string(&serde_json::json!({"kind": "noosphere-linux-native-cycles", "cycles": reports}))
+            .map_err(|_| Error::InvalidPacket)
+    })
+}
+
+#[cfg(target_os = "linux")]
 mod linux {
     use super::*;
     use crate::{

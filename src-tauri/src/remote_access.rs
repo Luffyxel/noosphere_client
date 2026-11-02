@@ -547,6 +547,8 @@ struct Host {
     endpoint: String,
     key: [u8; 32],
     repository_id: u64,
+    #[cfg(target_os = "linux")]
+    capture_output_saved: bool,
 }
 
 impl Drop for Host {
@@ -635,6 +637,8 @@ fn start_host(state: &AppState, repository_id: u64, settings: Settings) -> Resul
     #[cfg(windows)]
     let _ = state;
     let key = random_id().map_err(|e| e.to_string())?;
+    #[cfg(target_os = "linux")]
+    let capture_output_saved = settings.capture_output.is_some();
     let bootstrap = Bootstrap {
         endpoint: endpoint.clone(),
         key,
@@ -662,6 +666,8 @@ fn start_host(state: &AppState, repository_id: u64, settings: Settings) -> Resul
         endpoint,
         key,
         repository_id,
+        #[cfg(target_os = "linux")]
+        capture_output_saved,
     };
     let mut input = host
         .child
@@ -703,11 +709,18 @@ impl RemoteAccess {
                 load_settings(state, repository_id)?,
             )?);
         }
-        let host = guard.as_ref().ok_or("Hôte indisponible.")?;
+        let host = guard.as_mut().ok_or("Hôte indisponible.")?;
         let mut last_error = String::new();
         for _ in 0..30 {
             match daemon::ipc::request(&host.endpoint, &host.key, daemon::Command::Status).await {
-                Ok(status) => return Ok(status),
+                Ok(status) => {
+                    #[cfg(target_os = "linux")]
+                    if !host.capture_output_saved && status.settings.capture_output.is_some() {
+                        store_settings(state, repository_id, &status.settings)?;
+                        host.capture_output_saved = true;
+                    }
+                    return Ok(status);
+                }
                 Err(error) => last_error = error.to_string(),
             }
             tokio::time::sleep(Duration::from_millis(100)).await;

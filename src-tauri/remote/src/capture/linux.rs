@@ -9,18 +9,32 @@ use bytes::Bytes;
 use gst::prelude::*;
 use std::os::fd::OwnedFd;
 
+pub mod native;
+mod producer;
+
 pub struct Source {
     pub fd: Option<OwnedFd>,
     pub node_id: Option<u32>,
     pub x11_display: Option<String>,
+    pub native: Option<native::Capture>,
 }
 
 impl Source {
+    pub fn native(capture: native::Capture) -> Self {
+        Self {
+            fd: None,
+            node_id: None,
+            x11_display: None,
+            native: Some(capture),
+        }
+    }
+
     pub fn test() -> Self {
         Self {
             fd: None,
             node_id: None,
             x11_display: None,
+            native: None,
         }
     }
 
@@ -37,6 +51,7 @@ impl Source {
             fd: None,
             node_id: None,
             x11_display: Some(display),
+            native: None,
         })
     }
 }
@@ -47,6 +62,7 @@ pub struct Probe {
     pub encoder: Option<String>,
     pub hardware: bool,
     pub unavailable: Vec<String>,
+    pub native_displays: Option<Vec<crate::capture::Display>>,
 }
 
 #[derive(Clone, Copy)]
@@ -125,6 +141,7 @@ pub fn probe() -> Probe {
             encoder: None,
             hardware: false,
             unavailable: vec![format!("GStreamer ne démarre pas : {error}")],
+            native_displays: None,
         };
     }
     let wayland = std::env::var_os("WAYLAND_DISPLAY").is_some();
@@ -132,11 +149,27 @@ pub fn probe() -> Probe {
     if !wayland && !x11 {
         unavailable.push("Aucune session graphique Linux active.".into());
     }
-    if wayland && !factory_available("pipewiresrc") {
-        unavailable.push("Le module GStreamer PipeWire est absent.".into());
+    let native_displays = if wayland {
+        match native::displays() {
+            Ok(displays) => displays,
+            Err(error) => {
+                unavailable.push(error.to_string());
+                None
+            }
+        }
+    } else {
+        None
+    };
+    if wayland && native_displays.is_none() {
+        if !factory_available("pipewiresrc") {
+            unavailable.push("Le module GStreamer PipeWire est absent.".into());
+        }
+        if std::env::var_os("DBUS_SESSION_BUS_ADDRESS").is_none() {
+            unavailable.push("Le bus de la session graphique est absent.".into());
+        }
     }
-    if wayland && std::env::var_os("DBUS_SESSION_BUS_ADDRESS").is_none() {
-        unavailable.push("Le bus de la session graphique est absent.".into());
+    if native_displays.as_ref().is_some_and(Vec::is_empty) {
+        unavailable.push("Aucun moniteur Wayland actif.".into());
     }
     let allow_software = std::env::var_os("NOOSPHERE_REMOTE_ALLOW_SOFTWARE").is_some()
         || std::env::var_os("NOOSPHERE_REMOTE_TEST_SOURCE").is_some();
@@ -150,6 +183,7 @@ pub fn probe() -> Probe {
         encoder: encoder.map(|encoder| encoder.description.into()),
         hardware: encoder.is_some_and(|encoder| encoder.hardware),
         unavailable,
+        native_displays,
     }
 }
 
@@ -165,6 +199,7 @@ pub struct PortalEncoder {
     encoder: gst::Element,
     _source_fd: Option<OwnedFd>,
     choice: EncoderChoice,
+    producer: Option<producer::Producer>,
 }
 
 impl PortalEncoder {
@@ -176,25 +211,33 @@ impl PortalEncoder {
             ));
         }
         gst::init().map_err(|error| gst_error("initialisation GStreamer", error))?;
-        let test_source =
-            source.fd.is_none() && source.node_id.is_none() && source.x11_display.is_none();
+        let test_source = source.fd.is_none()
+            && source.node_id.is_none()
+            && source.x11_display.is_none()
+            && source.native.is_none();
         let choice = choose_encoder(
             test_source || std::env::var_os("NOOSPHERE_REMOTE_ALLOW_SOFTWARE").is_some(),
         )
         .ok_or_else(|| {
             Error::Unavailable("Aucun encodeur H.264 GPU compatible n’est disponible.".into())
         })?;
-        let source_description = match (&source.fd, source.node_id, &source.x11_display) {
-            (Some(fd), Some(node_id), None) => format!(
-                "pipewiresrc fd={} path={} do-timestamp=true",
-                std::os::fd::AsRawFd::as_raw_fd(fd),
-                node_id
-            ),
-            (None, None, Some(display)) => format!(
-                "ximagesrc display-name={display} use-damage=true show-pointer=true do-timestamp=true"
-            ),
-            (None, None, None) => "videotestsrc is-live=true do-timestamp=true pattern=ball".into(),
-            _ => return Err(Error::InvalidPacket),
+        let source_description = if source.native.is_some() {
+            "appsrc name=noosphere_capture is-live=true format=time do-timestamp=true block=false max-buffers=1 leaky-type=downstream".into()
+        } else {
+            match (&source.fd, source.node_id, &source.x11_display) {
+                (Some(fd), Some(node_id), None) => format!(
+                    "pipewiresrc fd={} path={} do-timestamp=true",
+                    std::os::fd::AsRawFd::as_raw_fd(fd),
+                    node_id
+                ),
+                (None, None, Some(display)) => format!(
+                    "ximagesrc display-name={display} use-damage=true show-pointer=true do-timestamp=true"
+                ),
+                (None, None, None) => {
+                    "videotestsrc is-live=true do-timestamp=true pattern=ball".into()
+                }
+                _ => return Err(Error::InvalidPacket),
+            }
         };
         let bitrate_kbps = (settings.bitrate / 1_000).clamp(500, 200_000);
         let encoder_description = match choice.factory {
@@ -244,12 +287,28 @@ impl PortalEncoder {
         pipeline
             .set_state(gst::State::Playing)
             .map_err(|error| gst_error("démarrage de l’encodeur", error))?;
+        let producer = if let Some(capture) = source.native {
+            let input = pipeline
+                .by_name("noosphere_capture")
+                .and_then(|element| element.downcast::<gst_app::AppSrc>().ok())
+                .ok_or_else(|| gst_error("capture native", "entrée vidéo absente"))?;
+            match producer::Producer::start(capture, input, settings.fps) {
+                Ok(producer) => Some(producer),
+                Err(error) => {
+                    let _ = pipeline.set_state(gst::State::Null);
+                    return Err(error);
+                }
+            }
+        } else {
+            None
+        };
         Ok(Self {
             pipeline,
             appsink,
             encoder,
             _source_fd: source.fd,
             choice,
+            producer,
         })
     }
 
@@ -258,6 +317,9 @@ impl PortalEncoder {
     }
 
     pub fn acquire(&self, timeout_ms: u64) -> Result<Option<EncodedFrame>> {
+        if let Some(error) = self.producer.as_ref().and_then(producer::Producer::failure) {
+            return Err(Error::Unavailable(error));
+        }
         if let Some(bus) = self.pipeline.bus()
             && let Some(message) = bus.timed_pop_filtered(
                 gst::ClockTime::ZERO,
@@ -338,8 +400,13 @@ impl PortalEncoder {
 
 impl Drop for PortalEncoder {
     fn drop(&mut self) {
-        let _ = self.pipeline.send_event(gst::event::Eos::new());
+        if let Some(producer) = &self.producer {
+            producer.stop();
+        } else {
+            let _ = self.pipeline.send_event(gst::event::Eos::new());
+        }
         let _ = self.pipeline.set_state(gst::State::Null);
+        self.producer.take();
     }
 }
 

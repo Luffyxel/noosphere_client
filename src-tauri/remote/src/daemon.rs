@@ -68,6 +68,8 @@ pub fn run_from_parent() -> Result<()> {
 pub struct Settings {
     pub machine_name: String,
     pub display: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub capture_output: Option<String>,
     pub video: VideoSettings,
     pub audio: bool,
     #[serde(default)]
@@ -79,6 +81,7 @@ impl Default for Settings {
         Self {
             machine_name: "Mon ordinateur".into(),
             display: 0,
+            capture_output: None,
             video: VideoSettings {
                 width: 1920,
                 height: 1080,
@@ -98,6 +101,9 @@ impl Settings {
             || self.machine_name.chars().count() > 64
             || self.machine_name.chars().any(char::is_control)
             || self.display > 31
+            || self.capture_output.as_ref().is_some_and(|name| {
+                name.is_empty() || name.len() > 128 || name.chars().any(char::is_control)
+            })
         {
             return Err(Error::InvalidPacket);
         }
@@ -138,6 +144,8 @@ pub struct Status {
 }
 
 pub fn status(settings: Settings) -> Status {
+    #[cfg(target_os = "linux")]
+    let mut settings = settings;
     #[cfg(windows)]
     let (displays, streaming_ready, unavailable) = match crate::capture::dxgi::displays() {
         Ok(displays) => {
@@ -147,14 +155,21 @@ pub fn status(settings: Settings) -> Status {
         Err(error) => (Vec::new(), false, vec![error.to_string()]),
     };
     #[cfg(target_os = "linux")]
+    let probe = crate::capture::linux::probe();
+    #[cfg(target_os = "linux")]
+    let native_capture = probe.native_displays.is_some();
+    #[cfg(not(target_os = "linux"))]
+    let native_capture = false;
+    #[cfg(target_os = "linux")]
     let (displays, streaming_ready, unavailable) = {
-        let probe = crate::capture::linux::probe();
         let label = probe
             .encoder
             .as_deref()
             .map(|encoder| format!("Écran · {encoder}"))
             .unwrap_or_else(|| "Écran Linux".into());
-        let displays = if std::env::var_os("WAYLAND_DISPLAY").is_some()
+        let displays = if let Some(displays) = probe.native_displays {
+            displays
+        } else if std::env::var_os("WAYLAND_DISPLAY").is_some()
             || std::env::var_os("DISPLAY").is_some()
         {
             vec![Display {
@@ -166,7 +181,25 @@ pub fn status(settings: Settings) -> Status {
         } else {
             Vec::new()
         };
-        (displays, probe.ready, probe.unavailable)
+        let mut ready = probe.ready;
+        let mut unavailable = probe.unavailable;
+        if native_capture {
+            if settings.capture_output.is_none() {
+                settings.capture_output = displays
+                    .iter()
+                    .find(|display| display.id == settings.display)
+                    .map(|display| display.name.clone());
+            }
+            if settings
+                .capture_output
+                .as_ref()
+                .is_some_and(|name| !displays.iter().any(|display| display.name == *name))
+            {
+                ready = false;
+                unavailable.push("Le moniteur partagé est déconnecté. Choisissez un autre écran dans les réglages.".into());
+            }
+        }
+        (displays, ready, unavailable)
     };
     #[cfg(not(any(windows, target_os = "linux")))]
     let (displays, streaming_ready, unavailable) = (
@@ -183,7 +216,8 @@ pub fn status(settings: Settings) -> Status {
         host_enabled: false,
         streaming_ready,
         capture_permission_required: cfg!(target_os = "linux")
-            && std::env::var_os("WAYLAND_DISPLAY").is_some(),
+            && std::env::var_os("WAYLAND_DISPLAY").is_some()
+            && !native_capture,
         capture_prepared: {
             #[cfg(target_os = "linux")]
             {

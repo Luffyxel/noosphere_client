@@ -18,12 +18,20 @@ mod restore;
 use restore::TokenStore;
 
 pub fn capture_prepared() -> bool {
+    if crate::capture::linux::native::displays()
+        .is_ok_and(|displays| displays.is_some_and(|displays| !displays.is_empty()))
+    {
+        return true;
+    }
     [None, Some(3)]
         .into_iter()
         .any(|devices| TokenStore::new(devices).is_some_and(|store| store.available()))
 }
 
 pub async fn prepare_capture() -> Result<bool> {
+    if crate::capture::linux::native::displays()?.is_some_and(|displays| !displays.is_empty()) {
+        return Ok(true);
+    }
     let (desktop, source) = DesktopSession::open_with_restore(
         Permissions {
             screen: true,
@@ -41,6 +49,9 @@ pub async fn prepare_capture() -> Result<bool> {
 
 enum Portal {
     Test,
+    Native {
+        wlr: Option<Box<WlrInput>>,
+    },
     X11(Box<X11Input>),
     Remote {
         proxy: RemoteDesktop,
@@ -83,6 +94,38 @@ fn portal_supports_requested_devices(
 
 impl DesktopSession {
     pub async fn open(permissions: Permissions) -> Result<(Self, Source)> {
+        Self::open_display(permissions, 0, None).await
+    }
+
+    pub async fn open_display(
+        permissions: Permissions,
+        display: u32,
+        output: Option<&str>,
+    ) -> Result<(Self, Source)> {
+        if std::env::var_os("NOOSPHERE_REMOTE_TEST_SOURCE").is_none()
+            && let Some(capture) = crate::capture::linux::native::Capture::open(display, output)?
+        {
+            let info = capture.display().clone();
+            let wlr = if requested_devices(permissions).is_some() {
+                Some(Box::new(WlrInput::open_target(
+                    permissions.mouse.then_some(OutputTarget {
+                        mapping_id: Some(&info.name),
+                        size: None,
+                    }),
+                )?))
+            } else {
+                None
+            };
+            return Ok((
+                Self {
+                    portal: Portal::Native { wlr },
+                    node_id: 0,
+                    width: info.width,
+                    height: info.height,
+                },
+                Source::native(capture),
+            ));
+        }
         Self::open_with_restore(permissions, true).await
     }
 
@@ -192,6 +235,7 @@ impl DesktopSession {
                     fd: Some(fd),
                     node_id: Some(node_id),
                     x11_display: None,
+                    native: None,
                 },
             ));
         }
@@ -261,6 +305,7 @@ impl DesktopSession {
                 fd: Some(fd),
                 node_id: Some(node_id),
                 x11_display: None,
+                native: None,
             },
         ))
     }
@@ -271,7 +316,7 @@ impl DesktopSession {
             Portal::Screencast {
                 _session: session, ..
             } => session.close().await,
-            Portal::Test | Portal::X11(_) => return Ok(()),
+            Portal::Test | Portal::X11(_) | Portal::Native { .. } => return Ok(()),
         }
         .map_err(|error| portal_error("fermeture du partage", error))
     }
@@ -286,7 +331,7 @@ impl DesktopSession {
             Portal::Remote { proxy, session, .. } => {
                 inject_portal(proxy, session, self.node_id, self.width, self.height, event).await
             }
-            Portal::Screencast { wlr, .. } => match wlr {
+            Portal::Screencast { wlr, .. } | Portal::Native { wlr } => match wlr {
                 Some(wlr) => wlr.inject(event),
                 None => Ok(()),
             },

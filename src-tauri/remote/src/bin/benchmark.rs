@@ -173,6 +173,25 @@ fn run(profile: Profile, seed: u64, adaptive: bool) -> Report {
 
 fn main() {
     #[cfg(target_os = "linux")]
+    if std::env::args().nth(1).as_deref() == Some("--linux-native-cycles") {
+        let display = std::env::args()
+            .nth(2)
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(0);
+        let output = std::env::args().nth(3);
+        match noosphere_remote::diagnostic::linux_native_capture_cycles_json(
+            display,
+            output.as_deref(),
+        ) {
+            Ok(report) => println!("{report}"),
+            Err(error) => {
+                eprintln!("{error}");
+                std::process::exit(1);
+            }
+        }
+        return;
+    }
+    #[cfg(target_os = "linux")]
     if std::env::args().nth(1).as_deref() == Some("--linux-activate") {
         if let Err(error) = noosphere_remote::input::linux::probe_wlr_activate() {
             eprintln!("{error}");

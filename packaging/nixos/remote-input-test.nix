@@ -1,5 +1,8 @@
 { pkgs ? import <nixpkgs> { } }:
 let
+  gstPath = pkgs.lib.makeSearchPath "lib/gstreamer-1.0" (with pkgs.gst_all_1; [
+    gst-plugins-base gst-plugins-good gst-plugins-bad gst-plugins-ugly gst-libav
+  ]);
   probe = builtins.path {
     path = ../../src-tauri/target/debug/noosphere-remote-bench;
     name = "noosphere-remote-bench";
@@ -26,7 +29,7 @@ pkgs.testers.runNixOSTest {
         gst_all_1.gst-plugins-base
       ];
     };
-    environment.systemPackages = with pkgs; [ jq wev ];
+    environment.systemPackages = with pkgs; [ jq wev swaybg ];
     environment.etc."noosphere-input.conf".text = ''
       monitor = Noosphere-1,1920x1080@60,0x0,1
       monitor = Noosphere-2,1920x1080@60,1920x0,1
@@ -66,15 +69,26 @@ pkgs.testers.runNixOSTest {
     signature = instance["instance"]
     display = instance["wl_socket"]
 
-    def user(command):
+    def user(command, fail=False):
         import shlex
-        env = f"XDG_RUNTIME_DIR=/run/user/1000 HYPRLAND_INSTANCE_SIGNATURE={signature} WAYLAND_DISPLAY={display} "
-        return machine.succeed("su - alice -c " + shlex.quote(env + command))
+        env = f"XDG_RUNTIME_DIR=/run/user/1000 HYPRLAND_INSTANCE_SIGNATURE={signature} WAYLAND_DISPLAY={display} NOOSPHERE_REMOTE_ALLOW_SOFTWARE=1 GST_PLUGIN_SYSTEM_PATH_1_0=${gstPath} "
+        run = machine.fail if fail else machine.succeed
+        return run("su - alice -c " + shlex.quote(env + command))
 
     try:
         user("hyprctl output create headless Noosphere-1")
         user("hyprctl output create headless Noosphere-2")
         print(user("hyprctl monitors -j"))
+        user("swaybg -o Noosphere-1 -c '#112233' -o Noosphere-2 -c '#884422' > /tmp/noosphere-background.log 2>&1 &")
+        user("sleep 1")
+        for index, expected in [(0, [51, 34, 17]), (1, [34, 68, 136])]:
+            report = json.loads(user(f"env -u DBUS_SESSION_BUS_ADDRESS ${probe} --linux-native-cycles {index}"))
+            assert len(report["cycles"]) == 3, report
+            for cycle in report["cycles"]:
+                assert cycle["output"] == f"Noosphere-{index + 1}", cycle
+                assert cycle["decoded"] >= 3, cycle
+                assert max(abs(a - b) for a, b in zip(cycle["firstPixelBgr"], expected)) <= 3, cycle
+            print(report)
         user("hyprctl dispatch movecursor 10 10")
         print(user("${probe} --linux-pointer-click 16384 32768"))
         position = json.loads(user("hyprctl cursorpos -j"))
@@ -106,6 +120,13 @@ pkgs.testers.runNixOSTest {
         assert re.search(r"state:\s*0", events), events
         print(user("${probe} --linux-activate"))
         machine.wait_until_succeeds("test -f /tmp/noosphere-keyboard", timeout=10)
+        user("hyprctl output remove Noosphere-1")
+        report = json.loads(user("env -u DBUS_SESSION_BUS_ADDRESS ${probe} --linux-native-cycles 1 Noosphere-2"))
+        assert all(cycle["output"] == "Noosphere-2" for cycle in report["cycles"]), report
+        user("env -u DBUS_SESSION_BUS_ADDRESS ${probe} --linux-native-cycles 0 Noosphere-1", fail=True)
+        user("hyprctl keyword monitor Noosphere-2,1920x1080@60,1920x0,1,transform,1")
+        report = json.loads(user("env -u DBUS_SESSION_BUS_ADDRESS ${probe} --linux-native-cycles 1 Noosphere-2"))
+        assert all((cycle["width"], cycle["height"]) == (1080, 1920) for cycle in report["cycles"]), report
         machine.succeed("printf success > /tmp/input-result")
     finally:
         machine.execute("cat /tmp/noosphere-hyprland.log")

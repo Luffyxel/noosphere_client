@@ -7,6 +7,9 @@ on:
       - 'packaging/nixos/remote-input-test.nix'
       - 'src-tauri/remote/src/input/linux.rs'
       - 'src-tauri/remote/src/input/linux/**'
+      - 'src-tauri/remote/src/capture/linux.rs'
+      - 'src-tauri/remote/src/capture/linux/**'
+      - 'src-tauri/remote/src/diagnostic.rs'
       - 'src-tauri/remote/src/bin/benchmark.rs'
   workflow_dispatch:
 

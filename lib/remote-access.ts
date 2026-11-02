@@ -15,6 +15,7 @@ export type RemoteVideoSettings = {
 export type RemoteSettings = {
   machineName: string;
   display: number;
+  captureOutput?: string | null;
   video: RemoteVideoSettings;
   audio: boolean;
   startWithSystem: boolean;

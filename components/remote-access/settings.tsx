@@ -367,15 +367,34 @@ export function RemoteAccessSettings({
                   <select
                     aria-label="Écran partagé"
                     className={cn(fieldClass, 'max-w-[240px]')}
-                    value={settings.display}
+                    value={
+                      settings.captureOutput
+                        ? (status?.displays.find(
+                            (display) =>
+                              display.name === settings.captureOutput,
+                          )?.id ?? 'disconnected')
+                        : settings.display
+                    }
                     onChange={(e) =>
-                      update({ ...settings, display: Number(e.target.value) })
+                      update({
+                        ...settings,
+                        display: Number(e.target.value),
+                        captureOutput: null,
+                      })
                     }
                   >
+                    {settings.captureOutput &&
+                      !status?.displays.some(
+                        (display) => display.name === settings.captureOutput,
+                      ) && (
+                        <option value="disconnected" disabled>
+                          Moniteur déconnecté
+                        </option>
+                      )}
                     {status?.displays.length ? (
                       status.displays.map((d) => (
                         <option key={d.id} value={d.id}>
-                          Écran {d.id + 1} · {d.width} × {d.height}
+                          {d.name} · {d.width} × {d.height}
                         </option>
                       ))
                     ) : (

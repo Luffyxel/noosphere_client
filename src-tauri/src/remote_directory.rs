@@ -84,6 +84,37 @@ fn answer_is_actionable(
 pub struct RemoteDirectory {
     pub(crate) operation: Mutex<()>,
     runtime_id: [u8; 16],
+    mailboxes: Mutex<MailboxCache>,
+}
+
+#[derive(Default)]
+struct MailboxCache {
+    pending: std::collections::BTreeMap<String, serde_json::Value>,
+}
+
+impl MailboxCache {
+    fn receive(
+        &mut self,
+        endpoint: &str,
+        value: Option<serde_json::Value>,
+    ) -> Option<serde_json::Value> {
+        if let Some(value) = value {
+            if self.pending.len() >= 100
+                && !self.pending.contains_key(endpoint)
+                && let Some(oldest) = self.pending.keys().next().cloned()
+            {
+                self.pending.remove(&oldest);
+            }
+            self.pending.insert(endpoint.into(), value.clone());
+            Some(value)
+        } else {
+            self.pending.get(endpoint).cloned()
+        }
+    }
+
+    fn complete(&mut self, endpoint: &str) {
+        self.pending.remove(endpoint);
+    }
 }
 
 fn registration_verified(data: &StoredDirectory, principal: &Principal) -> bool {
@@ -116,6 +147,7 @@ impl Default for RemoteDirectory {
         Self {
             operation: Mutex::new(()),
             runtime_id: *uuid::Uuid::new_v4().as_bytes(),
+            mailboxes: Mutex::new(MailboxCache::default()),
         }
     }
 }
@@ -528,6 +560,8 @@ async fn publish(
     data: &mut StoredDirectory,
     only: Option<&Principal>,
 ) -> Result<()> {
+    let previous_publish = data.last_publish;
+    data.last_publish = 0;
     if commands::session_viewer(state)
         .await
         .map_err(error)?
@@ -625,6 +659,8 @@ async fn publish(
         data.published_revision = data.book.revision;
         data.published_machine_count = data.machines.len();
         save(state, viewer.repository.id, data)?;
+    } else {
+        data.last_publish = previous_publish;
     }
     Ok(())
 }
@@ -842,6 +878,11 @@ pub async fn remote_sync_directory(
             )
             .await
             .map_err(error)?;
+            let value = directory
+                .mailboxes
+                .lock()
+                .await
+                .receive(&mailbox_endpoint, value);
             let Some(value) = value else {
                 return Ok::<_, String>(());
             };
@@ -907,8 +948,6 @@ pub async fn remote_sync_directory(
                         .any(|current| current.request.id == answer.request.id);
                     let decision = answer.decision;
                     let answer_permissions = answer.permissions;
-                    data.answers.retain(|r| r.request.id != answer.request.id);
-                    data.answers.push(answer);
                     if new_answer {
                         log_event(
                             &mut data,
@@ -954,6 +993,8 @@ pub async fn remote_sync_directory(
                             );
                         }
                     }
+                    data.answers.retain(|r| r.request.id != answer.request.id);
+                    data.answers.push(answer);
                 }
             }
             if let Some(hello) = mailbox.session_hello {
@@ -1030,8 +1071,9 @@ pub async fn remote_sync_directory(
         }
         .await;
         if let Err(failure) = received {
-            state.forget_etag(&mailbox_endpoint).await;
             failures.push(format!("{} : {failure}", peer.name));
+        } else {
+            directory.mailboxes.lock().await.complete(&mailbox_endpoint);
         }
     }
     save(&state, viewer.repository.id, &data)?;
@@ -1614,6 +1656,26 @@ pub async fn remote_cancel_access(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn an_unprocessed_mailbox_survives_not_modified_responses() {
+        let mut cache = super::MailboxCache::default();
+        let first = serde_json::json!({"session": "first"});
+        let newer = serde_json::json!({"session": "second"});
+        assert_eq!(
+            cache.receive("peer-a", Some(first.clone())),
+            Some(first.clone())
+        );
+        assert_eq!(cache.receive("peer-a", None), Some(first));
+        assert!(cache.receive("peer-b", None).is_none());
+        assert_eq!(
+            cache.receive("peer-a", Some(newer.clone())),
+            Some(newer.clone())
+        );
+        assert_eq!(cache.receive("peer-a", None), Some(newer));
+        cache.complete("peer-a");
+        assert!(cache.receive("peer-a", None).is_none());
+    }
+
     use super::*;
     #[test]
     fn replacement_keys_require_explicit_approval_before_inheriting_policy() {

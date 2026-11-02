@@ -377,6 +377,13 @@ impl Worker {
     pub fn stop(&mut self) {
         self.cancel.store(true, Ordering::Relaxed);
         self.guest = None;
+        if self
+            .thread
+            .as_ref()
+            .is_none_or(std::thread::JoinHandle::is_finished)
+        {
+            *self.state.lock().unwrap_or_else(|error| error.into_inner()) = State::Idle;
+        }
     }
 }
 
@@ -564,6 +571,8 @@ async fn host_session(
         runtime,
     )?;
     endpoint.set_default_client_config(client_config);
+    let mut peer_settings = settings.clone();
+    peer_settings.capture_output = None;
     let offer = HostOffer {
         version: 2,
         session_id: hello.session_id,
@@ -572,7 +581,7 @@ async fn host_session(
         host_certificate_der: certificate_der.to_vec(),
         addresses: local_addresses(port, mapped),
         permissions,
-        settings: settings.clone(),
+        settings: peer_settings,
         created_at: now(),
         expires_at: hello.expires_at,
     };
@@ -1235,7 +1244,7 @@ mod platform {
                 session.close();
                 return Ok(());
             }
-            result = tokio::time::timeout(Duration::from_secs(120), DesktopSession::open(permissions)) => {
+            result = tokio::time::timeout(Duration::from_secs(120), DesktopSession::open_display(permissions, settings.display, settings.capture_output.as_deref())) => {
                 result.map_err(|_| Error::Unavailable("L’autorisation de capture a expiré. Préparez l’écran dans les réglages du bureau à distance.".into()))??
             }
         };
@@ -1576,6 +1585,31 @@ mod tests {
         offer.permissions.keyboard = false;
         offer.guest.machine_id[0] ^= 1;
         assert!(offer.validate(&hello, time).is_err());
+    }
+
+    #[test]
+    fn cancelling_before_an_offer_arrives_returns_the_worker_to_idle() {
+        let pair = KeyPair::generate(&mut OsRng.unwrap_err());
+        let credentials = Credentials {
+            github_user_id: 42,
+            private_key: pair.private_key.serialize().to_vec(),
+            machine_id: [2; 16],
+        };
+        let mut worker = Worker::default();
+        worker
+            .prepare_guest(
+                credentials,
+                principal(42, 1),
+                Permissions {
+                    screen: true,
+                    ..Permissions::default()
+                },
+            )
+            .unwrap();
+        assert!(matches!(worker.state(), State::Preparing));
+        worker.stop();
+        assert!(matches!(worker.state(), State::Idle));
+        assert!(worker.guest.is_none());
     }
 
     #[test]
