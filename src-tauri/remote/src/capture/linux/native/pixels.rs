@@ -19,8 +19,8 @@ pub(super) fn convert(
     if !cfg!(target_endian = "little")
         || !matches!(layout.format, Format::Xrgb8888 | Format::Argb8888)
     {
-        for pixel in data.chunks_exact_mut(4) {
-            let value = u32::from_ne_bytes(pixel.try_into().unwrap());
+        for pixel in data.as_chunks_mut::<4>().0 {
+            let value = u32::from_ne_bytes(*pixel);
             let (red, green, blue) = match layout.format {
                 Format::Xrgb8888 | Format::Argb8888 => (value >> 16, value >> 8, value),
                 Format::Xbgr8888 | Format::Abgr8888 => (value, value >> 8, value >> 16),
@@ -124,7 +124,9 @@ mod tests {
             assert_eq!(
                 image
                     .pixels
-                    .chunks_exact(4)
+                    .as_chunks::<4>()
+                    .0
+                    .iter()
                     .map(|pixel| pixel[0])
                     .collect::<Vec<_>>(),
                 expected

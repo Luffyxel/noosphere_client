@@ -1,8 +1,8 @@
 { pkgs ? import <nixpkgs> { } }:
 let
-  gstPath = pkgs.lib.makeSearchPath "lib/gstreamer-1.0" (with pkgs.gst_all_1; [
-    gst-plugins-base gst-plugins-good gst-plugins-bad gst-plugins-ugly gst-libav
-  ]);
+  gstPath = pkgs.lib.makeSearchPath "lib/gstreamer-1.0" (map pkgs.lib.getLib (with pkgs.gst_all_1; [
+    gstreamer gst-plugins-base gst-plugins-good gst-plugins-bad gst-plugins-ugly gst-libav
+  ]));
   probe = builtins.path {
     path = ../../src-tauri/target/debug/noosphere-remote-bench;
     name = "noosphere-remote-bench";
